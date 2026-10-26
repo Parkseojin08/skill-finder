@@ -10,16 +10,17 @@ import type { Health, Job, ResultItem, RiskLevel, SearchEvent, SettingsResponse,
 const EXAMPLES = ['pull request review', 'extract tables from pdf', 'react performance', 'postgres migration review', 'commit message'];
 const SOURCE_LABEL: Record<SourceKind, string> = { marketplace: '마켓플레이스', skillssh: 'skills.sh', github: 'GitHub' };
 
-type SortKey = 'score' | 'relevance' | 'installs' | 'stars' | 'recent' | 'name';
+type SortKey = 'popular' | 'stars' | 'recent' | 'name';
+// Default order (user decision, same as the server): downloads, then stars, then relevance.
+const byPopular = (a: ResultItem, b: ResultItem) =>
+  (b.installs ?? -1) - (a.installs ?? -1) || (b.stars ?? -1) - (a.stars ?? -1) || b.breakdown.R - a.breakdown.R;
 const SORTS: Array<{ key: SortKey; label: string; compare: (a: ResultItem, b: ResultItem) => number }> = [
-  { key: 'score', label: '종합 점수', compare: (a, b) => b.score - a.score },
-  { key: 'relevance', label: '적합도', compare: (a, b) => b.breakdown.R - a.breakdown.R || b.score - a.score },
-  { key: 'installs', label: '다운로드 많은 순', compare: (a, b) => (b.installs ?? -1) - (a.installs ?? -1) || b.score - a.score },
-  { key: 'stars', label: '스타 많은 순', compare: (a, b) => (b.stars ?? -1) - (a.stars ?? -1) || b.score - a.score },
+  { key: 'popular', label: '다운로드 → 스타 → 연관도', compare: byPopular },
+  { key: 'stars', label: '스타 많은 순', compare: (a, b) => (b.stars ?? -1) - (a.stars ?? -1) || byPopular(a, b) },
   {
     key: 'recent',
     label: '최근 업데이트 순',
-    compare: (a, b) => (b.lastCommitAt ? Date.parse(b.lastCommitAt) : 0) - (a.lastCommitAt ? Date.parse(a.lastCommitAt) : 0) || b.score - a.score,
+    compare: (a, b) => (b.lastCommitAt ? Date.parse(b.lastCommitAt) : 0) - (a.lastCommitAt ? Date.parse(a.lastCommitAt) : 0) || byPopular(a, b),
   },
   { key: 'name', label: '이름순', compare: (a, b) => a.name.localeCompare(b.name) },
 ];
@@ -41,7 +42,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
   const [health, setHealth] = useState<Health | null>(null);
   const [syncJob, setSyncJob] = useState<Job | null>(null);
   const [lastQuery, setLastQuery] = useState('');
-  const [sort, setSort] = useState<SortKey>('score');
+  const [sort, setSort] = useState<SortKey>('popular');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
   // Sidebar filters narrow the current results in the browser; they stay set across searches.
@@ -355,7 +356,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
                         setPage(1);
                       }}
                       aria-label="정렬 기준"
-                      title={sort === 'installs' || sort === 'stars' ? `${sort === 'installs' ? '다운로드 수' : '스타 수'}를 모르는 스킬은 뒤로 보냅니다` : undefined}
+                      title={sort === 'popular' || sort === 'stars' ? '다운로드 수·스타 수를 모르는 스킬은 뒤로 보냅니다' : undefined}
                     >
                       {SORTS.map((s) => (
                         <option key={s.key} value={s.key}>

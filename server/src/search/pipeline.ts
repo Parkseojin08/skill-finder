@@ -151,7 +151,7 @@ export async function runSearch(
   const sources = new Set<SourceKind>(filters.sources?.length ? filters.sources : ['marketplace', 'skillssh', 'github']);
   const maxRisk: RiskLevel = filters.maxRisk ?? 'medium';
   // `r` is the result-item shape; bump it when items gain fields so cached searches are rebuilt.
-  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, r: 5 });
+  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, r: 6 });
 
   const cached = store.getCached(key, DAY_MS) as CachedSearch | undefined;
   const fresh = cached && !(cached.ttlMs && cached.cachedAt && Date.now() - cached.cachedAt > cached.ttlMs);
@@ -448,9 +448,17 @@ export async function runSearch(
       };
       items.push(toItem(c, lookup, breakdown, settings.weights, st));
     }
-    items.sort((a, b) => b.score - a.score);
+    items.sort(byPopularity);
     return { type: 'results' as const, items: items.slice(0, MAX_RESULTS), hiddenHighRisk, hiddenNoDescription };
   }
+}
+
+/**
+ * Result order (user decision): installs, then stars, then relevance (R). Unknown counts sort after
+ * known ones, so a skill with any installs ranks above one whose installs are unknown.
+ */
+export function byPopularity(a: ResultItem, b: ResultItem): number {
+  return (b.installs ?? -1) - (a.installs ?? -1) || (b.stars ?? -1) - (a.stars ?? -1) || b.breakdown.R - a.breakdown.R;
 }
 
 /** Folds candidates that resolved to the same skill row into one (first one wins as the base). */
