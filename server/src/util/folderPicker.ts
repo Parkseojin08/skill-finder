@@ -65,6 +65,7 @@ public static class SfFolderPicker {
   [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr hWnd);
   [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll")] static extern bool FlashWindow(IntPtr hWnd, bool invert);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
 
   static void Raise(string title) {
     uint me = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
@@ -76,11 +77,15 @@ public static class SfFolderPicker {
       GetWindowThreadProcessId(h, out pid);
       if (pid != me) continue;
       SetWindowPos(h, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040); // HWND_TOPMOST, NOSIZE|NOMOVE|SHOWWINDOW
-      keybd_event(0x12, 0, 0, UIntPtr.Zero);       // Alt down
-      keybd_event(0x12, 0, 0x0002, UIntPtr.Zero);  // Alt up
-      BringWindowToTop(h);
-      SetForegroundWindow(h);
       FlashWindow(h, true);
+      // The browser can take focus back right after the click that opened us; keep asking for ~1.5s.
+      for (int k = 0; k < 10 && GetForegroundWindow() != h; k++) {
+        keybd_event(0x12, 0, 0, UIntPtr.Zero);       // Alt down
+        keybd_event(0x12, 0, 0x0002, UIntPtr.Zero);  // Alt up
+        BringWindowToTop(h);
+        SetForegroundWindow(h);
+        System.Threading.Thread.Sleep(150);
+      }
       return;
     }
   }

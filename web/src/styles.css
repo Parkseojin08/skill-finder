@@ -1090,6 +1090,14 @@ button.back:hover:not(:disabled) {
 .picker-card h2 {
   margin-bottom: 10px;
 }
+.cmd.cmd-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+.cmd-stacked > span {
+  overflow-wrap: anywhere;
+}
 .preview {
   display: grid;
   gap: 6px;

@@ -177,9 +177,9 @@ function ConfirmDialog(props: {
       </p>
       <div className="muted small">정확한 명령</div>
       {props.preview.steps.map((s, i) => (
-        <div key={i} className="cmd">
+        <div key={i} className="cmd cmd-stacked">
           <code>{s.display}</code>
-          <span className="muted small"> (작업 폴더: {s.cwd})</span>
+          <span className="muted small">작업 폴더: {s.cwd}</span>
         </div>
       ))}
       <div className="muted small">설치 위치</div>

@@ -56,7 +56,7 @@ const MAX_RESULTS = 50;
 const ENRICH_DEADLINE_MS = 15_000;
 const ENRICH_CONCURRENCY = 16;
 /** Results that missed some candidates are cached briefly; those candidates finish indexing in the background. */
-const PARTIAL_CACHE_MS = 10 * 60 * 1000;
+const PARTIAL_CACHE_MS = 60 * 1000;
 
 const STOPWORDS = new Set(
   'a an the and or for to of in on with from by using use uses skill skills claude code tool tools that this is are be my your how what into as at it its via any can will should'.split(' '),
@@ -307,7 +307,7 @@ export async function runSearch(
       }
     },
   );
-  if (unresolved > 0) warn('enrich', `${unresolved}개 후보는 아직 확인 중이라 이번 결과에서 빠졌습니다. 잠시 뒤 다시 검색하면 포함됩니다.`);
+  if (unresolved > 0) warn('enrich', `${unresolved}개 후보는 아직 확인 중이라 이번 결과에서 빠졌습니다. 1분쯤 뒤 다시 검색하면 포함됩니다.`);
 
   const merged = mergeById([...ready, ...late]);
   for (const c of merged) {

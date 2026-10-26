@@ -46,8 +46,12 @@ export function InstalledPage() {
   useEffect(() => {
     apiGet<SettingsResponse>('/settings')
       .then((s) => {
-        setProjectPath(s.settings.defaultProjectPath);
-        load(s.settings.defaultProjectPath);
+        // Don't overwrite a folder the user already typed or picked while settings were loading.
+        setProjectPath((cur) => {
+          const path = cur || s.settings.defaultProjectPath;
+          load(path);
+          return path;
+        });
       })
       .catch(() => load(''));
   }, [load]);
