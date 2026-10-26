@@ -125,3 +125,66 @@ export async function discoverGenericSkills(
   if (found.length > 0) return found;
   return collect(recursiveCandidateDirs(tree).filter((d) => d !== ''));
 }
+
+export type GenericAcceptor = {
+  /** Folders the generic rules could list, in the order the CLI looks (root, priority folders, recursion). */
+  candidates: string[];
+  /** The SKILL.md text if the generic rules list `dir`, else null. Reads only what the decision needs. */
+  accepts(dir: string): Promise<string | null>;
+};
+
+/**
+ * Same decision as {@link discoverGenericSkills} for one folder at a time, so looking up a single skill
+ * in a repo with hundreds of them reads a handful of SKILL.md files instead of all of them:
+ * a valid root SKILL.md hides everything else; a priority folder counts if its own SKILL.md is valid;
+ * a deeper folder counts only when no priority folder holds a valid skill.
+ */
+export function genericAcceptor(tree: TreeIndex, read: SkillMdReader, validate: SkillMdValidator): GenericAcceptor {
+  const priority = priorityCandidateDirs(tree);
+  const prioritySet = new Set(priority);
+  const recursive = recursiveCandidateDirs(tree).filter((d) => d !== '');
+  const recursiveSet = new Set(recursive);
+  const hasRoot = tree.hasFile('SKILL.md');
+
+  const validRaw = async (dir: string) => {
+    const raw = await read(skillMdPath(dir));
+    return raw != null && validate(raw) ? raw : null;
+  };
+  let rootValid: Promise<boolean> | null = null;
+  let anyPriorityValid: Promise<boolean> | null = null;
+  const priorityHasValid = async () => {
+    // Usually the first folder is valid, so check a few at a time and stop early.
+    for (let i = 0; i < priority.length; i += 4) {
+      const raws = await Promise.all(priority.slice(i, i + 4).map(validRaw));
+      if (raws.some(Boolean)) return true;
+    }
+    return false;
+  };
+
+  // Same-name skills keep only the first one in scan order. Checking every earlier folder would mean
+  // reading them all; copies almost always sit in a folder named after the skill, so check those.
+  const firstWithName = async (tier: string[], dir: string, raw: string | null) => {
+    if (raw == null) return null;
+    const name = validate(raw)!.name;
+    for (const other of tier.slice(0, tier.indexOf(dir))) {
+      if (basename(other) !== name) continue;
+      const earlier = await validRaw(other);
+      if (earlier != null && validate(earlier)!.name === name) return null;
+    }
+    return raw;
+  };
+
+  return {
+    candidates: [...(hasRoot ? [''] : []), ...priority, ...recursive.filter((d) => !prioritySet.has(d))],
+    async accepts(dir) {
+      if (hasRoot) {
+        rootValid ??= validRaw('').then(Boolean);
+        if (await rootValid) return dir === '' ? read('SKILL.md') : null;
+      }
+      if (prioritySet.has(dir)) return firstWithName(priority, dir, await validRaw(dir));
+      if (!recursiveSet.has(dir)) return null;
+      anyPriorityValid ??= priorityHasValid();
+      return (await anyPriorityValid) ? null : firstWithName(recursive, dir, await validRaw(dir));
+    },
+  };
+}

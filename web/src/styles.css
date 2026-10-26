@@ -1,5 +1,5 @@
-/* Design system: ui-ux-pro-max "cyberpunk UI", toned down — black terminal surfaces, one neon mint
-   accent (cyan/magenta only as secondary hues), monospace chrome with Korean body text in sans,
+/* Design system: ui-ux-pro-max "cyberpunk UI", toned down — black terminal surfaces, one neon red
+   accent in the Cyberpunk palette (cyan/magenta only as secondary hues; green only means "safe/on"), monospace chrome with Korean body text in sans,
    glow reserved for focus/hover/active, visible focus, reduced motion respected. Dark only. */
 :root {
   --bg: #000000;
@@ -12,11 +12,11 @@
   --muted: #8a979d;
   --border: #1a2327;
   --border-strong: #2a363b;
-  --accent: #3cf5a0;
-  --accent-strong: #2fd98a;
-  --accent-text: #00140b;
-  --accent-soft: rgba(60, 245, 160, 0.1);
-  --accent-glow: rgba(60, 245, 160, 0.35);
+  --accent: #ff2e55;
+  --accent-strong: #e6244a;
+  --accent-text: #1a0006;
+  --accent-soft: rgba(255, 46, 85, 0.12);
+  --accent-glow: rgba(255, 46, 85, 0.4);
   --cyan: #22d3ee;
   --link: #67e8f9;
   --info: #22d3ee;
@@ -29,7 +29,7 @@
   --danger-soft: rgba(255, 92, 122, 0.1);
   --violet: #f472d0;
   --violet-soft: rgba(244, 114, 208, 0.1);
-  --ring: #3cf5a0;
+  --ring: #ff2e55;
   --glow: 0 0 0 1px var(--accent-soft), 0 0 16px -4px var(--accent-glow);
   --shadow: none;
   --radius: 6px;
@@ -53,15 +53,15 @@ body {
   background-color: var(--bg);
   /* Faint terminal grid and a soft glow under the top bar; both stay well below text contrast. */
   background-image:
-    radial-gradient(ellipse 70% 38% at 50% -8%, rgba(60, 245, 160, 0.07), transparent 70%),
-    linear-gradient(rgba(60, 245, 160, 0.028) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(60, 245, 160, 0.028) 1px, transparent 1px);
+    radial-gradient(ellipse 70% 38% at 50% -8%, rgba(255, 46, 85, 0.08), transparent 70%),
+    linear-gradient(rgba(255, 46, 85, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 46, 85, 0.03) 1px, transparent 1px);
   background-size: 100% 100%, 40px 40px, 40px 40px;
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
 }
 ::selection {
-  background: rgba(60, 245, 160, 0.28);
+  background: rgba(255, 46, 85, 0.32);
   color: #ffffff;
 }
 a {

@@ -6,7 +6,7 @@ import { basename } from '../discovery/tree.ts';
 import { normalizeSkillName, skillId } from '../indexer.ts';
 import { getSettings } from '../settings.ts';
 import { classifySkillsShSource, type SkillsShHit } from '../sources/skillsSh.ts';
-import { pool, withTimeout } from '../util/limiter.ts';
+import { pool, Semaphore, sleep, withTimeout } from '../util/limiter.ts';
 import { blendRelevance, bm25ToRelevance, freshness, lexicalMatch, popularity, totalScore, TRUST_SCORE, trustTier, type Breakdown } from './rank.ts';
 import {
   buildResultItem,
@@ -53,10 +53,22 @@ type Candidate = {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_ENRICH = 60;
 const MAX_RESULTS = 50;
-const ENRICH_DEADLINE_MS = 15_000;
-const ENRICH_CONCURRENCY = 16;
+/** Lookups still running this long after the search started are left to finish in the background. */
+const SEARCH_DEADLINE_MS = 18_000;
+const ENRICH_CONCURRENCY = 24;
+/** How long after collecting to wait for lookups before sending results without the stragglers. */
+const INTERIM_WAIT_MS = 2000;
+/** GitHub code-search hits looked up as soon as the search returns (the rest only if they rank in the top). */
+const GITHUB_EARLY_LOOKUPS = 30;
 /** Results that missed some candidates are cached briefly; those candidates finish indexing in the background. */
 const PARTIAL_CACHE_MS = 60 * 1000;
+
+/**
+ * found: resolved to an installable skill. missing: the repo has no installable SKILL.md for it (examples,
+ * templates, renamed or removed skills) — retrying will not change that. error: GitHub could not be read.
+ * timeout: still running at the deadline; it keeps going in the background and is indexed for next time.
+ */
+type Outcome = 'found' | 'missing' | 'error' | 'timeout';
 
 const STOPWORDS = new Set(
   'a an the and or for to of in on with from by using use uses skill skills claude code tool tools that this is are be my your how what into as at it its via any can will should'.split(' '),
@@ -139,7 +151,7 @@ export async function runSearch(
   const sources = new Set<SourceKind>(filters.sources?.length ? filters.sources : ['marketplace', 'skillssh', 'github']);
   const maxRisk: RiskLevel = filters.maxRisk ?? 'medium';
   // `r` is the result-item shape; bump it when items gain fields so cached searches are rebuilt.
-  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, r: 4 });
+  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, r: 5 });
 
   const cached = store.getCached(key, DAY_MS) as CachedSearch | undefined;
   const fresh = cached && !(cached.ttlMs && cached.cachedAt && Date.now() - cached.cachedAt > cached.ttlMs);
@@ -156,7 +168,17 @@ export async function runSearch(
     warnings.push(w);
     emit(w);
   };
-  const timings = { collect: 0, enrich: 0 };
+  const timings = { collect: 0, enrich: 0, local: 0, skillssh: 0, github: 0, stars: 0 };
+  /** Slowest candidate resolutions, for the log line. */
+  const slow: Array<{ what: string; ms: number; outcome: Outcome }> = [];
+  const timed = async <T,>(key: 'local' | 'skillssh' | 'github', fn: () => Promise<T>) => {
+    const t = Date.now();
+    try {
+      return await fn();
+    } finally {
+      timings[key] = Date.now() - t;
+    }
+  };
 
   if (/\p{Script=Hangul}/u.test(query)) {
     warn('query', '스킬 설명이 대부분 영어라 한국어 검색어는 결과가 적거나 부정확합니다. 영어로 검색해 보세요 (예: extract tables from pdf).');
@@ -182,6 +204,70 @@ export async function runSearch(
   });
   const lookup = storeLookup(store);
 
+  // Lookups for candidates that are not in the local index start as soon as their source answers, so
+  // skills.sh hits are being resolved while the (slower) GitHub code search is still running.
+  const late: Candidate[] = [];
+  const outcomes: Record<Outcome, number> = { found: 0, missing: 0, error: 0, timeout: 0 };
+  const deadline = t0 + SEARCH_DEADLINE_MS;
+  const slots = new Semaphore(ENRICH_CONCURRENCY);
+  const started = new Set<Candidate>();
+  const lookups: Promise<void>[] = [];
+  const errors: string[] = [];
+
+  const resolveCandidate = async (c: Candidate): Promise<Outcome> => {
+    const p = c.pending!;
+    let work: Promise<SkillRow[]>;
+    if (p.type === 'plugin') {
+      work = indexer.indexPlugin(p.plugin.id).then(() => {
+        let skills = match ? store.searchSkillsInPlugin(match, p.plugin.id, 3).map((x) => x.skill) : [];
+        if (skills.length === 0) skills = store.listSkillsByPlugin(p.plugin.id).slice(0, 2);
+        return skills;
+      });
+    } else if (p.type === 'skillssh') {
+      const src = classifySkillsShSource(p.hit.source);
+      work =
+        src?.kind === 'github'
+          ? indexer.findInRepo(src.repo, p.hit.name, p.hit.skillId).then((s) => (s ? [s] : []))
+          : Promise.resolve(src?.kind === 'domain' ? [indexer.wellKnownRow(src.domain, p.hit.name, p.hit.installs)] : []);
+    } else {
+      work = indexer.findByPath(p.repo, p.path).then((s) => (s ? [s] : []));
+    }
+    work.catch(() => {}); // a timed-out lookup keeps running and stores its row for the next search
+    try {
+      const skills = await withTimeout(work, Math.max(0, deadline - Date.now()), 'timeout');
+      if (skills.length === 0) return 'missing';
+      if (p.type === 'plugin') {
+        const plugin = store.getPlugin(p.plugin.id) ?? p.plugin;
+        for (const s of skills) late.push({ ...blank(s.id, s), sources: [marketplaceSource(s, plugin)], pos: { ...c.pos } });
+      } else {
+        late.push({ ...c, key: skills[0].id, skill: skills[0], pending: null });
+      }
+      return 'found';
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      if (msg === 'timeout') return 'timeout';
+      // A deleted or renamed repo is gone for good, not a hiccup.
+      if (/저장소를 찾을 수 없습니다|tree 40[49]|tree 422/.test(msg)) return 'missing';
+      errors.push(msg.slice(0, 100));
+      return 'error';
+    }
+  };
+
+  const startLookup = (c: Candidate) => {
+    if (!c.pending || started.has(c)) return;
+    started.add(c);
+    const p = c.pending;
+    const what = p.type === 'plugin' ? `plugin:${p.plugin.id}` : p.type === 'skillssh' ? `ss:${p.hit.source}/${p.hit.name}` : `gh:${p.repo}/${p.path}`;
+    lookups.push(
+      slots.run(async () => {
+        const t = Date.now();
+        const outcome = await resolveCandidate(c);
+        outcomes[outcome]++;
+        slow.push({ what, ms: Date.now() - t, outcome });
+      }),
+    );
+  };
+
   const collectLocal = async () => {
     if (!sources.has('marketplace') || !match) return;
     const hits = store.searchSkillsFts(match, 80, filters.marketplaces).filter((h) => h.skill.origin === 'plugin');
@@ -206,6 +292,7 @@ export async function runSearch(
       } else if (h.plugin.repo) {
         const c = upsert(`pl:${h.plugin.id}`, () => blank(`pl:${h.plugin.id}`, null, { type: 'plugin', plugin: h.plugin }));
         c.pos.marketplace = Math.max(c.pos.marketplace ?? 0, score);
+        startLookup(c);
       }
     });
   };
@@ -228,6 +315,7 @@ export async function runSearch(
       c.sources = mergeSources(c.sources, [{ kind: 'skillssh', label: 'skills.sh', url: `https://skills.sh/${hit.id.split('/').map(encodeURIComponent).join('/')}` }]);
       c.installs = Math.max(c.installs ?? 0, hit.installs);
       c.pos.skillssh = Math.max(c.pos.skillssh ?? 0, posScore(i, hits.length));
+      startLookup(c);
     });
   };
 
@@ -247,13 +335,14 @@ export async function runSearch(
         const url = it.htmlUrl.startsWith('https://github.com/') ? it.htmlUrl : `https://github.com/${it.repo}`;
         c.sources = mergeSources(c.sources, [{ kind: 'github', label: 'GitHub', url }]);
         c.pos.github = Math.max(c.pos.github ?? 0, 0.8 * posScore(i, items.length));
+        if (i < GITHUB_EARLY_LOOKUPS) startLookup(c);
       });
     } catch (err) {
       warn('github', `GitHub 검색 실패 (${shortErr(err)})`);
     }
   };
 
-  await Promise.all([collectLocal(), collectSkillsSh(), collectGithub()]);
+  await Promise.all([timed('local', collectLocal), timed('skillssh', collectSkillsSh), timed('github', collectGithub)]);
   timings.collect = Date.now() - t0;
 
   const ranked = () => [...cands.values()].sort((a, b) => prelim(b) - prelim(a));
@@ -263,111 +352,105 @@ export async function runSearch(
     .map((c) => toItem(c, lookup, { R: Math.min(1, prelim(c)), P: 0, F: freshness(c.skill!.last_commit_at), T: trust(c.skill!, lookup) }, settings.weights));
   emit({ type: 'candidates', items: provisional });
 
-  // 2. enrich: candidates not in the local index yet (skills.sh / GitHub / lazily indexed plugins)
+  // 2. enrich: wait for the lookups (already running), plus any top candidate not started yet
   emit({ type: 'stage', stage: 'enrich', message: '상위 후보의 SKILL.md와 저장소 정보를 확인하는 중' });
   const top = ranked().slice(0, MAX_ENRICH);
   const ready = top.filter((c) => !c.pending);
-  const late: Candidate[] = [];
-  const deadline = Date.now() + ENRICH_DEADLINE_MS;
-  let unresolved = 0;
-  await pool(
-    top.filter((c) => c.pending),
-    ENRICH_CONCURRENCY,
-    async (c) => {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) {
-        unresolved++;
-        return;
-      }
-      try {
-        const p = c.pending!;
-        if (p.type === 'plugin') {
-          await withTimeout(indexer.indexPlugin(p.plugin.id), remaining, 'timeout');
-          let skills = match ? store.searchSkillsInPlugin(match, p.plugin.id, 3).map((x) => x.skill) : [];
-          if (skills.length === 0) skills = store.listSkillsByPlugin(p.plugin.id).slice(0, 2);
-          const plugin = store.getPlugin(p.plugin.id) ?? p.plugin;
-          for (const s of skills) late.push({ ...blank(s.id, s), sources: [marketplaceSource(s, plugin)], pos: { ...c.pos } });
-          if (skills.length === 0) unresolved++;
-          return;
-        }
-        let skill: SkillRow | null = null;
-        if (p.type === 'skillssh') {
-          const src = classifySkillsShSource(p.hit.source);
-          if (src?.kind === 'github') skill = await withTimeout(indexer.findInRepo(src.repo, p.hit.name, p.hit.skillId), remaining, 'timeout');
-          else if (src?.kind === 'domain') skill = indexer.wellKnownRow(src.domain, p.hit.name, p.hit.installs);
-        } else {
-          skill = await withTimeout(indexer.findByPath(p.repo, p.path), remaining, 'timeout');
-        }
-        if (!skill) {
-          unresolved++;
-          return;
-        }
-        late.push({ ...c, key: skill.id, skill, pending: null });
-      } catch {
-        unresolved++;
-      }
-    },
-  );
-  if (unresolved > 0) warn('enrich', `${unresolved}개 후보는 아직 확인 중이라 이번 결과에서 빠졌습니다. 1분쯤 뒤 다시 검색하면 포함됩니다.`);
-
-  const merged = mergeById([...ready, ...late]);
-  for (const c of merged) {
-    if (c.installs != null && c.installs > 0 && c.skill) store.setSkillInstalls(c.skill.id, c.installs);
-    if (c.installs == null && c.skill?.installs) c.installs = c.skill.installs;
+  // Star counts for the already-indexed candidates load while the lookups run.
+  const readyRepos = [...new Set(ready.map((c) => c.skill!.repo).filter((r): r is string => !!r))];
+  void pool(readyRepos.slice(0, 15), 6, (r) => github.getRepoMeta(r).catch(() => null));
+  for (const c of top) startLookup(c);
+  const settled = Promise.all(lookups);
+  // Most lookups finish within a second or two, but a giant mirror repo (tree too big for the API, so a
+  // git fetch) takes 5–7s. Show the finished results after a short wait and fold stragglers in when done.
+  const allDone = await Promise.race([settled.then(() => true), sleep(INTERIM_WAIT_MS).then(() => false)]);
+  if (!allDone) emit(await buildResults([...late], false));
+  await settled;
+  if (outcomes.timeout > 0) {
+    warn('enrich', `${outcomes.timeout}개 후보는 GitHub 응답이 늦어 이번 결과에서 빠졌습니다. 확인은 계속 진행되니 잠시 뒤 다시 검색하면 포함됩니다.`);
   }
-  const finalists = dedupeByContent(merged, lookup)
-    .sort((a, b) => prelim(b) - prelim(a))
-    .slice(0, MAX_ENRICH);
+  if (outcomes.error > 0) warn('enrich-skip', `GitHub에서 읽지 못한 후보 ${outcomes.error}개는 뺐습니다.`);
+  if (outcomes.missing > 0) {
+    warn('enrich-skip', `설치할 수 있는 SKILL.md가 없는 후보 ${outcomes.missing}개는 뺐습니다 (예제·템플릿이거나 이름이 바뀐 스킬).`);
+  }
 
-  // stars (cached 24h; skipped when the quota is short)
-  const repos = [...new Set(finalists.map((c) => c.skill!.repo).filter((r): r is string => !!r))];
-  const stars = new Map<string, number | null>();
-  await pool(repos.slice(0, 15), 6, async (r) => {
-    const meta = await github.getRepoMeta(r).catch(() => null);
-    stars.set(r.toLowerCase(), meta?.stars ?? null);
-  });
-  for (const r of repos.slice(15)) stars.set(r.toLowerCase(), store.getRepo(r)?.stars ?? null);
   timings.enrich = Date.now() - t0 - timings.collect;
 
   // 3. score
   emit({ type: 'stage', stage: 'score', message: '점수를 계산하는 중' });
-  const bm = finalists.map((c) => c.bm25).filter((b): b is number => b != null);
-  const best = bm.length ? Math.min(...bm) : 0;
-  const worst = bm.length ? Math.max(...bm) : 0;
-  const maxInstalls = Math.max(0, ...finalists.map((c) => c.installs ?? 0));
-  const maxStars = Math.max(0, ...finalists.map((c) => stars.get(c.skill!.repo?.toLowerCase() ?? '') ?? 0));
-  let hiddenHighRisk = 0;
-  let hiddenNoDescription = 0;
-  const items: ResultItem[] = [];
-  for (const c of finalists) {
-    const s = c.skill!;
-    // Name-only hits (well-known sources without a description) can't be judged or read.
-    if (!s.description) {
-      hiddenNoDescription++;
-      continue;
-    }
-    if (RISK_ORDER[(s.risk_level as RiskLevel) ?? 'low'] > RISK_ORDER[maxRisk]) {
-      hiddenHighRisk++;
-      continue;
-    }
-    const st = s.repo ? (stars.get(s.repo.toLowerCase()) ?? null) : null;
-    const breakdown: Breakdown = {
-      R: relevance(c, best, worst, query),
-      P: popularity({ installs: c.installs, stars: st }, maxInstalls, maxStars),
-      F: freshness(s.last_commit_at),
-      T: trust(s, lookup),
-    };
-    items.push(toItem(c, lookup, breakdown, settings.weights, st));
-  }
-  items.sort((a, b) => b.score - a.score);
-  const results = { type: 'results' as const, items: items.slice(0, MAX_RESULTS), hiddenHighRisk, hiddenNoDescription };
+  const results = await buildResults(late, true);
   emit(results);
   if (results.items.length > 0) {
-    store.putCached(key, { warnings, results, cachedAt: Date.now(), ...(unresolved > 0 ? { ttlMs: PARTIAL_CACHE_MS } : {}) } satisfies CachedSearch);
+    const partial = outcomes.timeout + outcomes.error > 0;
+    store.putCached(key, { warnings, results, cachedAt: Date.now(), ...(partial ? { ttlMs: PARTIAL_CACHE_MS } : {}) } satisfies CachedSearch);
   }
   const elapsedMs = Date.now() - t0;
-  console.log(`[search] ${elapsedMs}ms ${JSON.stringify(timings)} results=${results.items.length} q=${JSON.stringify(query)}`);
+  const slowest = slow
+    .sort((a, b) => b.ms - a.ms)
+    .slice(0, 4)
+    .map((s) => `${s.what} ${s.ms}ms${s.outcome === 'found' ? '' : ` (${s.outcome})`}`);
+  console.log(
+    `[search] ${elapsedMs}ms ${JSON.stringify(timings)} lookups=${JSON.stringify(outcomes)} results=${results.items.length}${allDone ? '' : ' (interim sent)'} q=${JSON.stringify(query)}` +
+      (slowest.length ? `\n  slowest: ${slowest.join(' | ')}` : '') +
+      (errors.length ? `\n  errors: ${errors.slice(0, 3).join(' | ')}` : ''),
+  );
   emit({ type: 'done', cached: false, elapsedMs });
+
+  /** Scores the indexed candidates plus the resolved ones; `final` also refreshes star counts from GitHub. */
+  async function buildResults(resolved: Candidate[], final: boolean): Promise<Extract<SearchEvent, { type: 'results' }>> {
+    const merged = mergeById([...ready, ...resolved]);
+    for (const c of merged) {
+      if (c.installs != null && c.installs > 0 && c.skill) store.setSkillInstalls(c.skill.id, c.installs);
+      if (c.installs == null && c.skill?.installs) c.installs = c.skill.installs;
+    }
+    const finalists = dedupeByContent(merged, lookup)
+      .sort((a, b) => prelim(b) - prelim(a))
+      .slice(0, MAX_ENRICH);
+
+    // stars (cached 24h; skipped when the quota is short). Interim results use what is cached.
+    const repos = [...new Set(finalists.map((c) => c.skill!.repo).filter((r): r is string => !!r))];
+    const stars = new Map<string, number | null>();
+    const tStars = Date.now();
+    if (final) {
+      await pool(repos.slice(0, 15), 6, async (r) => {
+        const meta = await github.getRepoMeta(r).catch(() => null);
+        stars.set(r.toLowerCase(), meta?.stars ?? null);
+      });
+      timings.stars = Date.now() - tStars;
+    }
+    for (const r of repos) if (!stars.has(r.toLowerCase())) stars.set(r.toLowerCase(), store.getRepo(r)?.stars ?? null);
+
+    const bm = finalists.map((c) => c.bm25).filter((b): b is number => b != null);
+    const best = bm.length ? Math.min(...bm) : 0;
+    const worst = bm.length ? Math.max(...bm) : 0;
+    const maxInstalls = Math.max(0, ...finalists.map((c) => c.installs ?? 0));
+    const maxStars = Math.max(0, ...finalists.map((c) => stars.get(c.skill!.repo?.toLowerCase() ?? '') ?? 0));
+    let hiddenHighRisk = 0;
+    let hiddenNoDescription = 0;
+    const items: ResultItem[] = [];
+    for (const c of finalists) {
+      const s = c.skill!;
+      // Name-only hits (well-known sources without a description) can't be judged or read.
+      if (!s.description) {
+        hiddenNoDescription++;
+        continue;
+      }
+      if (RISK_ORDER[(s.risk_level as RiskLevel) ?? 'low'] > RISK_ORDER[maxRisk]) {
+        hiddenHighRisk++;
+        continue;
+      }
+      const st = s.repo ? (stars.get(s.repo.toLowerCase()) ?? null) : null;
+      const breakdown: Breakdown = {
+        R: relevance(c, best, worst, query),
+        P: popularity({ installs: c.installs, stars: st }, maxInstalls, maxStars),
+        F: freshness(s.last_commit_at),
+        T: trust(s, lookup),
+      };
+      items.push(toItem(c, lookup, breakdown, settings.weights, st));
+    }
+    items.sort((a, b) => b.score - a.score);
+    return { type: 'results' as const, items: items.slice(0, MAX_RESULTS), hiddenHighRisk, hiddenNoDescription };
+  }
 }
 
 /** Folds candidates that resolved to the same skill row into one (first one wins as the base). */

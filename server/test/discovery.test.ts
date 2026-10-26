@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { classifyRepo, discoverRepo } from '../src/discovery/classifyRepo.ts';
-import { discoverGenericSkills, priorityCandidateDirs } from '../src/discovery/genericRules.ts';
+import { discoverGenericSkills, genericAcceptor, priorityCandidateDirs } from '../src/discovery/genericRules.ts';
 import { discoverPluginSkills } from '../src/discovery/pluginRules.ts';
 import { resolveRel, TreeIndex } from '../src/discovery/tree.ts';
 import { genericValidator } from '../src/indexer.ts';
@@ -149,5 +149,42 @@ describe('source 해석', () => {
     assert.equal(resolveRel('plugins/a', '../../x'), null);
     assert.equal(resolveRel('plugins/a', './skills/'), 'plugins/a/skills');
     assert.equal(resolveRel('', '/etc'), null);
+  });
+});
+
+describe('폴더 하나씩 판단하는 일반 규칙 (검색 중 단일 스킬 조회)', () => {
+  const skill = (name: string) => `---\nname: ${name}\ndescription: does ${name}\n---\nbody`;
+  const cases: Record<string, fx.FakeTree> = {
+    genericCurated: fx.genericCurated,
+    genericRecursive: fx.genericRecursive,
+    genericRoot: fx.genericRoot,
+    genericAgentDirs: fx.genericAgentDirs,
+    // priority folder present but invalid → deeper folders count
+    invalidPriority: { 'skills/a/SKILL.md': 'no frontmatter', 'deep/x/y/SKILL.md': skill('y') },
+    // valid priority folder hides deeper ones
+    validPriority: { 'skills/a/SKILL.md': skill('a'), 'skills/b/SKILL.md': 'no frontmatter', 'deep/x/y/SKILL.md': skill('y') },
+    // invalid root SKILL.md does not hide the rest
+    invalidRoot: { 'SKILL.md': 'no frontmatter', 'skills/a/SKILL.md': skill('a') },
+  };
+  for (const [label, tree] of Object.entries(cases)) {
+    it(`전체 탐색과 같은 폴더를 받아들인다: ${label}`, async () => {
+      const { index, read } = load(tree);
+      const full = (await discoverGenericSkills(index, read, genericValidator)).map((s) => s.dirPath).sort();
+      const acceptor = genericAcceptor(index, read, genericValidator);
+      const accepted: string[] = [];
+      for (const dir of acceptor.candidates) if ((await acceptor.accepts(dir)) != null) accepted.push(dir);
+      assert.deepEqual(accepted.sort(), full);
+    });
+  }
+
+  it('필요한 SKILL.md만 읽는다', async () => {
+    const tree: fx.FakeTree = {};
+    for (let i = 0; i < 200; i++) tree[`skills/s${i}/SKILL.md`] = skill(`s${i}`);
+    const { index } = load(tree);
+    const reads: string[] = [];
+    const read = async (p: string) => (reads.push(p), tree[p] ?? null);
+    const raw = await genericAcceptor(index, read, genericValidator).accepts('skills/s150');
+    assert.ok(raw?.includes('name: s150'));
+    assert.deepEqual(reads, ['skills/s150/SKILL.md']);
   });
 });

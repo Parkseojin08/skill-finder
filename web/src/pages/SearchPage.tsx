@@ -294,7 +294,18 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
           {status !== 'idle' && (
             <div className="results-toolbar" ref={resultsRef}>
               <div className="toolbar-left" aria-live="polite">
-                {status === 'running' ? (
+                {status === 'running' && final ? (
+                  // results are in; a few slow lookups (huge repos) are still being folded in
+                  <span className="status-line">
+                    <span>
+                      <b>{sorted.length}</b>
+                      {filtering && <span className="muted"> / {items.length}</span>}개 결과
+                    </span>
+                    <span className="muted small status-line">
+                      <span className="spinner" aria-hidden="true" /> 나머지 후보 확인 중
+                    </span>
+                  </span>
+                ) : status === 'running' ? (
                   <span className="status-line">
                     <span className="spinner" aria-hidden="true" /> {stage ? STAGES[stage] : '검색'} 중…
                   </span>

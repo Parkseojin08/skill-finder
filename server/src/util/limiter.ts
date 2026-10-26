@@ -40,6 +40,28 @@ export class TokenBucket {
   }
 }
 
+/** At most `limit` holders at once across all callers (e.g. raw GitHub downloads from many lookups). */
+export class Semaphore {
+  private active = 0;
+  private readonly waiting: Array<() => void> = [];
+  private readonly limit: number;
+
+  constructor(limit: number) {
+    this.limit = limit;
+  }
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.active >= this.limit) await new Promise<void>((resolve) => this.waiting.push(resolve));
+    this.active++;
+    try {
+      return await fn();
+    } finally {
+      this.active--;
+      this.waiting.shift()?.();
+    }
+  }
+}
+
 /** Runs `fn` over items with bounded concurrency; results keep input order. Errors are returned, not thrown. */
 export async function pool<T, R>(
   items: readonly T[],

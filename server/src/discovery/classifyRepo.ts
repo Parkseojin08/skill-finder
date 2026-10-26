@@ -54,10 +54,13 @@ export async function discoverRepo(
   tree: TreeIndex,
   read: SkillMdReader,
   validate: SkillMdValidator,
+  /** `genericSkills: false` skips reading every SKILL.md of a generic repo (single-skill lookups decide per folder). */
+  opts: { genericSkills?: boolean } = {},
 ): Promise<RepoDiscovery> {
+  const generic = () => (opts.genericSkills === false ? Promise.resolve([]) : discoverGenericSkills(tree, read, validate));
   const mode = classifyRepo(tree);
   if (mode === 'generic') {
-    return { mode, marketplaceName: null, plugins: [], generic: await discoverGenericSkills(tree, read, validate) };
+    return { mode, marketplaceName: null, plugins: [], generic: await generic() };
   }
   if (mode === 'plugin') {
     const manifest = parseJsonObject(await read(PLUGIN_JSON));
@@ -75,19 +78,23 @@ export async function discoverRepo(
       const d = discoverPluginSkills(tree, '', manifest, null);
       return { mode: 'plugin', marketplaceName: null, plugins: [{ ...d, name: String(manifest?.name ?? ''), manifest }], generic: [] };
     }
-    return { mode: 'generic', marketplaceName: null, plugins: [], generic: await discoverGenericSkills(tree, read, validate) };
+    return { mode: 'generic', marketplaceName: null, plugins: [], generic: await generic() };
   }
   const pluginRoot = market.metadata?.pluginRoot ?? null;
-  const plugins: DiscoveredPlugin[] = [];
-  for (const entry of market.plugins as MarketplaceEntry[]) {
+  const entries = (market.plugins as MarketplaceEntry[]).flatMap((entry) => {
     const src = normalizeSource(entry.source, pluginRoot);
-    if (src.kind !== 'relative') continue;
+    if (src.kind !== 'relative') return [];
     const root = resolveRelativeRoot(src.raw, pluginRoot, tree);
-    if (root == null || !tree.hasDir(root)) continue;
-    const manifestPath = joinPath(root, PLUGIN_JSON);
-    const manifest = tree.hasFile(manifestPath) ? parseJsonObject(await read(manifestPath)) : null;
-    const d = discoverPluginSkills(tree, root, manifest, entry, { entryAtMarketplaceRoot: root === '' });
-    plugins.push({ ...d, name: entry.name, manifest });
-  }
+    return root != null && tree.hasDir(root) ? [{ entry, root }] : [];
+  });
+  // Manifests are independent files; reading them one after another made a 100-plugin marketplace take 100 round trips.
+  const plugins: DiscoveredPlugin[] = await Promise.all(
+    entries.map(async ({ entry, root }) => {
+      const manifestPath = joinPath(root, PLUGIN_JSON);
+      const manifest = tree.hasFile(manifestPath) ? parseJsonObject(await read(manifestPath)) : null;
+      const d = discoverPluginSkills(tree, root, manifest, entry, { entryAtMarketplaceRoot: root === '' });
+      return { ...d, name: entry.name, manifest };
+    }),
+  );
   return { mode, marketplaceName: market.name, plugins, generic: [] };
 }

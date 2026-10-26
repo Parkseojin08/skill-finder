@@ -3,6 +3,7 @@ import { extractSkillMeta } from './analyze/frontmatter.ts';
 import { qualityWarnings } from './analyze/quality.ts';
 import { pluginRiskFlags, riskLevel, skillRiskFlags, type PluginSignals, type RiskFlag } from './analyze/risk.ts';
 import { discoverRepo, parseJsonObject, PLUGIN_JSON, type RepoDiscovery } from './discovery/classifyRepo.ts';
+import { genericAcceptor, type GenericAcceptor } from './discovery/genericRules.ts';
 import { discoverPluginSkills, type MarketplaceEntry } from './discovery/pluginRules.ts';
 import { basename, joinPath, skillMdPath, TreeIndex } from './discovery/tree.ts';
 import type { PluginRow, SkillRow, Store } from './db/store.ts';
@@ -100,11 +101,13 @@ export function pluginFtsText(p: PluginRow | null): string {
 }
 
 type RepoSnapshot = { tree: RepoTree; index: TreeIndex; read: (path: string) => Promise<string | null> };
+/** What single-skill lookups need from a repo: its tree, plugin layout, and the generic rules per folder. */
+type RepoLookup = { snap: RepoSnapshot; discovery: RepoDiscovery; generic: GenericAcceptor };
 
 export class Indexer {
   private readonly store: Store;
   private readonly github: GitHub;
-  private readonly discoveryCache = new Map<string, Promise<{ snap: RepoSnapshot; discovery: RepoDiscovery }>>();
+  private readonly discoveryCache = new Map<string, Promise<RepoLookup>>();
 
   constructor(store: Store, github: GitHub) {
     this.store = store;
@@ -116,15 +119,18 @@ export class Indexer {
     sha = tree.sha;
     const index = new TreeIndex(tree.entries);
     const memo = new Map<string, Promise<string | null>>();
+    // null only means "not there" (not in the tree, or a 404). A failed download throws, so a busy
+    // GitHub is never mistaken for a missing SKILL.md (that used to drop real skills from results).
     const read = (path: string) => {
       let p = memo.get(path);
       if (!p) {
         p = index.hasFile(path)
-          ? this.github
-              .getRawText(repo, sha, path)
-              .then((r) => r.text)
-              .catch(() => null)
+          ? this.github.getRawText(repo, sha, path).then((r) => {
+              if (r.text != null || r.status === 404) return r.text;
+              throw new Error(`${repo}/${path} 읽기 실패 (${r.status})`);
+            })
           : Promise.resolve(null);
+        p.catch(() => memo.delete(path));
         memo.set(path, p);
       }
       return p;
@@ -193,15 +199,19 @@ export class Indexer {
     }
   }
 
-  /** Classifies and discovers a repo at its default branch head; memoized per commit. */
-  private discoverAtHead(repo: string): Promise<{ snap: RepoSnapshot; discovery: RepoDiscovery }> {
+  /**
+   * A repo at its default branch head, prepared for single-skill lookups; memoized for 10 minutes.
+   * Plugin layouts come from the manifests; generic folders are judged one at a time on demand.
+   */
+  private discoverAtHead(repo: string): Promise<RepoLookup> {
     const key = repo.toLowerCase();
     let p = this.discoveryCache.get(key);
     if (!p) {
       p = (async () => {
+        void this.github.getRepoMeta(repo).catch(() => null); // needed for the row's last commit; fetch alongside the tree
         const snap = await this.snapshot(repo, 'HEAD');
-        const discovery = await discoverRepo(snap.index, snap.read, genericValidator);
-        return { snap, discovery };
+        const discovery = await discoverRepo(snap.index, snap.read, genericValidator, { genericSkills: false });
+        return { snap, discovery, generic: genericAcceptor(snap.index, snap.read, genericValidator) };
       })();
       p.catch(() => this.discoveryCache.delete(key));
       this.discoveryCache.set(key, p);
@@ -246,43 +256,69 @@ export class Indexer {
     return this.store.getSkill(row.id)!;
   }
 
-  /** Finds a skill in a repo by name or folder name (skills.sh hits). */
+  /**
+   * SKILL.md text if `dir` is installable: listed by a marketplace plugin, or else by the skills CLI's
+   * generic rules (which is how `skills add --skill` would find it). null otherwise.
+   */
+  private acceptDir(lookup: RepoLookup, dir: string): Promise<string | null> {
+    if (lookup.discovery.plugins.some((p) => p.skillDirs.includes(dir))) return lookup.snap.read(skillMdPath(dir));
+    return lookup.generic.accepts(dir);
+  }
+
+  /**
+   * Finds a skill in a repo by name or folder name (skills.sh hits). Folders named like the skill are read
+   * first (almost always the hit); the rest are read in small batches only if that fails.
+   * Returns null when the repo has no such installable skill; throws when GitHub could not be read.
+   */
   async findInRepo(repo: string, name: string, folderHint?: string | null): Promise<SkillRow | null> {
-    const { snap, discovery } = await this.discoverAtHead(repo);
+    const lookup = await this.discoverAtHead(repo);
     const want = new Set([normalizeSkillName(name), ...(folderHint ? [normalizeSkillName(folderHint)] : [])]);
-    if (discovery.mode === 'generic') {
-      const hit =
-        discovery.generic.find((g) => normalizeSkillName(g.name) === normalizeSkillName(name)) ??
-        discovery.generic.find((g) => want.has(normalizeSkillName(basename(g.dirPath || repo))));
-      return hit ? this.rowFromDiscovery(repo, snap, discovery, hit.dirPath, hit.raw) : null;
-    }
-    const dirs = [...new Set(discovery.plugins.flatMap((p) => p.skillDirs))];
+    const dirs = [...new Set([...lookup.discovery.plugins.flatMap((p) => p.skillDirs), ...lookup.generic.candidates])];
     const byFolder = dirs.filter((d) => want.has(normalizeSkillName(basename(d || repo))));
-    for (const group of [byFolder, dirs.filter((d) => !byFolder.includes(d)).slice(0, 200)]) {
-      const raws = await Promise.all(group.map((d) => snap.read(skillMdPath(d))));
-      for (let i = 0; i < group.length; i++) {
-        const raw = raws[i];
-        if (raw == null) continue;
-        const meta = extractSkillMeta(raw, basename(group[i] || repo));
-        if (normalizeSkillName(meta.name) === normalizeSkillName(name) || (group === byFolder && !meta.nameFromFrontmatter)) {
-          return this.rowFromDiscovery(repo, snap, discovery, group[i], raw);
-        }
-      }
+    const matches = (dir: string, raw: string, folderMatch: boolean) => {
+      const meta = extractSkillMeta(raw, basename(dir || repo));
+      return normalizeSkillName(meta.name) === normalizeSkillName(name) || (folderMatch && !meta.nameFromFrontmatter);
+    };
+    for (const dir of byFolder) {
+      const raw = await this.acceptDir(lookup, dir);
+      if (raw != null && matches(dir, raw, true)) return this.rowFromDiscovery(repo, lookup.snap, lookup.discovery, dir, raw);
+    }
+    // Folder named differently from the skill: read folders whose path shares a word with the name
+    // (or every folder in a small repo). Scanning hundreds of SKILL.md files for a name that is not
+    // there cost ~10s and almost never found anything.
+    const others = dirs.filter((d) => !byFolder.includes(d));
+    const words = normalizeSkillName(name)
+      .split(/[-.]+/)
+      .filter((w) => w.length >= 3);
+    const overlap = (d: string) => words.filter((w) => d.toLowerCase().includes(w)).length;
+    const rest =
+      others.length <= 48
+        ? others
+        : others
+            .map((d) => ({ d, n: overlap(d) }))
+            .filter((x) => x.n > 0)
+            .sort((a, b) => b.n - a.n)
+            .slice(0, 48)
+            .map((x) => x.d);
+    for (let i = 0; i < rest.length; i += 24) {
+      const batch = rest.slice(i, i + 24);
+      const raws = await Promise.all(batch.map((d) => this.acceptDir(lookup, d)));
+      const hit = batch.findIndex((d, j) => raws[j] != null && matches(d, raws[j]!, false));
+      if (hit >= 0) return this.rowFromDiscovery(repo, lookup.snap, lookup.discovery, batch[hit], raws[hit]!);
     }
     return null;
   }
 
-  /** Accepts a code-search hit only if the discovery rules also list that folder (filters templates etc.). */
+  /**
+   * Accepts a code-search hit only if a plugin or the generic rules list that folder (filters templates,
+   * examples, invalid SKILL.md). Returns null when not installable; throws when GitHub could not be read.
+   */
   async findByPath(repo: string, skillMdFile: string): Promise<SkillRow | null> {
     const dirPath = skillMdFile === 'SKILL.md' ? '' : skillMdFile.replace(/\/SKILL\.md$/, '');
-    const { snap, discovery } = await this.discoverAtHead(repo);
-    if (discovery.mode === 'generic') {
-      const hit = discovery.generic.find((g) => g.dirPath === dirPath);
-      return hit ? this.rowFromDiscovery(repo, snap, discovery, hit.dirPath, hit.raw) : null;
-    }
-    if (!discovery.plugins.some((p) => p.skillDirs.includes(dirPath))) return null;
-    const raw = await snap.read(skillMdPath(dirPath));
-    return raw == null ? null : this.rowFromDiscovery(repo, snap, discovery, dirPath, raw);
+    const lookup = await this.discoverAtHead(repo);
+    if (!lookup.snap.index.hasFile(skillMdPath(dirPath))) return null;
+    const raw = await this.acceptDir(lookup, dirPath);
+    return raw == null ? null : this.rowFromDiscovery(repo, lookup.snap, lookup.discovery, dirPath, raw);
   }
 
   /** Placeholder row for a skills.sh hit served from a well-known endpoint (no preview in the MVP). */
