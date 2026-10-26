@@ -1,5 +1,5 @@
 import { Icon } from './Icon.tsx';
-import { formatAgo, formatCount, METHOD } from '../labels.ts';
+import { CATEGORY, formatAgo, formatCount, METHOD } from '../labels.ts';
 import { useKorean } from '../translate.ts';
 import type { ResultItem } from '../types.ts';
 import { RiskSummary, ScoreBar, SourceBadges } from './Badges.tsx';
@@ -53,6 +53,13 @@ export function ResultCard({ item, position, provisional, onSelect }: { item: Re
               <Icon name="clock" size={14} /> {formatAgo(item.lastCommitAt)}
             </span>
           )}
+          {(item.categories ?? [])
+            .filter((c) => c !== 'other')
+            .map((c) => (
+              <span key={c} className="cat-tag" title="자동 분류된 카테고리">
+                #{CATEGORY[c] ?? c}
+              </span>
+            ))}
         </div>
         <div className="card-tags">
           <RiskSummary level={item.riskLevel} flags={item.riskFlags} />

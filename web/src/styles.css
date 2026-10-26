@@ -453,7 +453,7 @@ main {
 
 /* search */
 .search-page {
-  max-width: 900px;
+  max-width: 1100px;
 }
 .search-hero {
   margin-bottom: 18px;
@@ -738,6 +738,129 @@ button.status-chip.action:hover:not(:disabled) {
   display: grid;
   gap: 10px;
   margin-top: 14px;
+}
+
+/* result filters (sidebar) */
+.results-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+.results-main {
+  min-width: 0;
+}
+.facets {
+  position: sticky;
+  top: 76px;
+  max-height: calc(100vh - 92px);
+  /* room for the options' hover background, which reaches 8px past the text column */
+  padding-inline: 8px;
+  margin-inline: -8px;
+  overflow: hidden auto;
+  scrollbar-width: thin;
+}
+.facets-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 55px;
+  padding: 10px 0;
+  margin-bottom: 14px;
+  border-bottom: 1px dashed var(--border-strong);
+}
+.facets-title {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+.facets-title::before {
+  content: '> ';
+  content: '> ' / '';
+  color: var(--accent);
+}
+.facets-toggle {
+  display: none;
+}
+.facet {
+  border: 0;
+  padding: 0;
+  margin: 0 0 18px;
+  min-width: 0;
+}
+.facet legend {
+  padding: 0;
+  margin-bottom: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.facet legend::before {
+  content: '# ';
+  content: '# ' / '';
+  color: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.facet-opt {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  margin: 0 -8px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: background-color 0.15s var(--ease), color 0.15s var(--ease);
+}
+.facet-opt:hover {
+  background: var(--muted-bg);
+  color: var(--text);
+}
+.facet-opt:has(input:checked) {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.facet-opt:has(input:disabled) {
+  opacity: 0.45;
+  cursor: default;
+}
+.facet-opt:has(input:disabled):hover {
+  background: none;
+  color: var(--text-soft);
+}
+.facet-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.facet-hint {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.facet-count {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.facet-opt:has(input:checked) .facet-count {
+  color: var(--accent);
+}
+.facet-note {
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.cat-tag {
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  color: color-mix(in srgb, var(--cyan) 80%, var(--muted));
+  white-space: nowrap;
 }
 
 .pager {
@@ -1511,6 +1634,48 @@ button.primary.danger-solid:hover:not(:disabled) {
   }
   .kbd-hint {
     display: none;
+  }
+  /* Narrow screens: filters fold into a "필터" button above the results. */
+  .results-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .facets {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+  .facets-head {
+    min-height: 0;
+    padding: 0;
+    margin: 4px 0 8px;
+    border: 0;
+    justify-content: flex-start;
+  }
+  .facets-title {
+    display: none;
+  }
+  .facets-toggle {
+    display: inline-flex;
+    min-height: 38px;
+    padding: 4px 14px;
+  }
+  .facets.open .facets-toggle {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .facets:not(.open) .facet-body {
+    display: none;
+  }
+  .facet-body {
+    padding: 14px 16px 6px;
+    margin-bottom: 4px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .facet-opt {
+    min-height: 40px;
   }
   /* Narrow screens: the notices popover spans the toolbar instead of hanging off the summary. */
   .notices {

@@ -138,7 +138,8 @@ export async function runSearch(
   const settings = getSettings(store);
   const sources = new Set<SourceKind>(filters.sources?.length ? filters.sources : ['marketplace', 'skillssh', 'github']);
   const maxRisk: RiskLevel = filters.maxRisk ?? 'medium';
-  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken });
+  // `r` is the result-item shape; bump it when items gain fields so cached searches are rebuilt.
+  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, r: 4 });
 
   const cached = store.getCached(key, DAY_MS) as CachedSearch | undefined;
   const fresh = cached && !(cached.ttlMs && cached.cachedAt && Date.now() - cached.cachedAt > cached.ttlMs);

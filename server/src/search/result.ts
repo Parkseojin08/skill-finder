@@ -2,7 +2,8 @@ import type { RiskLevel } from '../analyze/risk.ts';
 import type { MarketplaceRow, PluginRow, SkillRow, Store } from '../db/store.ts';
 import { planInstall, type InstallMethod } from '../install/plan.ts';
 import { truncate } from '../util/sanitize.ts';
-import { trustTier, type Breakdown } from './rank.ts';
+import { categorize, type Category } from './category.ts';
+import { trustTier, type Breakdown, type TrustTier } from './rank.ts';
 
 export type SourceKind = 'marketplace' | 'skillssh' | 'github';
 export type SourceRef = { kind: SourceKind; label: string; url: string };
@@ -23,6 +24,10 @@ export type ResultItem = {
   qualityWarnings: string[];
   install: { method: InstallMethod; command: string; pluginId?: string; disabled?: boolean };
   plugin?: { id: string; name: string; marketplace: string; skillCount: number };
+  /** Who stands behind it (same tiers as the T score); the sidebar filters on it. */
+  trust: TrustTier;
+  /** 1–2 rule-based categories from the marketplace category and name/description keywords. */
+  categories: Category[];
 };
 
 export const TRUST_LABEL = { official: '공식', partner: '파트너', community: '커뮤니티' } as const;
@@ -118,5 +123,7 @@ export function buildResultItem(a: {
     ...(plugin
       ? { plugin: { id: plugin.id, name: plugin.name, marketplace: plugin.marketplace, skillCount: a.lookup.pluginSkillCount(plugin.id) } }
       : {}),
+    trust: trustTier(skill, plugin),
+    categories: categorize({ name: skill.name, description: desc, whenToUse: skill.when_to_use, marketplaceCategory: plugin?.category }),
   };
 }

@@ -1,4 +1,4 @@
-import type { InstallMethod, RiskLevel } from './types.ts';
+import type { InstallMethod, RiskLevel, TrustTier } from './types.ts';
 
 export const RISK_FLAGS: Record<string, { label: string; meaning: string; info?: boolean }> = {
   scripts: { label: '스크립트 포함', meaning: '실행 가능한 코드(.sh, .py, .js 등)가 들어 있습니다.' },
@@ -34,7 +34,31 @@ export const RISK_LEVEL: Record<RiskLevel, string> = { low: '위험 낮음', med
 
 export const METHOD: Record<InstallMethod, string> = { plugin: '플러그인 설치', 'skills-cli': 'skills CLI 설치', 'manual-only': '수동 설치' };
 
-export const SCOPE: Record<string, string> = { user: '개인 (모든 프로젝트)', project: '프로젝트', local: '로컬 (이 프로젝트, 나만)' };
+export const TRUST: Record<TrustTier, { label: string; hint: string }> = {
+  official: { label: 'Anthropic 공식', hint: 'anthropics 저장소' },
+  partner: { label: '파트너', hint: '공식 마켓의 외부 제작' },
+  community: { label: '커뮤니티', hint: '커뮤니티 마켓' },
+  other: { label: '기타', hint: 'skills.sh·GitHub 등' },
+};
+
+/** Keys and order match server/src/search/category.ts. */
+export const CATEGORY: Record<string, string> = {
+  testing: '테스트',
+  review: '코드 리뷰·품질',
+  git: 'Git·협업',
+  ops: '배포·인프라',
+  security: '보안',
+  data: '데이터·DB',
+  docs: '문서·글쓰기',
+  design: '디자인·UI',
+  ai: 'AI·에이전트',
+  productivity: '생산성·업무',
+  business: '비즈니스·마케팅',
+  dev: '개발 일반',
+  other: '기타',
+};
+
+export const SCOPE: Record<string, string> ={ user: '개인 (모든 프로젝트)', project: '프로젝트', local: '로컬 (이 프로젝트, 나만)' };
 
 export const BREAKDOWN: Record<string, string> = { R: '관련도', P: '인기', F: '최신성', T: '신뢰도' };
 

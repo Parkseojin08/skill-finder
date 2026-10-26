@@ -2,6 +2,7 @@ export type RiskLevel = 'low' | 'medium' | 'high';
 export type SourceKind = 'marketplace' | 'skillssh' | 'github';
 export type InstallMethod = 'plugin' | 'skills-cli' | 'manual-only';
 export type InstallScope = 'user' | 'project' | 'local';
+export type TrustTier = 'official' | 'partner' | 'community' | 'other';
 export type Breakdown = { R: number; P: number; F: number; T: number };
 
 export type SourceRef = { kind: SourceKind; label: string; url: string };
@@ -21,6 +22,9 @@ export type ResultItem = {
   qualityWarnings: string[];
   install: { method: InstallMethod; command: string; pluginId?: string; disabled?: boolean };
   plugin?: { id: string; name: string; marketplace: string; skillCount: number };
+  trust: TrustTier;
+  /** 1–2 rule-based category keys (see CATEGORY in labels.ts). */
+  categories: string[];
 };
 
 export type SearchEvent =

@@ -1,6 +1,7 @@
 import { Icon } from '../components/Icon.tsx';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { apiGet, streamNdjson } from '../api.ts';
+import { FacetPanel, facetCount, matchFacets, NO_FACETS, type Facets } from '../components/FacetPanel.tsx';
 import { ResultCard } from '../components/ResultCard.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { STAGES } from '../labels.ts';
@@ -43,6 +44,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
   const [sort, setSort] = useState<SortKey>('score');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
+  // Sidebar filters narrow the current results in the browser; they stay set across searches.
+  const [facets, setFacets] = useState<Facets>(NO_FACETS);
   const resultsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const noticesRef = useRef<HTMLDetailsElement>(null);
@@ -157,7 +160,14 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
   );
 
   const toggleSource = (s: SourceKind) => setSources((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
-  const sorted = [...items].sort(SORTS.find((s) => s.key === sort)!.compare);
+  const filtered = items.filter((it) => matchFacets(it, facets));
+  const sorted = filtered.sort(SORTS.find((s) => s.key === sort)!.compare);
+  const filtering = facetCount(facets) > 0;
+  const showFacets = status !== 'idle' && (items.length > 0 || filtering);
+  const changeFacets = (f: Facets) => {
+    setFacets(f);
+    setPage(1);
+  };
   const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const pageItems = sorted.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -278,127 +288,141 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
         </div>
       )}
 
-      {status !== 'idle' && (
-        <div className="results-toolbar" ref={resultsRef}>
-          <div className="toolbar-left" aria-live="polite">
-            {status === 'running' ? (
-              <span className="status-line">
-                <span className="spinner" aria-hidden="true" /> {stage ? STAGES[stage] : '검색'} 중…
-              </span>
-            ) : status === 'error' ? (
-              <span className="warn-text">검색 실패</span>
-            ) : (
-              <span>
-                <b>{sorted.length}</b>개 결과
-                {doneInfo && <span className="muted small"> · {doneInfo.cached ? '저장된 결과' : `${(doneInfo.elapsedMs / 1000).toFixed(1)}초`}</span>}
-              </span>
+      <div className={showFacets ? 'results-layout' : undefined}>
+        {showFacets && <FacetPanel items={items} value={facets} onChange={changeFacets} />}
+        <div className="results-main">
+          {status !== 'idle' && (
+            <div className="results-toolbar" ref={resultsRef}>
+              <div className="toolbar-left" aria-live="polite">
+                {status === 'running' ? (
+                  <span className="status-line">
+                    <span className="spinner" aria-hidden="true" /> {stage ? STAGES[stage] : '검색'} 중…
+                  </span>
+                ) : status === 'error' ? (
+                  <span className="warn-text">검색 실패</span>
+                ) : (
+                  <span>
+                    <b>{sorted.length}</b>
+                    {filtering && <span className="muted"> / {items.length}</span>}개 결과
+                    {doneInfo && <span className="muted small"> · {doneInfo.cached ? '저장된 결과' : `${(doneInfo.elapsedMs / 1000).toFixed(1)}초`}</span>}
+                  </span>
+                )}
+                {hiddenRisky > 0 && (
+                  <button
+                    type="button"
+                    className="status-chip action"
+                    title="위험 등급 필터를 '모두'로 바꿔 다시 검색합니다"
+                    onClick={() => {
+                      setMaxRisk('high');
+                      run(lastQuery, 'high');
+                    }}
+                  >
+                    위험 높음 {hiddenRisky}개 숨김 · 모두 보기
+                  </button>
+                )}
+                {minor.length > 0 && (
+                  <details className="notices" ref={noticesRef}>
+                    <summary>
+                      <Icon name="info" size={14} /> 알림 {minor.length}
+                    </summary>
+                    <ul>
+                      {minor.map((m) => (
+                        <li key={m.key}>{m.node}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
+              <div className="toolbar-right">
+                <TranslationNotice compact />
+                {items.length > 0 && (
+                  <>
+                    <select
+                      value={sort}
+                      onChange={(e) => {
+                        setSort(e.target.value as SortKey);
+                        setPage(1);
+                      }}
+                      aria-label="정렬 기준"
+                      title={sort === 'installs' || sort === 'stars' ? `${sort === 'installs' ? '다운로드 수' : '스타 수'}를 모르는 스킬은 뒤로 보냅니다` : undefined}
+                    >
+                      {SORTS.map((s) => (
+                        <option key={s.key} value={s.key}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setPage(1);
+                      }}
+                      aria-label="페이지당 개수"
+                    >
+                      {[5, 10, 20].map((n) => (
+                        <option key={n} value={n}>
+                          {n}개씩
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div role="status">
+            {urgent.map((w, i) => (
+              <div key={i} className="warn-strip">
+                <Icon name="alert" size={15} /> <span>{w.message}</span>
+              </div>
+            ))}
+          </div>
+
+          {provisional && items.length > 0 && <p className="muted small">임시 결과입니다. 후보 확인이 끝나면 갱신됩니다.</p>}
+
+          <div className="results">
+            {pageItems.map((it, i) => (
+              <ResultCard key={it.id} item={it} position={i} provisional={provisional} onSelect={() => onOpen(it)} />
+            ))}
+            {status === 'done' && items.length === 0 && <p className="empty">결과가 없습니다. 다른 영어 표현으로 검색해 보세요.</p>}
+            {items.length > 0 && sorted.length === 0 && (
+              <p className="empty">
+                선택한 필터에 맞는 결과가 없습니다.{' '}
+                <button type="button" className="linkish" onClick={() => changeFacets(NO_FACETS)}>
+                  필터 초기화
+                </button>
+              </p>
             )}
-            {hiddenRisky > 0 && (
-              <button
-                type="button"
-                className="status-chip action"
-                title="위험 등급 필터를 '모두'로 바꿔 다시 검색합니다"
-                onClick={() => {
-                  setMaxRisk('high');
-                  run(lastQuery, 'high');
-                }}
-              >
-                위험 높음 {hiddenRisky}개 숨김 · 모두 보기
+          </div>
+
+          {pageCount > 1 && (
+            <nav className="pager" aria-label="검색 결과 페이지">
+              <button type="button" className="ghost" onClick={() => goPage(currentPage - 1)} disabled={currentPage === 1} aria-label="이전 페이지">
+                <Icon name="back" size={15} />
               </button>
-            )}
-            {minor.length > 0 && (
-              <details className="notices" ref={noticesRef}>
-                <summary>
-                  <Icon name="info" size={14} /> 알림 {minor.length}
-                </summary>
-                <ul>
-                  {minor.map((m) => (
-                    <li key={m.key}>{m.node}</li>
-                  ))}
-                </ul>
-              </details>
-            )}
-          </div>
-          <div className="toolbar-right">
-            <TranslationNotice compact />
-            {items.length > 0 && (
-              <>
-                <select
-                  value={sort}
-                  onChange={(e) => {
-                    setSort(e.target.value as SortKey);
-                    setPage(1);
-                  }}
-                  aria-label="정렬 기준"
-                  title={sort === 'installs' || sort === 'stars' ? `${sort === 'installs' ? '다운로드 수' : '스타 수'}를 모르는 스킬은 뒤로 보냅니다` : undefined}
+              {Array.from({ length: pageCount }, (_, i) => i + 1).map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className={p === currentPage ? 'page-num active' : 'page-num'}
+                  aria-current={p === currentPage ? 'page' : undefined}
+                  onClick={() => goPage(p)}
                 >
-                  {SORTS.map((s) => (
-                    <option key={s.key} value={s.key}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={pageSize}
-                  onChange={(e) => {
-                    setPageSize(Number(e.target.value));
-                    setPage(1);
-                  }}
-                  aria-label="페이지당 개수"
-                >
-                  {[5, 10, 20].map((n) => (
-                    <option key={n} value={n}>
-                      {n}개씩
-                    </option>
-                  ))}
-                </select>
-              </>
-            )}
-          </div>
+                  {p}
+                </button>
+              ))}
+              <button type="button" className="ghost" onClick={() => goPage(currentPage + 1)} disabled={currentPage === pageCount} aria-label="다음 페이지">
+                <Icon name="back" size={15} className="flip" />
+              </button>
+              <span className="muted small pager-info">
+                {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, sorted.length)} / {sorted.length}개
+              </span>
+            </nav>
+          )}
         </div>
-      )}
-
-      <div role="status">
-        {urgent.map((w, i) => (
-          <div key={i} className="warn-strip">
-            <Icon name="alert" size={15} /> <span>{w.message}</span>
-          </div>
-        ))}
       </div>
-
-      {provisional && items.length > 0 && <p className="muted small">임시 결과입니다. 후보 확인이 끝나면 갱신됩니다.</p>}
-
-      <div className="results">
-        {pageItems.map((it, i) => (
-          <ResultCard key={it.id} item={it} position={i} provisional={provisional} onSelect={() => onOpen(it)} />
-        ))}
-        {status === 'done' && items.length === 0 && <p className="empty">결과가 없습니다. 다른 영어 표현으로 검색해 보세요.</p>}
-      </div>
-
-      {pageCount > 1 && (
-        <nav className="pager" aria-label="검색 결과 페이지">
-          <button type="button" className="ghost" onClick={() => goPage(currentPage - 1)} disabled={currentPage === 1} aria-label="이전 페이지">
-            <Icon name="back" size={15} />
-          </button>
-          {Array.from({ length: pageCount }, (_, i) => i + 1).map((p) => (
-            <button
-              key={p}
-              type="button"
-              className={p === currentPage ? 'page-num active' : 'page-num'}
-              aria-current={p === currentPage ? 'page' : undefined}
-              onClick={() => goPage(p)}
-            >
-              {p}
-            </button>
-          ))}
-          <button type="button" className="ghost" onClick={() => goPage(currentPage + 1)} disabled={currentPage === pageCount} aria-label="다음 페이지">
-            <Icon name="back" size={15} className="flip" />
-          </button>
-          <span className="muted small pager-info">
-            {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, sorted.length)} / {sorted.length}개
-          </span>
-        </nav>
-      )}
     </div>
   );
 }
