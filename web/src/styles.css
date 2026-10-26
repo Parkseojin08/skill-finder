@@ -740,6 +740,50 @@ button.status-chip.action:hover:not(:disabled) {
   margin-top: 14px;
 }
 
+/* README recommendation */
+.recommend-page {
+  max-width: 900px;
+}
+.summary-title {
+  margin: 0 0 6px;
+  font-size: 1.15rem;
+}
+.keyword-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+}
+.match-terms {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.match-terms code,
+.keyword-line code {
+  color: var(--cyan);
+}
+.match-why {
+  margin: 6px 4px 0;
+}
+.recommend-pick .card {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: inset 2px 0 0 var(--accent), 0 0 24px -12px var(--accent-glow);
+}
+.recommend-pick h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+}
+.recommend-page > section.recommend-pick,
+.recommend-page > section.recommend-list {
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
 /* result filters (sidebar) */
 .results-layout {
   display: grid;

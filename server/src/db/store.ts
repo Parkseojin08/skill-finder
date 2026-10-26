@@ -347,6 +347,11 @@ export class Store {
     return filtered.slice(0, limit).map(({ _bm25, _mp, ...skill }) => ({ skill: skill as SkillRow, bm25: _bm25 }));
   }
 
+  /** How many indexed skills match an FTS expression (document frequency for README recommendations). */
+  countSkillsFts(match: string): number {
+    return this.get<{ n: number }>('SELECT COUNT(*) AS n FROM skills_fts WHERE skills_fts MATCH ?', match)!.n;
+  }
+
   searchPluginsFts(match: string, limit: number, marketplaces?: string[]): FtsPluginHit[] {
     const rows = this.all<PluginRow & { _bm25: number }>(
       `SELECT p.*, bm25(plugins_fts, 0, 4.0, 2.0, 0.5) AS _bm25

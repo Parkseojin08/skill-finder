@@ -27,6 +27,17 @@ export type ResultItem = {
   categories: string[];
 };
 
+export type SkillMatch = { item: ResultItem; score: number; matchedTerms: string[] };
+
+export type RecommendResult = {
+  readmePath: string;
+  summary: { title: string; intro: string; features: string[] };
+  keywords: Array<{ term: string; weight: number }>;
+  status: 'recommended' | 'candidates' | 'no-match';
+  recommended: SkillMatch | null;
+  candidates: SkillMatch[];
+};
+
 export type SearchEvent =
   | { type: 'stage'; stage: 'collect' | 'enrich' | 'score'; message: string }
   | { type: 'candidates'; items: ResultItem[] }

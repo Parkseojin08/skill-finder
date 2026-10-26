@@ -1,21 +1,23 @@
 import { useCallback, useEffect, useState } from 'react';
 import { InstalledPage } from './pages/InstalledPage.tsx';
 import { MarketplacesPage } from './pages/MarketplacesPage.tsx';
+import { RecommendPage } from './pages/RecommendPage.tsx';
 import { SearchPage } from './pages/SearchPage.tsx';
 import { SettingsPage } from './pages/SettingsPage.tsx';
 import { SkillPage } from './pages/SkillPage.tsx';
 import type { ResultItem } from './types.ts';
 
-type Path = '/' | '/skill' | '/installed' | '/marketplaces' | '/settings';
+type Path = '/' | '/recommend' | '/skill' | '/installed' | '/marketplaces' | '/settings';
 type Route = { path: Path; skillId: string | null };
 
 const NAV: Array<{ path: Path; label: string }> = [
   { path: '/', label: '검색' },
+  { path: '/recommend', label: 'README 추천' },
   { path: '/installed', label: '설치됨' },
   { path: '/marketplaces', label: '마켓플레이스' },
   { path: '/settings', label: '설정' },
 ];
-const PATHS: Path[] = ['/', '/skill', '/installed', '/marketplaces', '/settings'];
+const PATHS: Path[] = ['/', '/recommend', '/skill', '/installed', '/marketplaces', '/settings'];
 
 function readRoute(): Route {
   const p = window.location.pathname as Path;
@@ -51,7 +53,12 @@ export function App() {
     [go],
   );
 
-  const navActive = route.path === '/skill' ? '/' : route.path;
+  // The skill page belongs to whichever list it was opened from.
+  const [listPath, setListPath] = useState<Path>('/');
+  useEffect(() => {
+    if (route.path === '/' || route.path === '/recommend') setListPath(route.path);
+  }, [route.path]);
+  const navActive = route.path === '/skill' ? listPath : route.path;
 
   return (
     <div className="app">
@@ -91,6 +98,9 @@ export function App() {
         {/* Search stays mounted so results survive opening a skill or visiting other pages. */}
         <div hidden={route.path !== '/'}>
           <SearchPage onOpen={openSkill} onQuery={setLastQuery} />
+        </div>
+        <div hidden={route.path !== '/recommend'}>
+          <RecommendPage onOpen={openSkill} />
         </div>
         {route.path === '/skill' && route.skillId && (
           <SkillPage
