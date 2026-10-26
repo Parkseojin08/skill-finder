@@ -207,6 +207,23 @@ export class GitHub {
     }
   }
 
+  /** true / false when GitHub says the repo exists or not (404: deleted or private); null when unknown. */
+  async repoExists(repo: string): Promise<boolean | null> {
+    if (!REPO_RE.test(repo)) return false;
+    if (this.hasToken && this.coreAvailable(10)) {
+      try {
+        const res = await this.api(`/repos/${repo}`);
+        await res.body?.cancel().catch(() => {});
+        if (res.ok) return true;
+        if (res.status === 404) return false;
+      } catch {
+        // fall through to git
+      }
+    }
+    // ls-remote fails the same way for a missing repo and a network problem, so only "exists" is certain.
+    return (await lsRemote(repo, null).catch(() => null)) != null ? true : null;
+  }
+
   /** Repository metadata cached for 24h; returns cached (possibly stale) data when the quota is short. */
   getRepoMeta(repo: string): Promise<RepoRow | null> {
     // Several lookups in one search often ask for the same repo at once; share the request.

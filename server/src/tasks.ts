@@ -1,4 +1,5 @@
 import type { AppContext } from './context.ts';
+import { PluginUnavailableError } from './indexer.ts';
 import type { Job, JobControl } from './jobs.ts';
 import { syncMarketplace } from './sources/marketplace.ts';
 import { searchActivity } from './search/activity.ts';
@@ -22,7 +23,9 @@ async function indexPending(ctx: AppContext, marketplace: string, ctl: JobContro
         await ctx.indexer.indexPlugin(p.id);
         ctl.tick();
       } catch (err) {
-        ctl.tick(`${p.id}: ${String((err as Error).message ?? err).slice(0, 200)}`);
+        const line = `${p.id}: ${String((err as Error).message ?? err).slice(0, 200)}`;
+        if (err instanceof PluginUnavailableError) ctl.skip(line);
+        else ctl.tick(line);
       }
     },
     () => ctl.cancelled,

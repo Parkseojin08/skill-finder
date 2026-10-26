@@ -22,7 +22,14 @@ export type RepoInstallInfo = {
   signals: PluginSignals | null;
 };
 
-export type StoredFiles = { files: Array<{ path: string; size: number | null }>; total: number };
+/**
+ * The marketplace entry points at something that is not there (deleted/private repo, a pinned commit
+ * erased from history, a folder that does not exist). Claude Code could not install it either; it is
+ * recorded as 설치 불가 and not retried until the marketplace changes the entry.
+ */
+export class PluginUnavailableError extends Error {}
+
+export type StoredFiles ={ files: Array<{ path: string; size: number | null }>; total: number };
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 const now = () => new Date().toISOString();
@@ -193,10 +200,30 @@ export class Indexer {
       });
       return rows.length;
     } catch (err) {
+      const reason = await this.unavailableReason(plugin.repo, err);
+      if (reason) {
+        // Indexed "as of" the marketplace's pinned commit, so it is skipped until the entry changes.
+        this.store.markPluginIndexed(pluginId, plugin.sha, null, `설치 불가: ${reason}`);
+        throw new PluginUnavailableError(reason);
+      }
       // No indexed sha → the next sync retries it.
       this.store.markPluginIndexed(pluginId, null, null, String((err as Error).message ?? err).slice(0, 300));
       throw err;
     }
+  }
+
+  /** Why a plugin can never be indexed as listed, or null for failures worth retrying (network, quota). */
+  private async unavailableReason(repo: string, err: unknown): Promise<string | null> {
+    const msg = String((err as Error)?.message ?? err);
+    const path = msg.match(/^플러그인 경로가 없습니다: (.*)$/);
+    if (path) return `마켓플레이스가 가리키는 폴더가 저장소에 없습니다 (${path[1]})`;
+    if (/^tree 422|^tree 409/.test(msg)) return '마켓플레이스가 고정한 커밋이 저장소 기록에서 지워졌습니다';
+    if (/^tree 404|커밋을 찾을 수 없습니다/.test(msg)) {
+      const exists = await this.github.repoExists(repo);
+      if (exists === false) return '저장소가 삭제됐거나 비공개입니다';
+      if (exists === true && msg.startsWith('tree 404')) return '마켓플레이스가 고정한 커밋이 저장소에 없습니다';
+    }
+    return null;
   }
 
   /**

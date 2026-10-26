@@ -10,6 +10,8 @@ export type Job = {
   done: number;
   total: number;
   errors: string[];
+  /** Items that cannot be processed as listed (e.g. a deleted repo); not failures of this app. */
+  skipped: string[];
   startedAt: string;
   finishedAt: string | null;
 };
@@ -21,6 +23,7 @@ export type JobControl = {
   setTotal(n: number): void;
   addTotal(n: number): void;
   tick(error?: string): void;
+  skip(note: string): void;
 };
 
 class CancelledError extends Error {}
@@ -39,6 +42,7 @@ export class Jobs {
       done: 0,
       total: 0,
       errors: [],
+      skipped: [],
       startedAt: new Date().toISOString(),
       finishedAt: null,
     };
@@ -61,6 +65,10 @@ export class Jobs {
       tick: (error) => {
         job.done++;
         if (error && job.errors.length < 200) job.errors.push(error);
+      },
+      skip: (note) => {
+        job.done++;
+        if (job.skipped.length < 200) job.skipped.push(note);
       },
     };
     fn(ctl)

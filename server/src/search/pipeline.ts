@@ -3,7 +3,7 @@ import { RISK_ORDER, type RiskLevel } from '../analyze/risk.ts';
 import type { AppContext } from '../context.ts';
 import type { PluginRow, SkillRow } from '../db/store.ts';
 import { basename } from '../discovery/tree.ts';
-import { normalizeSkillName, skillId } from '../indexer.ts';
+import { normalizeSkillName, PluginUnavailableError, skillId } from '../indexer.ts';
 import { getSettings } from '../settings.ts';
 import { classifySkillsShSource, type SkillsShHit } from '../sources/skillsSh.ts';
 import { pool, Semaphore, sleep, withTimeout } from '../util/limiter.ts';
@@ -247,7 +247,7 @@ export async function runSearch(
       const msg = String((err as Error)?.message ?? err);
       if (msg === 'timeout') return 'timeout';
       // A deleted or renamed repo is gone for good, not a hiccup.
-      if (/저장소를 찾을 수 없습니다|tree 40[49]|tree 422/.test(msg)) return 'missing';
+      if (err instanceof PluginUnavailableError || /저장소를 찾을 수 없습니다|tree 40[49]|tree 422/.test(msg)) return 'missing';
       errors.push(msg.slice(0, 100));
       return 'error';
     }

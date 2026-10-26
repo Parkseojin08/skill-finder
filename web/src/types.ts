@@ -127,6 +127,8 @@ export type Job = {
   done: number;
   total: number;
   errors: string[];
+  /** Entries that cannot be installed as listed (deleted repo, missing commit or folder). */
+  skipped?: string[];
   startedAt: string;
   finishedAt: string | null;
 };

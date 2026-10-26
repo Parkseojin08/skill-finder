@@ -120,6 +120,16 @@ export function MarketplacesPage() {
                     </ul>
                   </details>
                 )}
+                {(j.skipped?.length ?? 0) > 0 && (
+                  <details className="muted">
+                    <summary className="small">설치 불가 {j.skipped!.length}개 · 마켓플레이스 항목이 가리키는 저장소·커밋·폴더가 없음</summary>
+                    <ul className="small">
+                      {j.skipped!.slice(0, 50).map((e, i) => (
+                        <li key={i}>{e.replace(/: 설치 불가: |: /, ' — ')}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </li>
             ))}
           </ul>
