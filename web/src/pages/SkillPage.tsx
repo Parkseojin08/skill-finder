@@ -1,7 +1,7 @@
 import { Icon } from '../components/Icon.tsx';
 import { useEffect, useState } from 'react';
 import { apiGet } from '../api.ts';
-import { BreakdownTable, QualityBadges, RiskBadge, RiskFlags, SourceBadges } from '../components/Badges.tsx';
+import { BreakdownTable, QualityBadges, RiskBadge, RiskFlags, RiskSummary, SourceBadges } from '../components/Badges.tsx';
 import { InstallPanel } from '../components/InstallPanel.tsx';
 import { Markdown, splitFrontmatter } from '../components/Markdown.tsx';
 import { Translated } from '../components/Translated.tsx';
@@ -70,21 +70,37 @@ export function SkillPage({ id, item, query, onBack }: { id: string; item: Resul
           )}
           <div className="badges">
             <SourceBadges sources={sources} />
-            {riskLevel && <RiskBadge level={riskLevel} />}
-            {method && <span className="badge">{METHOD[method]}</span>}
+            {riskLevel && <RiskSummary level={riskLevel} flags={flags} />}
+            {method && <span className="pill">{METHOD[method]}</span>}
           </div>
         </div>
-        {item && (
-          <div className="skill-score" title="검색 결과 기준 점수">
-            <span className="big">{Math.round(item.score * 100)}</span>
-            <span className="muted small">/ 100</span>
-          </div>
-        )}
+        <div className="skill-side">
+          {item && (
+            <div className="skill-score" title="검색 결과 기준 점수">
+              <span className="big">{Math.round(item.score * 100)}</span>
+              <span className="muted small">/ 100</span>
+            </div>
+          )}
+          {detail && tab !== 'install' && (
+            <button
+              type="button"
+              className="primary"
+              onClick={() => {
+                setTab('install');
+                // This button unmounts on the install tab; keep keyboard focus on the tab it opened.
+                requestAnimationFrame(() => document.getElementById('tab-install')?.focus());
+              }}
+            >
+              <Icon name="download" size={16} />
+              {detail.install.method === 'manual-only' ? '설치 방법 보기' : '설치하기'}
+            </button>
+          )}
+        </div>
       </header>
 
       <div className="tabs page-tabs" role="tablist">
         {tabs.map((t) => (
-          <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} className={tab === t.key ? 'active' : ''} onClick={() => setTab(t.key)}>
+          <button key={t.key} id={`tab-${t.key}`} type="button" role="tab" aria-selected={tab === t.key} className={tab === t.key ? 'active' : ''} onClick={() => setTab(t.key)}>
             {t.label}
           </button>
         ))}

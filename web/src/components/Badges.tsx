@@ -5,6 +5,25 @@ export function RiskBadge({ level }: { level: RiskLevel }) {
   return <span className={`badge risk-${level}`}>{RISK_LEVEL[level]}</span>;
 }
 
+/** Risk level badge followed by the signal names as visible text (meanings in the tooltip). */
+export function RiskSummary({ level, flags }: { level: RiskLevel; flags: string[] }) {
+  // Real signals first, info-only ones (rm -rf) last so they never push a real signal out of view.
+  const ordered = [...flags.filter((f) => !RISK_FLAGS[f]?.info), ...flags.filter((f) => RISK_FLAGS[f]?.info)];
+  const tip = ordered.length ? ordered.map((f) => `• ${RISK_FLAGS[f]?.label ?? f}: ${RISK_FLAGS[f]?.meaning ?? ''}`).join('\n') : '발견된 위험 신호가 없습니다';
+  const shown = ordered.slice(0, 3);
+  return (
+    <span className="risk-sum" title={tip}>
+      <span className={`badge risk-${level}`}>{RISK_LEVEL[level]}</span>
+      {shown.length > 0 && (
+        <span className="signals">
+          {shown.map((f) => RISK_FLAGS[f]?.label ?? f).join(' · ')}
+          {ordered.length > shown.length && ` 외 ${ordered.length - shown.length}`}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export function RiskFlags({ flags }: { flags: string[] }) {
   if (flags.length === 0) return null;
   return (

@@ -1,4 +1,3 @@
-import { Icon } from './components/Icon.tsx';
 import { useCallback, useEffect, useState } from 'react';
 import { InstalledPage } from './pages/InstalledPage.tsx';
 import { MarketplacesPage } from './pages/MarketplacesPage.tsx';
@@ -66,9 +65,10 @@ export function App() {
           }}
         >
           <span className="brand-mark" aria-hidden>
-            <Icon name="search" size={18} />
+            &gt;_
           </span>
-          Skill Finder
+          skill-finder
+          <span className="caret" aria-hidden />
         </a>
         <nav>
           {NAV.map((r) => (

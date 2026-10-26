@@ -1,5 +1,5 @@
 import { Icon } from '../components/Icon.tsx';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { apiGet, streamNdjson } from '../api.ts';
 import { ResultCard } from '../components/ResultCard.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
@@ -8,7 +8,6 @@ import type { Health, Job, ResultItem, RiskLevel, SearchEvent, SettingsResponse,
 
 const EXAMPLES = ['pull request review', 'extract tables from pdf', 'react performance', 'postgres migration review', 'commit message'];
 const SOURCE_LABEL: Record<SourceKind, string> = { marketplace: '마켓플레이스', skillssh: 'skills.sh', github: 'GitHub' };
-const STAGE_ORDER = ['collect', 'enrich', 'score'];
 
 type SortKey = 'score' | 'relevance' | 'installs' | 'stars' | 'recent' | 'name';
 const SORTS: Array<{ key: SortKey; label: string; compare: (a: ResultItem, b: ResultItem) => number }> = [
@@ -45,6 +44,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
   const resultsRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const noticesRef = useRef<HTMLDetailsElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -65,6 +66,37 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
     };
     poll();
     return () => clearTimeout(timer);
+  }, []);
+
+  // "/" jumps to the search box (unless the user is already typing somewhere).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const textInput = el instanceof HTMLInputElement && !['checkbox', 'radio', 'range', 'button', 'submit'].includes(el.type);
+      const typing = el && (textInput || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+      if (e.key !== '/' || typing || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (inputRef.current?.offsetParent === null) return; // search page hidden
+      e.preventDefault();
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // The "알림" popover closes on Esc or a click elsewhere, like a menu.
+  useEffect(() => {
+    const close = (e: Event) => {
+      const d = noticesRef.current;
+      if (!d?.open) return;
+      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !d.contains(e.target as Node)) d.open = false;
+    };
+    window.addEventListener('keydown', close);
+    window.addEventListener('pointerdown', close);
+    return () => {
+      window.removeEventListener('keydown', close);
+      window.removeEventListener('pointerdown', close);
+    };
   }, []);
 
   const run = useCallback(
@@ -125,7 +157,6 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
   );
 
   const toggleSource = (s: SourceKind) => setSources((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
-  const stageIdx = stage ? STAGE_ORDER.indexOf(stage) : -1;
   const sorted = [...items].sort(SORTS.find((s) => s.key === sort)!.compare);
   const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
   const currentPage = Math.min(page, pageCount);
@@ -135,58 +166,89 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
     resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  // Warnings that change what the results mean (failures, incomplete results) stay visible;
+  // routine notes (no GitHub token, hidden description-less results) fold into the "알림" toggle.
+  const isUrgent = (w: { source: string; message: string }) =>
+    w.source === 'github' ? w.message.startsWith('GitHub 검색 실패') : ['query', 'server', 'client', 'skillssh', 'enrich'].includes(w.source);
+  const urgent = warnings.filter(isUrgent);
+  const minor: Array<{ key: string; node: ReactNode }> = [
+    ...warnings.filter((w) => !isUrgent(w)).map((w, i) => ({ key: `w${i}`, node: w.message })),
+    ...(final && final.hiddenNoDescription > 0 ? [{ key: 'nodesc', node: `설명이 없어 판단할 수 없는 결과 ${final.hiddenNoDescription}개는 숨겼습니다.` }] : []),
+  ];
+  const hiddenRisky = final && maxRisk !== 'high' ? final.hiddenHighRisk : 0;
+
   return (
     <div className="page search-page">
-      <form
-        className="search-box"
-        onSubmit={(e) => {
-          e.preventDefault();
-          run(query);
-        }}
-      >
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="필요한 기능을 영어로 입력하세요 (예: extract tables from pdf)"
-          maxLength={300}
-          aria-label="검색어"
-          autoFocus
-        />
-        <button type="submit" className="primary" disabled={!query.trim() || sources.length === 0}>
-          검색
-        </button>
-      </form>
-      <div className="filters">
-        <span className="muted small">출처</span>
-        {(Object.keys(SOURCE_LABEL) as SourceKind[]).map((s) => (
-          <label key={s} className="chip">
-            <input type="checkbox" checked={sources.includes(s)} onChange={() => toggleSource(s)} />
-            {SOURCE_LABEL[s]}
-            {s === 'github' && githubToken === false && <span className="muted small"> (토큰 없음)</span>}
+      <div className="search-hero">
+        <form
+          className="search-box"
+          onSubmit={(e) => {
+            e.preventDefault();
+            run(query);
+          }}
+        >
+          <span className="prompt" aria-hidden="true">
+            ❯
+          </span>
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="필요한 기능을 영어로 입력하세요"
+            maxLength={300}
+            aria-label="검색어"
+            autoFocus
+          />
+          <button type="submit" className="primary" disabled={!query.trim() || sources.length === 0}>
+            검색
+          </button>
+        </form>
+        <div className="search-sub">
+          <span className="muted small">
+            영어로 검색하세요 · 예:{' '}
+            <button
+              type="button"
+              className="linkish mono"
+              onClick={() => {
+                setQuery('extract tables from pdf');
+                run('extract tables from pdf');
+              }}
+            >
+              extract tables from pdf
+            </button>
+          </span>
+          <span className="muted small kbd-hint">
+            <kbd>/</kbd> 검색창으로 이동
+          </span>
+        </div>
+        <div className="filters" role="group" aria-label="검색 조건">
+          {(Object.keys(SOURCE_LABEL) as SourceKind[]).map((s) => (
+            <label key={s} className="chip" title={s === 'github' && githubToken === false ? '설정에서 GitHub 토큰을 넣으면 사용됩니다' : undefined}>
+              <input type="checkbox" checked={sources.includes(s)} onChange={() => toggleSource(s)} />
+              {SOURCE_LABEL[s]}
+              {s === 'github' && githubToken === false && <span className="muted small">(토큰 없음)</span>}
+            </label>
+          ))}
+          <label className="select-inline">
+            <span className="muted small">위험</span>
+            <select value={maxRisk} onChange={(e) => setMaxRisk(e.target.value as RiskLevel)} aria-label="최대 위험 등급">
+              <option value="low">낮음만</option>
+              <option value="medium">주의까지</option>
+              <option value="high">모두</option>
+            </select>
           </label>
-        ))}
-        <span className="muted small sep">최대 위험</span>
-        <select value={maxRisk} onChange={(e) => setMaxRisk(e.target.value as RiskLevel)} aria-label="최대 위험 등급">
-          <option value="low">낮음만</option>
-          <option value="medium">주의까지 (기본)</option>
-          <option value="high">모두 (위험 높음 포함)</option>
-        </select>
+        </div>
       </div>
 
-      <p className="info-box hint">
-        <b>영어로 검색하세요.</b> 검색어를 번역하지 않고 그대로 찾습니다. 스킬 설명이 대부분 영어라 한국어로 검색하면 결과가 적거나 부정확합니다. 예: <code>extract tables from pdf</code>
-      </p>
-      <TranslationNotice />
-
       {syncJob && (
-        <div className="info-box">
-          마켓플레이스 동기화 중… {syncJob.done}/{syncJob.total || '?'} · 현재 색인 플러그인 {health?.plugins ?? 0}개, 스킬 {health?.skills ?? 0}개
-        </div>
+        <p className="status-line muted small">
+          <span className="spinner" aria-hidden="true" /> 마켓플레이스 동기화 중 {syncJob.done}/{syncJob.total || '?'} · 색인 스킬 {health?.skills ?? 0}개
+        </p>
       )}
 
       {status === 'idle' && (
         <div className="empty">
-          <p>원하는 기능을 영어로 적으면 공식·커뮤니티 마켓플레이스, skills.sh, GitHub에서 Claude Code 스킬을 찾아 점수와 위험 신호를 붙여 보여 줍니다. 결과를 누르면 상세 페이지로 이동합니다.</p>
+          <p>원하는 기능을 영어로 적으면 공식·커뮤니티 마켓플레이스, skills.sh, GitHub에서 Claude Code 스킬을 찾아 점수와 위험 신호를 붙여 보여 줍니다.</p>
           <div className="examples">
             {EXAMPLES.map((ex) => (
               <button
@@ -203,85 +265,117 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
             ))}
           </div>
           {health && (
-            <p className="muted small">
-              색인: 플러그인 {health.plugins}개 · 스킬 {health.skills}개 · Claude Code {health.claudeVersion ?? '없음'} · skills CLI {health.skillsCli}
+            <p className="sysline">
+              <span className={health.claudeVersion ? '' : 'warn-text'}>claude-code {health.claudeVersion ?? '없음'}</span>
+              <span>skills-cli {health.skillsCli}</span>
+              <span>
+                색인 스킬 {health.skills.toLocaleString()} · 플러그인 {health.plugins.toLocaleString()}
+              </span>
             </p>
           )}
+          {health && !health.claudeVersion && <p className="warn-text small">Claude Code를 찾지 못해 플러그인 설치가 되지 않습니다.</p>}
+          <TranslationNotice />
         </div>
       )}
 
       {status !== 'idle' && (
-        <div className="progress" aria-live="polite">
-          {STAGE_ORDER.map((s, i) => (
-            <span key={s} className={`step ${status === 'done' || i < stageIdx ? 'done' : i === stageIdx && status === 'running' ? 'now' : ''}`}>
-              {STAGES[s]}
-            </span>
-          ))}
-          {doneInfo && <span className="muted small">{doneInfo.cached ? '캐시 결과' : `${(doneInfo.elapsedMs / 1000).toFixed(1)}초`}</span>}
-          {final && <span className="muted small">· 결과 {final.items.length}개</span>}
+        <div className="results-toolbar" ref={resultsRef}>
+          <div className="toolbar-left" aria-live="polite">
+            {status === 'running' ? (
+              <span className="status-line">
+                <span className="spinner" aria-hidden="true" /> {stage ? STAGES[stage] : '검색'} 중…
+              </span>
+            ) : status === 'error' ? (
+              <span className="warn-text">검색 실패</span>
+            ) : (
+              <span>
+                <b>{sorted.length}</b>개 결과
+                {doneInfo && <span className="muted small"> · {doneInfo.cached ? '저장된 결과' : `${(doneInfo.elapsedMs / 1000).toFixed(1)}초`}</span>}
+              </span>
+            )}
+            {hiddenRisky > 0 && (
+              <button
+                type="button"
+                className="status-chip action"
+                title="위험 등급 필터를 '모두'로 바꿔 다시 검색합니다"
+                onClick={() => {
+                  setMaxRisk('high');
+                  run(lastQuery, 'high');
+                }}
+              >
+                위험 높음 {hiddenRisky}개 숨김 · 모두 보기
+              </button>
+            )}
+            {minor.length > 0 && (
+              <details className="notices" ref={noticesRef}>
+                <summary>
+                  <Icon name="info" size={14} /> 알림 {minor.length}
+                </summary>
+                <ul>
+                  {minor.map((m) => (
+                    <li key={m.key}>{m.node}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+          <div className="toolbar-right">
+            <TranslationNotice compact />
+            {items.length > 0 && (
+              <>
+                <select
+                  value={sort}
+                  onChange={(e) => {
+                    setSort(e.target.value as SortKey);
+                    setPage(1);
+                  }}
+                  aria-label="정렬 기준"
+                  title={sort === 'installs' || sort === 'stars' ? `${sort === 'installs' ? '다운로드 수' : '스타 수'}를 모르는 스킬은 뒤로 보냅니다` : undefined}
+                >
+                  {SORTS.map((s) => (
+                    <option key={s.key} value={s.key}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setPage(1);
+                  }}
+                  aria-label="페이지당 개수"
+                >
+                  {[5, 10, 20].map((n) => (
+                    <option key={n} value={n}>
+                      {n}개씩
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+          </div>
         </div>
       )}
 
-      {warnings.length > 0 && (
-        <div className="warnings" role="status">
-          {warnings.map((w, i) => (
-            <div key={i} className="warn-strip">
-              <Icon name="alert" size={15} /> <span>{w.message}</span>
-            </div>
-          ))}
-        </div>
-      )}
+      <div role="status">
+        {urgent.map((w, i) => (
+          <div key={i} className="warn-strip">
+            <Icon name="alert" size={15} /> <span>{w.message}</span>
+          </div>
+        ))}
+      </div>
 
       {provisional && items.length > 0 && <p className="muted small">임시 결과입니다. 후보 확인이 끝나면 갱신됩니다.</p>}
-      {final && final.hiddenNoDescription > 0 && (
-        <p className="muted small">설명이 없어 판단할 수 없는 결과 {final.hiddenNoDescription}개는 숨겼습니다.</p>
-      )}
-      {final && final.hiddenHighRisk > 0 && maxRisk !== 'high' && (
-        <p className="muted small">
-          위험 등급 필터로 {final.hiddenHighRisk}개를 숨겼습니다.{' '}
-          <button
-            type="button"
-            className="linkish"
-            onClick={() => {
-              setMaxRisk('high');
-              run(lastQuery, 'high');
-            }}
-          >
-            모두 보기
-          </button>
-        </p>
-      )}
 
-      {items.length > 0 && (
-        <div className="sort-row">
-          <label>
-            <span className="muted small">정렬</span>{' '}
-            <select value={sort} onChange={(e) => {
-                setSort(e.target.value as SortKey);
-                setPage(1);
-              }} aria-label="정렬 기준">
-              {SORTS.map((s) => (
-                <option key={s.key} value={s.key}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {(sort === 'installs' || sort === 'stars') && (
-            <span className="muted small">{sort === 'installs' ? '다운로드 수' : '스타 수'}를 모르는 스킬은 뒤로 보냅니다</span>
-          )}
-        </div>
-      )}
-
-      <div className="results" ref={resultsRef}>
+      <div className="results">
         {pageItems.map((it, i) => (
           <ResultCard key={it.id} item={it} position={i} provisional={provisional} onSelect={() => onOpen(it)} />
         ))}
         {status === 'done' && items.length === 0 && <p className="empty">결과가 없습니다. 다른 영어 표현으로 검색해 보세요.</p>}
-        {status === 'running' && items.length === 0 && <p className="muted">검색 중…</p>}
       </div>
 
-      {sorted.length > 0 && (
+      {pageCount > 1 && (
         <nav className="pager" aria-label="검색 결과 페이지">
           <button type="button" className="ghost" onClick={() => goPage(currentPage - 1)} disabled={currentPage === 1} aria-label="이전 페이지">
             <Icon name="back" size={15} />
@@ -303,20 +397,6 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
           <span className="muted small pager-info">
             {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, sorted.length)} / {sorted.length}개
           </span>
-          <select
-            value={pageSize}
-            onChange={(e) => {
-              setPageSize(Number(e.target.value));
-              setPage(1);
-            }}
-            aria-label="페이지당 개수"
-          >
-            {[5, 10, 20].map((n) => (
-              <option key={n} value={n}>
-                {n}개씩
-              </option>
-            ))}
-          </select>
         </nav>
       )}
     </div>

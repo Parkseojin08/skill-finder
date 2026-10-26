@@ -87,6 +87,10 @@ export function InstalledPage() {
       body: { kind: 'skill', id: s.folder, scope: s.scope, projectPath: s.scope === 'user' ? undefined : projectPath },
     });
 
+  // Plugins this app can remove vs. ones synced from the Claude app account (managed there).
+  const managed = (data?.plugins ?? []).filter((p) => p.scope === 'user' || p.scope === 'project' || p.scope === 'local');
+  const synced = (data?.plugins ?? []).filter((p) => !managed.includes(p));
+
   return (
     <div className="page">
       <h1>설치됨</h1>
@@ -121,13 +125,16 @@ export function InstalledPage() {
       {data && (
         <>
           <section>
-            <h2>플러그인 ({data.plugins.length})</h2>
+            <h2>플러그인 ({managed.length})</h2>
             {data.pluginError && <p className="warn-box">{data.pluginError}</p>}
             <p className="muted small">플러그인을 지우면 그 안의 스킬·훅·MCP 서버가 함께 제거됩니다. 다음 Claude Code 세션부터 반영됩니다.</p>
+            {managed.length === 0 ? (
+              !data.pluginError && <p className="muted small">설치한 플러그인이 없습니다.</p>
+            ) : (
             <table className="table">
               <thead>
                 <tr>
-                  <th>ID</th>
+                  <th>플러그인</th>
                   <th>버전</th>
                   <th>범위</th>
                   <th>상태</th>
@@ -135,9 +142,8 @@ export function InstalledPage() {
                 </tr>
               </thead>
               <tbody>
-                {data.plugins.map((p) => {
+                {managed.map((p) => {
                   const key = `p:${p.id}:${p.scope}:${p.projectPath ?? ''}`;
-                  const removable = p.scope === 'user' || p.scope === 'project' || p.scope === 'local';
                   return (
                     <tr key={key}>
                       <td>
@@ -151,21 +157,32 @@ export function InstalledPage() {
                         {p.enabledWhere && <div className="muted small">{p.scope === 'user' ? '모든 프로젝트' : '해당 프로젝트에서'}</div>}
                       </td>
                       <td className="actions">
-                        {removable ? (
-                          <button type="button" className="ghost danger" disabled={busy !== null} onClick={() => removePlugin(p)}>
-                            {busy === key ? '삭제 중…' : '삭제'}
-                          </button>
-                        ) : (
-                          <span className="muted small" title="Claude 앱 계정에서 동기화된 플러그인은 앱 설정에서 관리합니다">
-                            앱에서 관리
-                          </span>
-                        )}
+                        <button type="button" className="ghost danger" disabled={busy !== null} onClick={() => removePlugin(p)}>
+                          {busy === key ? '삭제 중…' : '삭제'}
+                        </button>
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+            )}
+            {synced.length > 0 && (
+              <details className="synced">
+                <summary>
+                  Claude 앱 계정에서 동기화된 플러그인 {synced.length}개 <span className="muted small">· 앱 설정에서 관리</span>
+                </summary>
+                <ul className="synced-list">
+                  {synced.map((p) => (
+                    <li key={`${p.id}:${p.scope}`}>
+                      <span className="mono">{p.id.replace(/@synced$/, '')}</span>
+                      <span className="muted small">{p.version ?? ''}</span>
+                      <span className={p.enabled ? 'state-on small' : 'muted small'}>{p.enabled == null ? '–' : p.enabled ? '켜짐' : '꺼짐'}</span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
           </section>
           <section>
             <h2>스킬 ({data.skills.length})</h2>
