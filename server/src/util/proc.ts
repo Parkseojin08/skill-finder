@@ -1,0 +1,67 @@
+import { spawn } from 'node:child_process';
+import { sanitizeText } from './sanitize.ts';
+
+export type RunOptions = {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+  shell?: boolean;
+  /** Return stdout/stderr untouched (e.g. NUL-separated `git ls-tree -z` output). */
+  raw?: boolean;
+  onLine?: (line: string, stream: 'stdout' | 'stderr') => void;
+};
+
+export type RunResult = { exitCode: number; stdout: string; stderr: string; timedOut: boolean };
+
+/** Runs a process without a shell (unless explicitly requested), collecting sanitized output. */
+export function run(file: string, args: string[], opts: RunOptions = {}): Promise<RunResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, {
+      cwd: opts.cwd,
+      env: opts.env ?? process.env,
+      shell: opts.shell ?? false,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    const partial = { stdout: '', stderr: '' };
+    const timer = opts.timeoutMs
+      ? setTimeout(() => {
+          timedOut = true;
+          child.kill();
+        }, opts.timeoutMs)
+      : null;
+
+    const onData = (stream: 'stdout' | 'stderr') => (chunk: Buffer) => {
+      const text = chunk.toString('utf8');
+      if (stream === 'stdout') stdout += text;
+      else stderr += text;
+      if (!opts.onLine) return;
+      const lines = (partial[stream] + text).split(/\r?\n/);
+      partial[stream] = lines.pop() ?? '';
+      for (const line of lines) {
+        const clean = sanitizeText(line).trimEnd();
+        if (clean) opts.onLine(clean, stream);
+      }
+    };
+    child.stdout.on('data', onData('stdout'));
+    child.stderr.on('data', onData('stderr'));
+    child.on('error', (err) => {
+      if (timer) clearTimeout(timer);
+      reject(err);
+    });
+    child.on('close', (code) => {
+      if (timer) clearTimeout(timer);
+      if (opts.onLine) {
+        for (const stream of ['stdout', 'stderr'] as const) {
+          const clean = sanitizeText(partial[stream]).trimEnd();
+          if (clean) opts.onLine(clean, stream);
+        }
+      }
+      const clean = opts.raw ? (s: string) => s : sanitizeText;
+      resolve({ exitCode: code ?? -1, stdout: clean(stdout), stderr: clean(stderr), timedOut });
+    });
+  });
+}
