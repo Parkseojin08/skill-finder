@@ -4,6 +4,7 @@ import type { AppContext } from '../context.ts';
 import type { PluginRow, SkillRow } from '../db/store.ts';
 import { basename } from '../discovery/tree.ts';
 import { normalizeSkillName, PluginUnavailableError, skillId } from '../indexer.ts';
+import { planInstall } from '../install/plan.ts';
 import { getSettings } from '../settings.ts';
 import { classifySkillsShSource, type SkillsShHit } from '../sources/skillsSh.ts';
 import { pool, Semaphore, sleep, withTimeout } from '../util/limiter.ts';
@@ -161,7 +162,7 @@ export async function runSearch(
   const sources = new Set<SourceKind>(filters.sources?.length ? filters.sources : ['marketplace', 'skillssh', 'github']);
   const maxRisk: RiskLevel = filters.maxRisk ?? 'medium';
   // `r` is the result-item shape; bump it when items gain fields so cached searches are rebuilt.
-  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: settings.minStars, r: 9 });
+  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: settings.minStars, r: 10 });
 
   const cached = store.getCached(key, DAY_MS) as CachedSearch | undefined;
   const fresh = cached && !(cached.ttlMs && cached.cachedAt && Date.now() - cached.cachedAt > cached.ttlMs);
@@ -523,7 +524,18 @@ export async function runSearch(
           .findSkillsByRepo(repo)
           .filter((s) => s.description && s.origin !== 'wellknown')
           .slice(0, 30)
-          .map((s) => ({ id: s.id, name: s.name })),
+          .map((s) => {
+            const plugin = lookup.plugin(s.plugin_id);
+            const plan = planInstall(s, plugin, lookup.marketplace(plugin?.marketplace));
+            return {
+              id: s.id,
+              name: s.name,
+              riskLevel: (s.risk_level as RiskLevel) ?? 'low',
+              method: plan.method,
+              installable: plan.method !== 'manual-only' && !plan.disabled,
+              scopes: plan.scopes,
+            };
+          }),
       }))
       // a skill finder: a same-named repo without skills (facebook/react for "react") is not a result
       .filter((r) => r.skills.length > 0);

@@ -1798,9 +1798,64 @@ button.primary.danger-solid:hover:not(:disabled) {
   font-family: var(--font-mono);
   font-size: 1.05rem;
 }
-.repo-title a {
+.repo-title .repo-name {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  clip-path: none;
+  font: inherit;
   color: var(--yellow);
   text-shadow: 0 0 10px rgba(252, 238, 10, 0.35);
+}
+.repo-title .repo-name:hover:not(:disabled) {
+  background: none;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.repo-title .repo-gh {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+.repo-title .repo-gh:hover {
+  color: var(--cyan);
+}
+/* repo install dialog */
+.repo-install {
+  clip-path: var(--chamfer);
+  border: 1px solid color-mix(in srgb, var(--yellow) 35%, var(--line-strong));
+}
+.repo-skill-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  font-weight: 400;
+}
+.repo-install-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 50vh;
+  overflow: auto;
+  padding-left: 18px;
+}
+.repo-install-status {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.repo-install-status li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.st-ok {
+  color: var(--ok);
+}
+.st-fail {
+  color: var(--danger);
 }
 
 /* faint CRT scanlines over everything (static) */

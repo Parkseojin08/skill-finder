@@ -33,7 +33,7 @@ export type RepoResult = {
   description: string | null;
   stars: number | null;
   topics: string[];
-  skills: Array<{ id: string; name: string }>;
+  skills: Array<{ id: string; name: string; riskLevel: RiskLevel; method: InstallMethod; installable: boolean; scopes: string[] }>;
 };
 
 export type SkillMatch ={ item: ResultItem; score: number; matchedTerms: string[] };

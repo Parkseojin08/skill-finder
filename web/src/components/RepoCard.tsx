@@ -1,21 +1,31 @@
-import { ArrowSquareOutIcon, GithubLogoIcon, StarIcon } from '@phosphor-icons/react';
+import { ArrowSquareOutIcon, DownloadSimpleIcon, GithubLogoIcon, StarIcon } from '@phosphor-icons/react';
+import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatCount } from '../labels.ts';
 import { useKorean } from '../translate.ts';
 import type { RepoResult } from '../types.ts';
+import { RepoInstallDialog } from './RepoInstallDialog.tsx';
 
-/** A GitHub repository matching a one-word query by name ("rea" → morluto/rea), shown above the skills. */
+/**
+ * A GitHub repository matching a one-word query by name ("rea" → morluto/rea), shown above the skills.
+ * Its name and the 설치 button install the repo's skills; GitHub has its own link.
+ */
 export function RepoCard({ repo, onOpenSkill }: { repo: RepoResult; onOpenSkill: (id: string) => void }) {
   const { ko } = useKorean(repo.description ?? '', 0);
+  const [installing, setInstalling] = useState(false);
+  const installable = repo.skills.filter((s) => s.installable).length;
   return (
     <Card className="repo-card">
       <CardHeader>
         <CardTitle className="repo-title">
           <GithubLogoIcon />
-          <a href={repo.url} target="_blank" rel="noopener noreferrer">
+          <button type="button" className="repo-name" onClick={() => setInstalling(true)} disabled={installable === 0} title="이 저장소의 스킬 설치">
             {repo.repo}
+          </button>
+          <a className="repo-gh" href={repo.url} target="_blank" rel="noopener noreferrer" aria-label={`${repo.repo} GitHub에서 보기`} title="GitHub에서 보기">
+            <ArrowSquareOutIcon />
           </a>
         </CardTitle>
         {repo.description && (
@@ -23,14 +33,18 @@ export function RepoCard({ repo, onOpenSkill }: { repo: RepoResult; onOpenSkill:
             {ko ?? repo.description}
           </CardDescription>
         )}
-        {repo.stars != null && (
-          <CardAction>
+        <CardAction className="flex items-center gap-2">
+          {repo.stars != null && (
             <Badge variant="outline">
               <StarIcon data-icon="inline-start" />
               {formatCount(repo.stars)}
             </Badge>
-          </CardAction>
-        )}
+          )}
+          <Button size="sm" onClick={() => setInstalling(true)} disabled={installable === 0}>
+            <DownloadSimpleIcon data-icon="inline-start" />
+            설치
+          </Button>
+        </CardAction>
       </CardHeader>
       {repo.topics.length > 0 && (
         <CardContent className="flex flex-wrap gap-1">
@@ -53,6 +67,7 @@ export function RepoCard({ repo, onOpenSkill }: { repo: RepoResult; onOpenSkill:
           <ArrowSquareOutIcon data-icon="inline-end" />
         </Button>
       </CardFooter>
+      <RepoInstallDialog repo={repo} open={installing} onOpenChange={setInstalling} />
     </Card>
   );
 }
