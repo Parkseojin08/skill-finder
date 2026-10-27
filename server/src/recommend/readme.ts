@@ -18,13 +18,13 @@ export const CONFIG = {
   maxQueryTerms: 40,
   weights: { title: 5, intro: 3, feature: 3, heading: 3, body: 1, lang: 1 },
   nameBoost: 2,
-  /** Recommend only when the top score is this many times the runner-up… */
-  confidentRatio: 1.5,
-  /** …and the top skill shares at least this many words with the README. */
-  minMatchedTerms: 2,
+  /** A skill counts as similar when its score is at least this share of the best match… */
+  similarFloor: 0.35,
+  /** …and it shares at least this many words with the README (fewer only if the best match does). */
+  minSharedWords: 2,
   /** FTS hits re-scored per request. */
   poolSize: 300,
-  maxCandidates: 10,
+  maxResults: 50,
 };
 
 export type ReadmeErrorCode = 'INVALID_PATH' | 'README_NOT_FOUND' | 'README_TOO_LARGE';
@@ -73,20 +73,40 @@ export const ALIASES: Record<string, string[]> = {
   깃허브: ['github'],
 };
 
+/** Code-block languages of install/run snippets: every README has them, they say nothing about the project. */
+const SHELL_LANGS = new Set('bash sh shell zsh fish console terminal cmd bat powershell ps ps1 pwsh shellsession sh-session text txt plaintext output log diff'.split(' '));
+
+/** Established names that are written in camelCase but are one word ("TypeScript" is not about "type"/"script"). */
+const COMPOUND_NAMES = new Set(
+  `javascript typescript github gitlab bitbucket postgresql mysql mongodb graphql nodejs nextjs nuxtjs webpack youtube
+  linkedin openai chatgpt powerpoint wordpress macos ios ipados iphone ipad vscode devops fastapi pytorch tensorflow
+  numpy jupyter dynamodb firebase supabase tailwindcss sveltekit sqlite mariadb redis elasticsearch kubernetes
+  cloudflare netlify vercel figma oauth jsonschema openapi markdown`.split(/\s+/),
+);
+
+/** camelCase pieces count half: they help (PptxMaker → pptx) but are often noise. */
+const PART_FACTOR = 0.5;
+
 const SPLIT = /[\n\r\p{Z}\p{P}\p{S}]+/u;
 
-/** Splits on spaces/punctuation; camelCase tokens keep the whole word and its parts (PptxMaker → PptxMaker, Pptx, Maker). */
-export function tokenize(text: string): string[] {
+/** Each token with its weight factor: the whole token 1, camelCase pieces {@link PART_FACTOR}. */
+function weightedTokens(text: string): Array<[string, number]> {
   return text
     .split(SPLIT)
     .filter(Boolean)
-    .flatMap((tok) => {
+    .flatMap((tok): Array<[string, number]> => {
+      if (COMPOUND_NAMES.has(tok.toLowerCase())) return [[tok, 1]];
       const parts = tok
         .replace(/([a-z])([A-Z])/g, '$1 $2')
         .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
         .split(' ');
-      return parts.length > 1 ? [tok, ...parts] : [tok];
+      return parts.length > 1 ? [[tok, 1], ...parts.map((p): [string, number] => [p, PART_FACTOR])] : [[tok, 1]];
     });
+}
+
+/** Splits on spaces/punctuation; camelCase tokens keep the whole word and its parts (PptxMaker → PptxMaker, Pptx, Maker). */
+export function tokenize(text: string): string[] {
+  return weightedTokens(text).map(([t]) => t);
 }
 
 /** One raw token → lowercase English word(s), or null (short, number, stopword, or non-English without an alias). */
@@ -126,6 +146,7 @@ function inlineText(s: string): string {
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // link
     .replace(/\[([^\]]*)\]\[[^\]]*\]/g, '$1') // reference link
     .replace(/<[^>]*>/g, ' ')
+    .replace(/\b(?:https?:\/\/|www\.)\S+/gi, ' ') // bare URLs ("https", "github", "com" are not topics)
     .replace(/&[a-z]+;|&#\d+;/gi, ' ')
     .replace(/`([^`]*)`/g, '$1')
     .replace(/[*_~]{1,3}([^*_~]+)[*_~]{1,3}/g, '$1')
@@ -140,7 +161,11 @@ function inlineText(s: string): string {
  */
 export function extractReadme(md: string, fallbackTitle: string): ReadmeInfo {
   const out: ReadmeInfo = { title: '', intro: '', features: [], headings: [], body: [], langs: [] };
-  const lines = md.replace(/\r\n?/g, '\n').split('\n');
+  // HTML comments are maintainer notes, not content (one became the "intro" of react-markdown's README).
+  const lines = md
+    .replace(/\r\n?/g, '\n')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .split('\n');
   let section = '';
   let para: string[] = [];
   let list: string[] = [];
@@ -178,7 +203,8 @@ export function extractReadme(md: string, fallbackTitle: string): ReadmeInfo {
     if (fence) {
       flushPara();
       flushList();
-      if (fence[2]) out.langs.push(fence[2].toLowerCase());
+      const lang = fence[2].toLowerCase();
+      if (lang && !SHELL_LANGS.has(lang)) out.langs.push(lang);
       while (++i < lines.length && !lines[i].trimStart().startsWith(fence[1])) {
         // code is not read
       }
@@ -211,6 +237,7 @@ export function extractReadme(md: string, fallbackTitle: string): ReadmeInfo {
       continue;
     }
     if (/^\s*\|/.test(line)) continue; // tables
+    if (/^\s{0,3}\[[^\]]+\]:\s*\S/.test(line)) continue; // link reference definitions (badge URL lists)
     flushList();
     para.push(line.replace(/^\s*>\s?/, ''));
   }
@@ -229,12 +256,12 @@ export type Keyword = { key: string; term: string; weight: number };
 export function termWeights(info: ReadmeInfo): Keyword[] {
   const byKey = new Map<string, { weight: number; forms: Map<string, number> }>();
   const add = (text: string, k: number) => {
-    for (const raw of tokenize(text)) {
+    for (const [raw, factor] of weightedTokens(text)) {
       for (const term of processTerm(raw) ?? []) {
         const key = stem(term);
         const e = byKey.get(key) ?? { weight: 0, forms: new Map<string, number>() };
-        e.weight += k;
-        e.forms.set(term, (e.forms.get(term) ?? 0) + k);
+        e.weight += k * factor;
+        e.forms.set(term, (e.forms.get(term) ?? 0) + k * factor);
         byKey.set(key, e);
       }
     }
@@ -258,19 +285,23 @@ export type RecommendResult = {
   readmePath: string;
   summary: { title: string; intro: string; features: string[] };
   keywords: Array<{ term: string; weight: number }>;
-  status: 'recommended' | 'candidates' | 'no-match';
-  recommended: SkillMatch | null;
-  candidates: SkillMatch[];
+  /** Skills similar to the README, most downloaded first (then stars). Empty when nothing is similar. */
+  skills: SkillMatch[];
 };
 
 const ftsTerm = (t: string) => `"${t.replace(/"/g, '')}"`;
+const byPopularity = (a: { installs: number | null; stars: number | null }, b: { installs: number | null; stars: number | null }) =>
+  (b.installs ?? -1) - (a.installs ?? -1) || (b.stars ?? -1) - (a.stars ?? -1);
 
 /**
- * Matches README keywords against the local skill index: FTS (porter) fetches every skill that shares a word,
- * then each is scored as Σ log2(1 + weight) × idf over the shared words, doubled for words in the skill name.
+ * README keywords → similar skills in the local index, ordered by popularity (user decision: downloads,
+ * then stars; how closely a skill matches only decides whether it is "similar" at all).
+ * FTS (porter) fetches every skill that shares a word; each gets Σ log2(1 + weight) × idf over the shared
+ * words (×2 in the name). Similar = at least {@link CONFIG.similarFloor} of the best score and sharing
+ * {@link CONFIG.minSharedWords} words, so a lone common word ("api") does not let a popular unrelated skill in.
  */
-export function matchSkills(store: Store, keywords: Keyword[], weights: Settings['weights']): Omit<RecommendResult, 'readmePath' | 'summary' | 'keywords'> {
-  if (keywords.length === 0) return { status: 'no-match', recommended: null, candidates: [] };
+export function matchSkills(store: Store, keywords: Keyword[], weights: Settings['weights']): SkillMatch[] {
+  if (keywords.length === 0) return [];
   const hits = store.searchSkillsFts(keywords.map((k) => ftsTerm(k.term)).join(' OR '), CONFIG.poolSize);
   const total = Math.max(1, store.countSkills());
   const idf = new Map(
@@ -297,31 +328,37 @@ export function matchSkills(store: Store, keywords: Keyword[], weights: Settings
       return { skill: s, score, matched };
     })
     .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score || (b.skill.installs ?? -1) - (a.skill.installs ?? -1) || a.skill.id.localeCompare(b.skill.id));
+    .sort((a, b) => b.score - a.score || a.skill.id.localeCompare(b.skill.id));
+  if (scored.length === 0) return [];
 
-  // The same skill is often republished in other repos (sometimes with small edits). A copy is not a rival:
-  // keep the best one per name, or "pdf" vs "pdf" would never be a confident recommendation.
-  const seen = new Set<string>();
-  const unique = scored.filter((x) => {
-    const k = x.skill.name.toLowerCase().replace(/[\s_]+/g, '-');
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-  if (unique.length === 0) return { status: 'no-match', recommended: null, candidates: [] };
+  const best = scored[0];
+  const minShared = Math.min(CONFIG.minSharedWords, best.matched.length);
+  const similar = scored.filter((x) => x.score >= CONFIG.similarFloor * best.score && x.matched.length >= minShared);
 
+  // One entry per skill name: the same skill is often republished elsewhere. Keep the trusted, most
+  // installed copy.
   const lookup = storeLookup(store);
-  const top = unique.slice(0, CONFIG.maxCandidates);
-  const maxInstalls = Math.max(0, ...top.map((x) => x.skill.installs ?? 0));
   const starsOf = (repo: string | null) => (repo ? (store.getRepo(repo)?.stars ?? null) : null);
-  const maxStars = Math.max(0, ...top.map((x) => starsOf(x.skill.repo) ?? 0));
-  const toMatch = (x: (typeof unique)[number]): SkillMatch => {
+  const trustOf = (s: (typeof scored)[number]['skill']) => TRUST_SCORE[trustTier(s, lookup.plugin(s.plugin_id))];
+  const groups = new Map<string, typeof similar>();
+  for (const x of similar) {
+    const k = x.skill.name.toLowerCase().replace(/[\s_]+/g, '-');
+    groups.set(k, [...(groups.get(k) ?? []), x]);
+  }
+  const unique = [...groups.values()]
+    .map((g) => g.sort((a, b) => trustOf(b.skill) - trustOf(a.skill) || (b.skill.installs ?? -1) - (a.skill.installs ?? -1) || b.score - a.score)[0])
+    .map((x) => ({ ...x, installs: x.skill.installs, stars: starsOf(x.skill.repo) }))
+    .sort((a, b) => byPopularity(a, b) || b.score - a.score || a.skill.id.localeCompare(b.skill.id))
+    .slice(0, CONFIG.maxResults);
+
+  const maxInstalls = Math.max(0, ...unique.map((x) => x.installs ?? 0));
+  const maxStars = Math.max(0, ...unique.map((x) => x.stars ?? 0));
+  return unique.map((x) => {
     const s = x.skill;
     const plugin = lookup.plugin(s.plugin_id);
-    const stars = starsOf(s.repo);
     const breakdown = {
-      R: x.score / unique[0].score,
-      P: popularity({ installs: s.installs, stars }, maxInstalls, maxStars),
+      R: x.score / best.score,
+      P: popularity({ installs: x.installs, stars: x.stars }, maxInstalls, maxStars),
       F: freshness(s.last_commit_at),
       T: TRUST_SCORE[trustTier(s, plugin)],
     };
@@ -330,18 +367,13 @@ export function matchSkills(store: Store, keywords: Keyword[], weights: Settings
       skill: s,
       lookup,
       sources: source ? [source] : [],
-      installs: s.installs,
-      stars,
+      installs: x.installs,
+      stars: x.stars,
       breakdown,
       score: totalScore(breakdown, weights),
     });
     return { item, score: Math.round(x.score * 100) / 100, matchedTerms: x.matched };
-  };
-
-  const [first, second] = unique;
-  const confident = first.score >= CONFIG.confidentRatio * (second?.score ?? 0) && first.matched.length >= CONFIG.minMatchedTerms;
-  const candidates = top.map(toMatch);
-  return { status: confident ? 'recommended' : 'candidates', recommended: confident ? candidates[0] : null, candidates };
+  });
 }
 
 export function recommendForProject(store: Store, projectPath: unknown, weights: Settings['weights']): RecommendResult {
@@ -352,6 +384,6 @@ export function recommendForProject(store: Store, projectPath: unknown, weights:
     readmePath,
     summary: { title: info.title, intro: info.intro, features: info.features },
     keywords: keywords.slice(0, 10).map(({ term, weight }) => ({ term, weight })),
-    ...matchSkills(store, keywords, weights),
+    skills: matchSkills(store, keywords, weights),
   };
 }

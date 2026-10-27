@@ -33,9 +33,8 @@ export type RecommendResult = {
   readmePath: string;
   summary: { title: string; intro: string; features: string[] };
   keywords: Array<{ term: string; weight: number }>;
-  status: 'recommended' | 'candidates' | 'no-match';
-  recommended: SkillMatch | null;
-  candidates: SkillMatch[];
+  /** Similar skills, most downloaded first (then stars). */
+  skills: SkillMatch[];
 };
 
 export type SearchEvent =

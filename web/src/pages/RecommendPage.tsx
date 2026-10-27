@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ApiError, apiGet, apiSend } from '../api.ts';
 import { FolderInput } from '../components/FolderInput.tsx';
 import { Icon } from '../components/Icon.tsx';
 import { ResultCard } from '../components/ResultCard.tsx';
 import { Translated } from '../components/Translated.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
-import type { RecommendResult, ResultItem, SettingsResponse, SkillMatch } from '../types.ts';
+import type { RecommendResult, ResultItem, SettingsResponse } from '../types.ts';
 
 /** What to do next, per error status of POST /readme-skills. */
 const ERROR_HINT: Record<number, string> = {
@@ -14,32 +14,14 @@ const ERROR_HINT: Record<number, string> = {
   413: 'README가 1MB를 넘어 읽지 않았습니다.',
 };
 
-function Terms({ terms }: { terms: string[] }) {
-  return (
-    <span className="match-terms">
-      {terms.map((t) => (
-        <code key={t}>{t}</code>
-      ))}
-    </span>
-  );
-}
-
-function MatchCard({ m, position, onOpen }: { m: SkillMatch; position: number; onOpen: (item: ResultItem) => void }) {
-  return (
-    <div className="match">
-      <ResultCard item={m.item} position={position} onSelect={() => onOpen(m.item)} />
-      <p className="match-why small">
-        <span className="muted">겹친 단어</span> <Terms terms={m.matchedTerms} /> <span className="muted">· 일치 점수 {m.score}</span>
-      </p>
-    </div>
-  );
-}
-
 export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }) {
   const [projectPath, setProjectPath] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<RecommendResult | null>(null);
   const [error, setError] = useState<{ message: string; hint?: string } | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     apiGet<SettingsResponse>('/settings')
@@ -53,6 +35,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
     setError(null);
     try {
       setResult(await apiSend<RecommendResult>('POST', '/readme-skills', { projectPath: path.trim() }));
+      setPage(1);
     } catch (e) {
       setResult(null);
       const status = e instanceof ApiError ? e.status : 0;
@@ -62,14 +45,21 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
     }
   };
 
-  const others = result ? result.candidates.filter((c) => c.item.id !== result.recommended?.item.id) : [];
+  const skills = result?.skills ?? [];
+  const pageCount = Math.max(1, Math.ceil(skills.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pageItems = skills.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const goPage = (p: number) => {
+    setPage(Math.min(Math.max(1, p), pageCount));
+    listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   return (
     <div className="page recommend-page">
       <h1>README 추천</h1>
       <p className="muted">
-        프로젝트 폴더를 고르면 맨 위의 README를 읽고 요약한 뒤, 색인된 스킬 중 이 프로젝트에 맞는 것을 추천합니다. AI 없이 README의 단어로만
-        판단합니다.
+        프로젝트 폴더를 고르면 맨 위의 README를 읽고, 이 프로젝트와 비슷한 스킬을 다운로드·인기 순으로 보여 줍니다. AI 없이 README의 단어로만
+        찾습니다.
       </p>
       <form
         className="row"
@@ -119,39 +109,68 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
                 </code>
               ))}
             </p>
-            <p className="muted small mono">{result.readmePath}</p>
           </section>
 
-          <TranslationNotice />
-
-          {result.status === 'no-match' && (
-            <p className="empty">맞는 스킬을 찾지 못했습니다. README의 단어와 겹치는 스킬이 색인에 없습니다.</p>
-          )}
-
-          {result.status === 'recommended' && result.recommended && (
-            <section className="recommend-pick">
-              <h2>
-                <Icon name="check" size={16} /> 추천 스킬
-              </h2>
-              <MatchCard m={result.recommended} position={0} onOpen={onOpen} />
-            </section>
-          )}
-
-          {result.status === 'candidates' && (
-            <p className="note">
-              하나로 확정하지 못했습니다. 비슷하게 맞는 스킬이 여럿이거나 겹친 단어가 적습니다. 잘 맞는 순서로 보여 줍니다.
-            </p>
-          )}
-
-          {others.length > 0 && (
-            <section className="recommend-list">
-              <h2>{result.status === 'recommended' ? '다른 후보' : '후보'}</h2>
+          {skills.length === 0 ? (
+            <p className="empty">비슷한 스킬을 찾지 못했습니다. README의 단어와 겹치는 스킬이 색인에 없습니다.</p>
+          ) : (
+            <>
+              <div className="results-toolbar" ref={listRef}>
+                <div className="toolbar-left">
+                  <span>
+                    비슷한 스킬 <b>{skills.length}</b>개 <span className="muted small">· 다운로드 → 스타 순</span>
+                  </span>
+                </div>
+                <div className="toolbar-right">
+                  <TranslationNotice compact />
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setPage(1);
+                    }}
+                    aria-label="페이지당 개수"
+                  >
+                    {[5, 10, 20].map((n) => (
+                      <option key={n} value={n}>
+                        {n}개씩
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
               <div className="results">
-                {others.map((m, i) => (
-                  <MatchCard key={m.item.id} m={m} position={i + 1} onOpen={onOpen} />
+                {pageItems.map((m, i) => (
+                  <div key={m.item.id} title={`README와 겹친 단어: ${m.matchedTerms.join(', ')}`}>
+                    <ResultCard item={m.item} position={i} onSelect={() => onOpen(m.item)} />
+                  </div>
                 ))}
               </div>
-            </section>
+              {pageCount > 1 && (
+                <nav className="pager" aria-label="추천 결과 페이지">
+                  <button type="button" className="ghost" onClick={() => goPage(currentPage - 1)} disabled={currentPage === 1} aria-label="이전 페이지">
+                    <Icon name="back" size={15} />
+                  </button>
+                  {Array.from({ length: pageCount }, (_, i) => i + 1).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      className={p === currentPage ? 'page-num active' : 'page-num'}
+                      aria-current={p === currentPage ? 'page' : undefined}
+                      onClick={() => goPage(p)}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                  <button type="button" className="ghost" onClick={() => goPage(currentPage + 1)} disabled={currentPage === pageCount} aria-label="다음 페이지">
+                    <Icon name="back" size={15} className="flip" />
+                  </button>
+                  <span className="muted small pager-info">
+                    {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, skills.length)} / {skills.length}개
+                  </span>
+                </nav>
+              )}
+            </>
           )}
         </>
       )}
