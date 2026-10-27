@@ -4,3 +4,7 @@ web/dist/
 data/
 *.log
 .claude/
+# AI assistant instructions and agents (local only)
+CLAUDE.md
+AGENTS.md
+.codex/
