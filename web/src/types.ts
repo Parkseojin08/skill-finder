@@ -27,7 +27,16 @@ export type ResultItem = {
   categories: string[];
 };
 
-export type SkillMatch = { item: ResultItem; score: number; matchedTerms: string[] };
+export type RepoResult = {
+  repo: string;
+  url: string;
+  description: string | null;
+  stars: number | null;
+  topics: string[];
+  skills: Array<{ id: string; name: string }>;
+};
+
+export type SkillMatch ={ item: ResultItem; score: number; matchedTerms: string[] };
 
 export type RecommendResult = {
   readmePath: string;
@@ -41,7 +50,7 @@ export type SearchEvent =
   | { type: 'stage'; stage: 'collect' | 'enrich' | 'score'; message: string }
   | { type: 'candidates'; items: ResultItem[] }
   | { type: 'warning'; source: string; message: string }
-  | { type: 'results'; items: ResultItem[]; hiddenHighRisk: number; hiddenNoDescription: number }
+  | { type: 'results'; items: ResultItem[]; hiddenHighRisk: number; hiddenNoDescription: number; hiddenLowStars?: number; minStars?: number; repos?: RepoResult[] }
   | { type: 'done'; cached: boolean; elapsedMs: number };
 
 export type InstallPlan = {
@@ -114,6 +123,7 @@ export type Settings = {
   autoCollect: boolean;
   defaultScope: 'user' | 'project';
   defaultProjectPath: string;
+  minStars: number;
 };
 
 export type MarketplaceInfo = {

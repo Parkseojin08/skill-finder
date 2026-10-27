@@ -70,10 +70,8 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
       >
         <FolderInput
           value={projectPath}
-          onChange={(p) => {
-            setProjectPath(p);
-            void analyze(p);
-          }}
+          onChange={setProjectPath}
+          onPick={(p) => void analyze(p)}
           placeholder="프로젝트 폴더 경로"
         />
         <button type="submit" className="primary" disabled={!projectPath.trim() || busy}>

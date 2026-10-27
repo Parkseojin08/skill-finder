@@ -6,7 +6,8 @@ import { isPluginName, isRepo } from '../install/validate.ts';
 import { getSettings, saveSettings, SettingsSchema } from '../settings.ts';
 import { fetchMarketplaceManifest } from '../sources/marketplace.ts';
 import { parseGithubRepo } from '../sources/pluginSource.ts';
-import { startCollect, startSync } from '../tasks.ts';
+import { popularState } from '../sources/popularRepos.ts';
+import { startCollect, startPopularCollect, startSync } from '../tasks.ts';
 
 const SettingsPut = z.object({
   settings: SettingsSchema.partial().optional(),
@@ -129,6 +130,16 @@ export function adminRouter(ctx: AppContext): Router {
       return;
     }
     res.json({ jobId: startCollect(ctx, name).id });
+  });
+
+  r.get('/popular-repos', (_req, res) => {
+    const s = popularState(ctx);
+    const repos = Object.values(s.repos);
+    res.json({ lastRunAt: s.lastRunAt, repos: repos.length, withSkills: repos.filter((r) => r.skills > 0).length, skills: repos.reduce((n, r) => n + r.skills, 0) });
+  });
+
+  r.post('/popular-repos/collect', (req, res) => {
+    res.json({ jobId: startPopularCollect(ctx, false, req.body?.force === true).id });
   });
 
   r.get('/jobs', (_req, res) => {

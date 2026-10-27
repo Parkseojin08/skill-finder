@@ -58,6 +58,21 @@ export function SettingsPage() {
       </section>
 
       <section>
+        <h2>검색 조건</h2>
+        <label className="field min-stars">
+          <span>최소 GitHub 스타</span>
+          <input
+            type="number"
+            min={0}
+            step={500}
+            value={draft.minStars}
+            onChange={(e) => setDraft({ ...draft, minStars: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+          />
+        </label>
+        <p className="muted small">이 수보다 스타가 적거나 스타 수를 알 수 없는 저장소의 스킬은 검색 결과에서 숨깁니다. 0이면 제한하지 않습니다.</p>
+      </section>
+
+      <section>
         <h2>점수 가중치</h2>
         <div className="grid2">
           {(Object.keys(BREAKDOWN) as Array<keyof Breakdown>).map((k) => (

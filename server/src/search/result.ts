@@ -30,6 +30,17 @@ export type ResultItem = {
   categories: Category[];
 };
 
+/** A GitHub repository shown as a result of its own (one-word query equal to its name, e.g. "rea"). */
+export type RepoResult = {
+  repo: string;
+  url: string;
+  description: string | null;
+  stars: number | null;
+  topics: string[];
+  /** Installable skills found in the repo (also listed among the skill results). */
+  skills: Array<{ id: string; name: string }>;
+};
+
 export const TRUST_LABEL = { official: '공식', partner: '파트너', community: '커뮤니티' } as const;
 
 export function treeUrl(repo: string, ref: string | null, dir: string | null): string {

@@ -14,6 +14,7 @@ import { isProjectDir } from '../install/validate.ts';
 import { getSettings } from '../settings.ts';
 import { FolderPickerUnavailable, pickFolder } from '../util/folderPicker.ts';
 import { ndjson } from '../util/ndjson.ts';
+import { isPlainFolderName, resolveDroppedFolder } from '../util/resolveFolder.ts';
 import { truncate } from '../util/sanitize.ts';
 import { SKILLS_CLI_VERSION } from '../config.ts';
 
@@ -205,6 +206,18 @@ export function installRouter(ctx: AppContext): Router {
     } finally {
       picking = false;
     }
+  });
+
+  // Drag & drop: the browser only knows the dropped folder's name and contents; find its absolute path.
+  const DropBody = z.object({ name: z.string().min(1).max(255), entries: z.array(z.string().max(255)).max(200) });
+  r.post('/resolve-folder', (req, res) => {
+    const parsed = DropBody.safeParse(req.body);
+    if (!parsed.success || !isPlainFolderName(parsed.data.name)) {
+      res.status(400).json({ error: '폴더 이름이 올바르지 않습니다' });
+      return;
+    }
+    const hints = [getSettings(ctx.store).defaultProjectPath].filter(Boolean);
+    res.json({ matches: resolveDroppedFolder(parsed.data.name, parsed.data.entries, hints) });
   });
 
   r.get('/installed', async (req, res) => {

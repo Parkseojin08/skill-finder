@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet, apiSend } from '../api.ts';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
 import { FolderInput } from '../components/FolderInput.tsx';
@@ -34,13 +34,18 @@ export function InstalledPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<RemoveRequest | null>(null);
 
+  // Only the latest request may update the screen: typing a path fires one request per pause, and an
+  // older answer for a half-typed path ("…skill finde") arriving last used to show "스킬 (0)".
+  const seq = useRef(0);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const load = useCallback((path: string) => {
+    const id = ++seq.current;
     setLoading(true);
     setError(null);
     apiGet<InstalledResponse>('/installed', { projectPath: path.trim() || undefined })
-      .then(setData)
-      .catch((e) => setError(String(e.message ?? e)))
-      .finally(() => setLoading(false));
+      .then((d) => id === seq.current && setData(d))
+      .catch((e) => id === seq.current && setError(String(e.message ?? e)))
+      .finally(() => id === seq.current && setLoading(false));
   }, []);
 
   useEffect(() => {
@@ -106,6 +111,12 @@ export function InstalledPage() {
           value={projectPath}
           onChange={(p) => {
             setProjectPath(p);
+            // typing: load after a pause, not on every keystroke
+            clearTimeout(typingTimer.current);
+            typingTimer.current = setTimeout(() => load(p), 400);
+          }}
+          onPick={(p) => {
+            clearTimeout(typingTimer.current);
             load(p);
           }}
           placeholder="프로젝트 폴더 (비우면 개인 범위만)"

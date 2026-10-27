@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import type { AppConfig } from '../config.ts';
 import type { RepoRow, Store } from '../db/store.ts';
 import { fetchText, USER_AGENT } from '../util/http.ts';
+import { sanitizeLine } from '../util/sanitize.ts';
 import { Semaphore, sleep, TokenBucket } from '../util/limiter.ts';
 import { gitTree, lsRemote, type RemoteRef, type TreeEntry } from './gitTree.ts';
 
@@ -297,6 +298,54 @@ export class GitHub {
     return body.items
       .filter((i) => i.path === 'SKILL.md' || i.path.endsWith('/SKILL.md'))
       .map((i) => ({ repo: i.repository.full_name, path: i.path, htmlUrl: i.html_url }));
+  }
+
+  /**
+   * Repository search (unlike code search it supports `stars:>=N`). Up to 100 per query, most-starred first;
+   * star counts are stored so later filters do not need another call.
+   */
+  async searchRepos(q: string, perPage = 100): Promise<Array<{ repo: string; stars: number; description: string | null; topics: string[] }>> {
+    const res = await this.api(`/search/repositories?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=${perPage}`, { bucket: this.search });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new GitHubError(`GitHub 저장소 검색 실패 (${res.status}) ${text.slice(0, 120)}`, res.status);
+    }
+    const body = (await res.json()) as {
+      items: Array<{
+        full_name: string;
+        stargazers_count: number;
+        description: string | null;
+        topics?: string[];
+        pushed_at: string | null;
+        archived: boolean;
+        fork: boolean;
+        license: { spdx_id?: string | null } | null;
+        default_branch: string;
+      }>;
+    };
+    const out: Array<{ repo: string; stars: number; description: string | null; topics: string[] }> = [];
+    for (const i of body.items) {
+      if (!REPO_RE.test(i.full_name) || i.archived) continue;
+      const cached = this.store.getRepo(i.full_name);
+      this.store.upsertRepo({
+        full_name: cached?.full_name ?? i.full_name,
+        stars: i.stargazers_count,
+        pushed_at: i.pushed_at,
+        archived: i.archived ? 1 : 0,
+        fork: i.fork ? 1 : 0,
+        license: i.license?.spdx_id ?? null,
+        default_branch: i.default_branch,
+        etag: cached?.etag ?? null,
+        fetched_at: new Date().toISOString(),
+      });
+      out.push({
+        repo: i.full_name,
+        stars: i.stargazers_count,
+        description: i.description ? sanitizeLine(i.description).slice(0, 300) : null,
+        topics: (i.topics ?? []).filter((t) => /^[a-z0-9-]{1,50}$/.test(t)).slice(0, 20),
+      });
+    }
+    return out;
   }
 
   /** Non-code search endpoints share the 30/min bucket (we use 28). */

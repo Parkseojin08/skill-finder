@@ -2,6 +2,7 @@ import { Icon } from '../components/Icon.tsx';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { apiGet, streamNdjson } from '../api.ts';
 import { FacetPanel, facetCount, matchFacets, NO_FACETS, type Facets } from '../components/FacetPanel.tsx';
+import { RepoCard } from '../components/RepoCard.tsx';
 import { ResultCard } from '../components/ResultCard.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { STAGES } from '../labels.ts';
@@ -24,6 +25,16 @@ const SORTS: Array<{ key: SortKey; label: string; compare: (a: ResultItem, b: Re
   },
   { key: 'name', label: '이름순', compare: (a, b) => a.name.localeCompare(b.name) },
 ];
+
+/** Mirrors server/src/search/pipeline.ts: a one-word query as a name, and whether a result carries that name. */
+function navigationalWord(query: string): string | null {
+  const q = query.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
+  return /^[a-z0-9][a-z0-9._-]{1,99}$/.test(q) ? q : null;
+}
+function nameMatches(item: ResultItem, word: string): boolean {
+  const name = item.name.toLowerCase();
+  return name === word || name.startsWith(`${word}-`) || item.id.match(/^gh:[^/]+\/([^:]+):/)?.[1] === word;
+}
 
 type Status = 'idle' | 'running' | 'done' | 'error';
 
@@ -162,7 +173,10 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
 
   const toggleSource = (s: SourceKind) => setSources((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
   const filtered = items.filter((it) => matchFacets(it, facets));
-  const sorted = filtered.sort(SORTS.find((s) => s.key === sort)!.compare);
+  const compare = SORTS.find((s) => s.key === sort)!.compare;
+  const word = navigationalWord(lastQuery);
+  // Same rule as the server: an exact skill/repo name ("rea") is a lookup, so its skills come first by default.
+  const sorted = filtered.sort(sort === 'popular' && word ? (a, b) => Number(nameMatches(b, word)) - Number(nameMatches(a, word)) || compare(a, b) : compare);
   const filtering = facetCount(facets) > 0;
   const showFacets = status !== 'idle' && (items.length > 0 || filtering);
   const changeFacets = (f: Facets) => {
@@ -185,6 +199,14 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
   const minor: Array<{ key: string; node: ReactNode }> = [
     ...warnings.filter((w) => !isUrgent(w)).map((w, i) => ({ key: `w${i}`, node: w.message })),
     ...(final && final.hiddenNoDescription > 0 ? [{ key: 'nodesc', node: `설명이 없어 판단할 수 없는 결과 ${final.hiddenNoDescription}개는 숨겼습니다.` }] : []),
+    ...(final && (final.hiddenLowStars ?? 0) > 0
+      ? [
+          {
+            key: 'stars',
+            node: `GitHub 스타 ${(final.minStars ?? 0).toLocaleString()}개 미만(또는 스타 수를 모르는) 저장소의 결과 ${final.hiddenLowStars}개는 숨겼습니다. 설정에서 바꿀 수 있습니다.`,
+          },
+        ]
+      : []),
   ];
   const hiddenRisky = final && maxRisk !== 'high' ? final.hiddenHighRisk : 0;
 
@@ -393,6 +415,21 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
           </div>
 
           {provisional && items.length > 0 && <p className="muted small">임시 결과입니다. 후보 확인이 끝나면 갱신됩니다.</p>}
+
+          {currentPage === 1 && (final?.repos?.length ?? 0) > 0 && (
+            <div className="repo-results" aria-label="이름이 같은 GitHub 저장소">
+              {final!.repos!.map((r) => (
+                <RepoCard
+                  key={r.repo}
+                  repo={r}
+                  onOpenSkill={(id) => {
+                    const item = items.find((x) => x.id === id);
+                    if (item) onOpen(item);
+                  }}
+                />
+              ))}
+            </div>
+          )}
 
           <div className="results">
             {pageItems.map((it, i) => (

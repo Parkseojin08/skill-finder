@@ -348,6 +348,26 @@ export class Indexer {
     return raw == null ? null : this.rowFromDiscovery(repo, lookup.snap, lookup.discovery, dirPath, raw);
   }
 
+  /**
+   * Indexes every installable skill of one GitHub repo at its default branch (popular-repo collection):
+   * marketplace/plugin layouts by their manifests, otherwise the skills CLI's generic rules. Rows already
+   * indexed from a registered marketplace are left as they are. Returns how many skills the repo has.
+   */
+  async indexRepo(repo: string): Promise<number> {
+    const snap = await this.snapshot(repo, 'HEAD');
+    if (!snap.tree.entries.some((e) => e.path === 'SKILL.md' || e.path.endsWith('/SKILL.md'))) return 0;
+    const discovery = await discoverRepo(snap.index, snap.read, genericValidator);
+    const found: Array<{ dir: string; raw: string | null }> = [
+      ...discovery.generic.map((g) => ({ dir: g.dirPath, raw: g.raw as string | null })),
+      ...[...new Set(discovery.plugins.flatMap((p) => p.skillDirs))].map((dir) => ({ dir, raw: null })),
+    ].slice(0, 500);
+    const rows = await pool(found, 8, async ({ dir, raw }) => {
+      const text = raw ?? (await snap.read(skillMdPath(dir)));
+      return text == null ? null : this.rowFromDiscovery(repo, snap, discovery, dir, text);
+    });
+    return rows.filter((r) => r?.ok && r.value).length;
+  }
+
   /** Placeholder row for a skills.sh hit served from a well-known endpoint (no preview in the MVP). */
   wellKnownRow(domain: string, name: string, installs: number | null): SkillRow {
     const row: SkillRow = {

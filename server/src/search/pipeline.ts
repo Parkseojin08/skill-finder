@@ -15,6 +15,7 @@ import {
   mergeSources,
   storeLookup,
   type Lookup,
+  type RepoResult,
   type ResultItem,
   type SourceKind,
   type SourceRef,
@@ -26,7 +27,16 @@ export type SearchEvent =
   | { type: 'stage'; stage: 'collect' | 'enrich' | 'score'; message: string }
   | { type: 'candidates'; items: ResultItem[] }
   | { type: 'warning'; source: string; message: string }
-  | { type: 'results'; items: ResultItem[]; hiddenHighRisk: number; hiddenNoDescription: number }
+  | {
+      type: 'results';
+      items: ResultItem[];
+      hiddenHighRisk: number;
+      hiddenNoDescription: number;
+      hiddenLowStars?: number;
+      minStars?: number;
+      /** Repositories named like a one-word query, shown above the skills. */
+      repos?: RepoResult[];
+    }
   | { type: 'done'; cached: boolean; elapsedMs: number };
 
 export type SearchDeps = {
@@ -151,7 +161,7 @@ export async function runSearch(
   const sources = new Set<SourceKind>(filters.sources?.length ? filters.sources : ['marketplace', 'skillssh', 'github']);
   const maxRisk: RiskLevel = filters.maxRisk ?? 'medium';
   // `r` is the result-item shape; bump it when items gain fields so cached searches are rebuilt.
-  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, r: 6 });
+  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: settings.minStars, r: 9 });
 
   const cached = store.getCached(key, DAY_MS) as CachedSearch | undefined;
   const fresh = cached && !(cached.ttlMs && cached.cachedAt && Date.now() - cached.cachedAt > cached.ttlMs);
@@ -268,16 +278,54 @@ export async function runSearch(
     );
   };
 
+  // One-word queries are often a name ("rea"). The repo with that name is shown as a result of its own, and
+  // all its skills join the candidates, even ones whose text never contains the word (morluto/rea's main
+  // skill is "reverse-engineer-anything").
+  const word = navigationalWord(query);
+  const repoInfo = new Map<string, { stars: number | null; description: string | null; topics: string[] }>();
+  const addRepoNameSkills = () => {
+    if (!word) return;
+    for (const s of store.findSkillsByRepoName(word)) {
+      const c = upsert(s.id, () => blank(s.id, s));
+      const plugin = lookup.plugin(s.plugin_id);
+      const source = plugin ? marketplaceSource(s, plugin) : githubSource(s);
+      if (source) c.sources = mergeSources(c.sources, [source]);
+      c.pos.marketplace = 1;
+    }
+  };
+  const collectRepos = async () => {
+    if (!word) return;
+    try {
+      // repository search can filter by stars and returns description and topics for the repo card
+      const hits = await withTimeout(github.searchRepos(`${word} in:name stars:>=${Math.max(1, settings.minStars)}`, 30), 6000, 'timeout');
+      for (const r of hits) if (r.repo.split('/')[1]?.toLowerCase() === word) repoInfo.set(r.repo, r);
+    } catch {
+      // GitHub search unavailable: repos already in the local index still count
+    }
+    for (const s of store.findSkillsByRepoName(word)) {
+      if (s.repo && ![...repoInfo.keys()].some((k) => k.toLowerCase() === s.repo!.toLowerCase())) {
+        repoInfo.set(s.repo, { stars: store.getRepo(s.repo)?.stars ?? null, description: null, topics: [] });
+      }
+    }
+    // Found on GitHub but never indexed: read its skills now (a slow repo keeps indexing in the background).
+    const unindexed = [...repoInfo.keys()].slice(0, 3).filter((r) => store.findSkillsByRepo(r).length === 0);
+    await Promise.all(unindexed.map((r) => withTimeout(indexer.indexRepo(r), 8000, 'timeout').catch(() => 0)));
+    addRepoNameSkills();
+  };
+
   const collectLocal = async () => {
     if (!sources.has('marketplace') || !match) return;
-    const hits = store.searchSkillsFts(match, 80, filters.marketplaces).filter((h) => h.skill.origin === 'plugin');
+    // Marketplace skills plus skills indexed straight from GitHub repos (popular-repo collection, earlier lookups).
+    const hits = store.searchSkillsFts(match, 120, filters.marketplaces).filter((h) => h.skill.origin !== 'wellknown');
     hits.forEach((h, i) => {
       const c = upsert(h.skill.id, () => blank(h.skill.id, h.skill));
       const plugin = lookup.plugin(h.skill.plugin_id);
-      if (plugin) c.sources = mergeSources(c.sources, [marketplaceSource(h.skill, plugin)]);
+      const source = plugin ? marketplaceSource(h.skill, plugin) : githubSource(h.skill);
+      if (source) c.sources = mergeSources(c.sources, [source]);
       c.bm25 = c.bm25 == null ? h.bm25 : Math.min(c.bm25, h.bm25);
       c.pos.marketplace = Math.max(c.pos.marketplace ?? 0, posScore(i, hits.length));
     });
+    addRepoNameSkills();
     const pluginHits = store.searchPluginsFts(match, 20, filters.marketplaces);
     pluginHits.forEach((h, i) => {
       const score = 0.9 * posScore(i, pluginHits.length);
@@ -342,7 +390,7 @@ export async function runSearch(
     }
   };
 
-  await Promise.all([timed('local', collectLocal), timed('skillssh', collectSkillsSh), timed('github', collectGithub)]);
+  await Promise.all([timed('local', collectLocal), timed('skillssh', collectSkillsSh), timed('github', collectGithub), collectRepos()]);
   timings.collect = Date.now() - t0;
 
   const ranked = () => [...cands.values()].sort((a, b) => prelim(b) - prelim(a));
@@ -403,22 +451,34 @@ export async function runSearch(
       if (c.installs != null && c.installs > 0 && c.skill) store.setSkillInstalls(c.skill.id, c.installs);
       if (c.installs == null && c.skill?.installs) c.installs = c.skill.installs;
     }
-    const finalists = dedupeByContent(merged, lookup)
-      .sort((a, b) => prelim(b) - prelim(a))
-      .slice(0, MAX_ENRICH);
+    const deduped = dedupeByContent(merged, lookup).sort((a, b) => prelim(b) - prelim(a));
 
-    // stars (cached 24h; skipped when the quota is short). Interim results use what is cached.
-    const repos = [...new Set(finalists.map((c) => c.skill!.repo).filter((r): r is string => !!r))];
+    // Stars for every candidate repo (cached 24h; the minimum-stars filter needs them all). Interim results
+    // use what is cached.
+    const repos = [...new Set(deduped.map((c) => c.skill!.repo).filter((r): r is string => !!r))];
     const stars = new Map<string, number | null>();
     const tStars = Date.now();
     if (final) {
-      await pool(repos.slice(0, 15), 6, async (r) => {
+      await pool(repos, 8, async (r) => {
         const meta = await github.getRepoMeta(r).catch(() => null);
         stars.set(r.toLowerCase(), meta?.stars ?? null);
       });
       timings.stars = Date.now() - tStars;
     }
     for (const r of repos) if (!stars.has(r.toLowerCase())) stars.set(r.toLowerCase(), store.getRepo(r)?.stars ?? null);
+    const starsOf = (c: Candidate) => (c.skill!.repo ? (stars.get(c.skill!.repo.toLowerCase()) ?? null) : null);
+
+    // Minimum GitHub stars (user setting, default 5,000). An unknown count does not pass: it may be below.
+    let hiddenLowStars = 0;
+    const finalists = deduped
+      .filter((c) => {
+        if (settings.minStars <= 0) return true;
+        const st = starsOf(c);
+        if (st != null && st >= settings.minStars) return true;
+        if (c.skill!.description) hiddenLowStars++;
+        return false;
+      })
+      .slice(0, MAX_ENRICH);
 
     const bm = finalists.map((c) => c.bm25).filter((b): b is number => b != null);
     const best = bm.length ? Math.min(...bm) : 0;
@@ -448,8 +508,26 @@ export async function runSearch(
       };
       items.push(toItem(c, lookup, breakdown, settings.weights, st));
     }
-    items.sort(byPopularity);
-    return { type: 'results' as const, items: items.slice(0, MAX_RESULTS), hiddenHighRisk, hiddenNoDescription };
+    items.sort(byNameThenPopularity(query));
+    const repoCards: RepoResult[] = [...repoInfo]
+      .filter(([, i]) => settings.minStars <= 0 || (i.stars ?? 0) >= settings.minStars)
+      .sort((a, b) => (b[1].stars ?? 0) - (a[1].stars ?? 0))
+      .slice(0, 3)
+      .map(([repo, i]) => ({
+        repo,
+        url: `https://github.com/${repo}`,
+        description: i.description,
+        stars: i.stars,
+        topics: i.topics,
+        skills: store
+          .findSkillsByRepo(repo)
+          .filter((s) => s.description && s.origin !== 'wellknown')
+          .slice(0, 30)
+          .map((s) => ({ id: s.id, name: s.name })),
+      }))
+      // a skill finder: a same-named repo without skills (facebook/react for "react") is not a result
+      .filter((r) => r.skills.length > 0);
+    return { type: 'results' as const, items: items.slice(0, MAX_RESULTS), hiddenHighRisk, hiddenNoDescription, hiddenLowStars, minStars: settings.minStars, repos: repoCards };
   }
 }
 
@@ -459,6 +537,28 @@ export async function runSearch(
  */
 export function byPopularity(a: ResultItem, b: ResultItem): number {
   return (b.installs ?? -1) - (a.installs ?? -1) || (b.stars ?? -1) - (a.stars ?? -1) || b.breakdown.R - a.breakdown.R;
+}
+
+/** The query as a single lowercase name-like word ("rea", "pdf-tools"), or null for multi-word queries. */
+export function navigationalWord(query: string): string | null {
+  const q = normalizeQuery(query);
+  return /^[a-z0-9][a-z0-9._-]{1,99}$/.test(q) ? q : null;
+}
+
+/**
+ * Typing a skill's or repo's exact name is a lookup: skills named `q` or `q-…`, or from a repo named `q`, come
+ * first (most popular first among them). Everything else keeps the popularity order. Ids are `gh:owner/repo:dir`.
+ */
+export function nameMatches(item: Pick<ResultItem, 'id' | 'name'>, word: string): boolean {
+  const name = item.name.toLowerCase();
+  const repo = item.id.match(/^gh:[^/]+\/([^:]+):/)?.[1];
+  return name === word || name.startsWith(`${word}-`) || repo === word;
+}
+
+export function byNameThenPopularity(query: string): (a: ResultItem, b: ResultItem) => number {
+  const word = navigationalWord(query);
+  if (!word) return byPopularity;
+  return (a, b) => Number(nameMatches(b, word)) - Number(nameMatches(a, word)) || byPopularity(a, b);
 }
 
 /** Folds candidates that resolved to the same skill row into one (first one wins as the base). */

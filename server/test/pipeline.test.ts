@@ -7,12 +7,14 @@ import { createContext } from '../src/bootstrap.ts';
 import type { AppContext } from '../src/context.ts';
 import { TreeIndex } from '../src/discovery/tree.ts';
 import { buildSkillRow, pluginFtsText } from '../src/indexer.ts';
-import { ftsQuery, queryKeywords, runSearch, type SearchDeps, type SearchEvent } from '../src/search/pipeline.ts';
+import { byNameThenPopularity, ftsQuery, nameMatches, navigationalWord, queryKeywords, runSearch, type SearchDeps, type SearchEvent } from '../src/search/pipeline.ts';
 
 function ctxWithSkills(): AppContext {
   const dataDir = mkdtempSync(join(tmpdir(), 'sf-pipe-'));
   const ctx = createContext({ port: 0, dev: false, dataDir, githubToken: null }, ':memory:');
   ctx.github.getRepoMeta = async () => null; // keep unit tests offline
+  ctx.github.searchRepos = async () => [];
+  ctx.store.setSetting('app', { minStars: 0 }); // fixture repos have no star counts; the filter has its own test
   const add =(plugin: string, mp: string, repo: string, dir: string, name: string, description: string, extra = '') => {
     const id = `${plugin}@${mp}`;
     if (!ctx.store.getPlugin(id)) {
@@ -153,6 +155,85 @@ describe('§7 검색 파이프라인', () => {
     assert.equal(calls, 1);
     const done = second.at(-1)!;
     assert.ok(done.type === 'done' && done.cached);
+  });
+});
+
+describe('최소 GitHub 스타', () => {
+  it('기본 5,000개 미만이거나 스타 수를 모르는 저장소의 결과는 숨기고 개수를 알려 준다', async () => {
+    const ctx = ctxWithSkills();
+    ctx.store.setSetting('app', {}); // default minimum
+    const stars: Record<string, number> = { 'anthropics/skills': 120000, 'acme/pr-tools': 4999 };
+    ctx.github.getRepoMeta = async (repo) => (repo in stars ? ({ full_name: repo, stars: stars[repo] } as never) : null);
+    const results = resultsOf(await collect(deps(ctx), 'pdf tables pull request review'));
+    const names = results.items.map((i) => i.name);
+    assert.ok(names.includes('pdf'), names.join(','));
+    assert.ok(!names.includes('pr-review'), '4,999개는 숨김');
+    assert.ok(!names.includes('pdf-magic'), '스타 수를 모르면 숨김');
+    assert.equal(results.minStars, 5000);
+    assert.ok((results.hiddenLowStars ?? 0) >= 2);
+  });
+
+  it('GitHub 저장소에서 바로 색인한 스킬도 로컬 검색 결과에 나온다', async () => {
+    const ctx = ctxWithSkills();
+    ctx.store.setSetting('app', {});
+    ctx.github.getRepoMeta = async (repo) => (repo === 'big/skills' ? ({ full_name: repo, stars: 42000 } as never) : null);
+    const row = buildSkillRow({
+      repo: 'big/skills',
+      sha: 'b'.repeat(40),
+      dirPath: 'skills/spreadsheet-wizard',
+      raw: '---\nname: spreadsheet-wizard\ndescription: Build spreadsheet reports with formulas and pivot tables.\n---\n',
+      tree: new TreeIndex([]),
+      origin: 'generic',
+      pluginId: null,
+      extraFlags: [],
+      install: null,
+      lastCommitAt: null,
+    });
+    ctx.store.upsertSkill(row, '');
+    const results = resultsOf(await collect(deps(ctx), 'spreadsheet pivot tables'));
+    const hit = results.items.find((i) => i.name === 'spreadsheet-wizard');
+    assert.ok(hit, results.items.map((i) => i.name).join(','));
+    assert.equal(hit.sources[0].kind, 'github');
+  });
+
+  it('설정을 0으로 하면 제한하지 않는다', async () => {
+    const ctx = ctxWithSkills();
+    const results = resultsOf(await collect(deps(ctx), 'pull request review'));
+    assert.ok(results.items.some((i) => i.name === 'pr-review'));
+  });
+});
+
+describe('이름으로 찾기 (한 단어 검색)', () => {
+  it('정확한 스킬·저장소 이름은 다운로드 순보다 먼저 온다', () => {
+    const item = (id: string, name: string, installs: number | undefined) => ({ id, name, installs, stars: 1, breakdown: { R: 0.5, P: 0, F: 0, T: 0 } }) as never;
+    const items = [item('gh:vercel/agent-skills:react', 'react-best', 900000), item('gh:morluto/rea:x', 'reverse-engineer-anything', undefined), item('gh:a/b:rea', 'rea-tool', undefined)];
+    const sorted = [...items].sort(byNameThenPopularity('REA'));
+    assert.deepEqual(sorted.map((i: { name: string }) => i.name).slice(0, 2).sort(), ['rea-tool', 'reverse-engineer-anything']);
+    assert.equal(navigationalWord('extract tables'), null, '여러 단어는 이름 검색이 아님');
+    assert.ok(!nameMatches({ id: 'gh:x/react:y', name: 'react' }, 'rea'), '앞부분만 같은 단어는 아님');
+  });
+
+  it('저장소 이름과 같은 한 단어면 그 저장소를 결과 카드로 보여 주고 스킬을 모두 후보로 넣는다', async () => {
+    const ctx = ctxWithSkills();
+    ctx.store.setSetting('app', { minStars: 0 });
+    ctx.github.searchRepos = async () => [
+      { repo: 'evil/risky', stars: 12, description: 'Risky tools', topics: ['pdf'] },
+      { repo: 'other/riskyness', stars: 99, description: null, topics: [] },
+    ];
+    const results = resultsOf(await collect(deps(ctx), 'risky'));
+    assert.ok(results.items.some((i) => i.name === 'pdf-magic'), results.items.map((i) => i.name).join(','));
+    assert.deepEqual(results.repos?.map((r) => r.repo), ['evil/risky'], '이름이 정확히 같은 저장소만');
+    assert.equal(results.repos?.[0].description, 'Risky tools');
+    assert.ok((results.repos?.[0].skills.length ?? 0) >= 1);
+  });
+
+  it('스킬이 없는 같은 이름 저장소는 카드로 보여 주지 않는다', async () => {
+    const ctx = ctxWithSkills();
+    ctx.store.setSetting('app', { minStars: 0 });
+    ctx.github.searchRepos = async () => [{ repo: 'facebook/react', stars: 240000, description: 'UI library', topics: [] }];
+    ctx.indexer.indexRepo = async () => 0;
+    const results = resultsOf(await collect(deps(ctx), 'react'));
+    assert.deepEqual(results.repos, []);
   });
 });
 

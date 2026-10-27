@@ -347,6 +347,16 @@ export class Store {
     return filtered.slice(0, limit).map(({ _bm25, _mp, ...skill }) => ({ skill: skill as SkillRow, bm25: _bm25 }));
   }
 
+  /** Skills of repos whose name (the part after the owner) equals `name`, e.g. "rea" → morluto/rea. */
+  findSkillsByRepoName(name: string, limit = 30): SkillRow[] {
+    return this.all<SkillRow>(
+      `SELECT * FROM skills WHERE origin != 'wellknown' AND description IS NOT NULL
+       AND lower(repo) LIKE '%/' || lower(?) ESCAPE '\\' LIMIT ?`,
+      name.replace(/[\\%_]/g, (c) => `\\${c}`),
+      limit,
+    );
+  }
+
   /** How many indexed skills match an FTS expression (document frequency for README recommendations). */
   countSkillsFts(match: string): number {
     return this.get<{ n: number }>('SELECT COUNT(*) AS n FROM skills_fts WHERE skills_fts MATCH ?', match)!.n;

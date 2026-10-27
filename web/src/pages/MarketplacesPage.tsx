@@ -7,6 +7,39 @@ import type { Job, MarketplaceInfo } from '../types.ts';
 type Act = <T>(p: Promise<T>, okText: string, after?: (r: T) => void) => Promise<void>;
 
 const JOB_STATUS: Record<Job['status'], string> = { running: '진행 중', paused: '일시정지', done: '완료', error: '오류', cancelled: '중단됨' };
+const POPULAR_LABEL = 'popular-repos';
+const jobLabel = (j: Job) => (j.label === POPULAR_LABEL ? '인기 저장소' : j.label === '*' ? '전체' : j.label);
+
+type PopularStatus = { lastRunAt: string | null; repos: number; withSkills: number; skills: number };
+
+/** GitHub repos with many stars that hold skills; their skills are indexed so the minimum-stars filter keeps results. */
+function PopularReposSection({ job, act }: { job?: Job; act: Act }) {
+  const [status, setStatus] = useState<PopularStatus | null>(null);
+  useEffect(() => {
+    apiGet<PopularStatus>('/popular-repos').then(setStatus).catch(() => {});
+  }, [job?.status, job?.done]);
+  return (
+    <section>
+      <h2>인기 저장소</h2>
+      <p className="muted small">
+        GitHub에서 스타가 많은(설정의 최소 스타 이상) 스킬 저장소를 찾아 스킬을 미리 모아 둡니다. 전체 동기화 뒤 하루에 한 번 자동으로 돌고, 같은 저장소는 일주일에
+        한 번만 다시 확인합니다.
+      </p>
+      <div className="row">
+        <span className="small">
+          {status?.lastRunAt
+            ? `저장소 ${status.repos}개 확인 · 스킬이 있는 저장소 ${status.withSkills}개 · 스킬 ${status.skills.toLocaleString()}개 · ${formatAgo(status.lastRunAt)}`
+            : '아직 수집하지 않았습니다.'}
+          {job && ` · 수집 중 ${job.done}/${job.total || '?'}`}
+        </span>
+        <span className="spacer" />
+        <button type="button" disabled={!!job} onClick={() => act(apiSend('POST', '/popular-repos/collect', {}), '인기 저장소 수집을 시작했습니다')}>
+          {job ? '수집 중…' : '지금 수집'}
+        </button>
+      </div>
+    </section>
+  );
+}
 
 export function MarketplacesPage() {
   const [list, setList] = useState<MarketplaceInfo[] | null>(null);
@@ -80,6 +113,8 @@ export function MarketplacesPage() {
         )}
       </section>
 
+      <PopularReposSection job={jobFor('collect', POPULAR_LABEL)} act={act} />
+
       <section>
         <h2>마켓플레이스 추가</h2>
         <form
@@ -109,7 +144,7 @@ export function MarketplacesPage() {
           <ul className="jobs">
             {jobs.slice(0, 8).map((j) => (
               <li key={j.id}>
-                <b>{j.kind === 'sync' ? '동기화' : '스킬 수집'}</b> {j.label === '*' ? '전체' : j.label} · {JOB_STATUS[j.status]} · {j.done}/{j.total}
+                <b>{j.kind === 'sync' ? '동기화' : '스킬 수집'}</b> {jobLabel(j)} · {JOB_STATUS[j.status]} · {j.done}/{j.total}
                 {j.errors.length > 0 && (
                   <details>
                     <summary className="small">오류 {j.errors.length}건</summary>

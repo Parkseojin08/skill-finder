@@ -13,6 +13,8 @@ export const SettingsSchema = z.object({
   autoCollect: z.boolean(),
   defaultScope: z.enum(['user', 'project']),
   defaultProjectPath: z.string().max(1000),
+  /** Search results must come from a GitHub repo with at least this many stars (0 = no limit). */
+  minStars: z.number().int().min(0).max(1_000_000),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -23,6 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoCollect: true,
   defaultScope: 'user',
   defaultProjectPath: '',
+  minStars: 5000,
 };
 
 export const DEFAULT_MARKETPLACES = [

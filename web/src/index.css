@@ -1,0 +1,104 @@
+/* Layer order: the app stylesheet (styles.css, layer app) beats Tailwind's reset but loses to utility classes,
+   so shadcn components keep their own look and existing app classes keep theirs. */
+@layer theme, base, app, components, utilities;
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/jetbrains-mono";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --font-heading: var(--font-mono);
+    --font-mono: 'JetBrains Mono Variable', monospace;
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+    /* shadcn variables point at the app design tokens in styles.css (ui-ux-pro-max cyberpunk system),
+       so shadcn components and the hand-written CSS share one palette. Dark only. */
+    --background: var(--bg);
+    --foreground: var(--text);
+    --card: var(--surface);
+    --card-foreground: var(--text);
+    --popover: var(--bg-elev);
+    --popover-foreground: var(--text);
+    --primary: var(--neon);
+    --primary-foreground: var(--neon-text);
+    --secondary: var(--surface-muted);
+    --secondary-foreground: var(--text);
+    --muted: var(--surface-muted);
+    --muted-foreground: var(--text-muted);
+    --accent: var(--neon-soft);
+    --accent-foreground: var(--neon);
+    --destructive: var(--danger);
+    --border: var(--line);
+    --input: var(--line-strong);
+    --ring: var(--focus);
+    --chart-1: var(--neon);
+    --chart-2: var(--cyan);
+    --chart-3: var(--yellow);
+    --chart-4: var(--violet);
+    --chart-5: var(--text-muted);
+    --radius: var(--corner);
+    --sidebar: var(--bg-elev);
+    --sidebar-foreground: var(--text);
+    --sidebar-primary: var(--neon);
+    --sidebar-primary-foreground: var(--neon-text);
+    --sidebar-accent: var(--neon-soft);
+    --sidebar-accent-foreground: var(--neon);
+    --sidebar-border: var(--line);
+    --sidebar-ring: var(--focus);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    }
+  body {
+    @apply bg-background text-foreground;
+    }
+  button:not(:disabled), [role="button"]:not(:disabled) {
+    cursor: pointer;
+    }
+  html {
+    @apply font-mono;
+    }
+}

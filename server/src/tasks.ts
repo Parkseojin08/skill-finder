@@ -2,6 +2,7 @@ import type { AppContext } from './context.ts';
 import { PluginUnavailableError } from './indexer.ts';
 import type { Job, JobControl } from './jobs.ts';
 import { syncMarketplace } from './sources/marketplace.ts';
+import { collectPopularRepos, popularState } from './sources/popularRepos.ts';
 import { searchActivity } from './search/activity.ts';
 import { getSettings } from './settings.ts';
 import { pool, sleep } from './util/limiter.ts';
@@ -54,7 +55,24 @@ export function startSync(ctx: AppContext, marketplace?: string, force = false):
       if (m.index_mode === 'eager') await indexPending(ctx, m.name, ctl);
     }
     ctx.store.clearSearchCache();
-    if (!marketplace && getSettings(ctx.store).autoCollect) startAutoCollect(ctx);
+    if (!marketplace && getSettings(ctx.store).autoCollect) {
+      startAutoCollect(ctx);
+      const last = popularState(ctx).lastRunAt;
+      if (!last || Date.now() - Date.parse(last) > POPULAR_EVERY_MS) startPopularCollect(ctx, true);
+    }
+  });
+}
+
+const POPULAR_EVERY_MS = 24 * 60 * 60 * 1000;
+export const POPULAR_JOB_LABEL = 'popular-repos';
+
+/** Finds GitHub repos with many stars that hold skills and indexes them (daily after sync, or on demand). */
+export function startPopularCollect(ctx: AppContext, background = false, force = false): Job {
+  const running = ctx.jobs.active('collect', POPULAR_JOB_LABEL);
+  if (running) return running;
+  return ctx.jobs.start('collect', POPULAR_JOB_LABEL, async (ctl) => {
+    await collectPopularRepos(ctx, ctl, background, force);
+    ctx.store.clearSearchCache();
   });
 }
 
