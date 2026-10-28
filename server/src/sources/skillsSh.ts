@@ -30,6 +30,27 @@ export async function searchSkillsSh(store: Store, query: string, limit = 20): P
   const key = `skillssh:${limit}:${q.toLowerCase()}`;
   const cached = store.getCached(key, DAY_MS) as SkillsShHit[] | undefined;
   if (cached) return cached;
+  // one request per query at a time (a re-search while the first is still out reuses it)
+  let p = inFlight.get(key);
+  if (!p) {
+    p = fetchSkillsSh(store, key, q, limit)
+      .catch((err) => {
+        // down or slow: an answer from the last week beats none (installs are the first sort key)
+        const stale = store.getCached(key, STALE_OK_MS) as SkillsShHit[] | undefined;
+        if (stale) return stale;
+        throw err;
+      })
+      .finally(() => inFlight.delete(key));
+    inFlight.set(key, p);
+  }
+  return p;
+}
+
+const inFlight = new Map<string, Promise<SkillsShHit[]>>();
+/** How old an earlier answer may be to stand in when skills.sh fails. */
+const STALE_OK_MS = 7 * DAY_MS;
+
+async function fetchSkillsSh(store: Store, key: string, q: string, limit: number): Promise<SkillsShHit[]> {
   const params = new URLSearchParams({ q, limit: String(limit) });
   const res = await fetch(`${SKILLS_SH_BASE}/api/search?${params}`, {
     headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },

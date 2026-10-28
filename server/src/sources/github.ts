@@ -3,7 +3,7 @@ import type { AppConfig } from '../config.ts';
 import type { RepoRow, Store } from '../db/store.ts';
 import { fetchText, USER_AGENT } from '../util/http.ts';
 import { sanitizeLine } from '../util/sanitize.ts';
-import { Semaphore, sleep, TokenBucket } from '../util/limiter.ts';
+import { RateLimitWait, Semaphore, sleep, TokenBucket } from '../util/limiter.ts';
 import { gitTree, lsRemote, type RemoteRef, type TreeEntry } from './gitTree.ts';
 
 export type RepoTree = {
@@ -26,6 +26,20 @@ export class GitHubError extends Error {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const API = 'https://api.github.com';
+/** Code and repository search answers are kept this long (the `ghcode:`/`ghrepo:` cache keys). */
+const SEARCH_CACHE_MS = DAY_MS;
+
+export type RepoSearchHit = { repo: string; stars: number; description: string | null; topics: string[] };
+/** Repos per GraphQL metadata call (the alias form GitHub allows comfortably). */
+export const GRAPHQL_BATCH = 100;
+type GraphRepo = {
+  stargazerCount?: unknown;
+  pushedAt?: unknown;
+  isArchived?: unknown;
+  isFork?: unknown;
+  licenseInfo?: { spdxId?: unknown } | null;
+  defaultBranchRef?: { name?: unknown } | null;
+};
 const REPO_RE = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 /** A relative path inside a repo: no leading slash, backslash, empty, `.` or `..` segment, control character. */
 function isSafeRepoPath(path: string): boolean {
@@ -39,9 +53,14 @@ export class GitHub {
   private readonly store: Store;
   private readonly config: AppConfig;
   private readonly workRoot: string;
-  private readonly codeSearch = new TokenBucket(9);
-  private readonly search = new TokenBucket(28);
+  // GitHub allows 10 code searches a minute; a burst of 5 keeps a refilling minute under that
+  private readonly codeSearch = new TokenBucket(9, 5);
+  private readonly searchWithToken = new TokenBucket(28);
+  private readonly searchNoToken = new TokenBucket(9, 5); // unauthenticated search is 10/min
   private core: { remaining: number | null; reset: number | null } = { remaining: null, reset: null };
+  /** Last seen remaining/reset per rate-limit resource (core, search, code_search, graphql). */
+  private readonly limits = new Map<string, { remaining: number; reset: number }>();
+  private readonly searchInFlight = new Map<string, Promise<unknown>>();
   private readonly treeCache = new Map<string, Promise<RepoTree>>();
   private readonly refCache = new Map<string, { at: number; value: Promise<RemoteRef | null> }>();
   /** raw.githubusercontent.com answers bursts of hundreds of parallel downloads with 429s; keep it civil. */
@@ -76,9 +95,40 @@ export class GitHub {
     return h;
   }
 
-  private async api(path: string, opts: { etag?: string | null; bucket?: TokenBucket; accept?: string } = {}): Promise<Response> {
+  private get search(): TokenBucket {
+    return this.hasToken ? this.searchWithToken : this.searchNoToken;
+  }
+
+  /**
+   * Throws at once while GitHub has said this resource's quota is used up (until its reset time), so a search
+   * does not wait for or spend a call on a certain 403.
+   */
+  private checkLimit(resource: string): void {
+    const l = this.limits.get(resource);
+    if (l && l.remaining <= 0 && Date.now() / 1000 < l.reset) {
+      const label = ({ code_search: '코드 검색', search: '저장소 검색', graphql: 'GraphQL', core: 'API' } as Record<string, string>)[resource] ?? resource;
+      throw new GitHubError(`GitHub ${label} 한도 소진 (${Math.ceil(l.reset - Date.now() / 1000)}초 뒤 다시 가능)`, 429);
+    }
+  }
+
+  /**
+   * `resource` + `maxWaitMs`: search-path calls. They check the remembered quota first, give up instead of
+   * queuing past `maxWaitMs`, and never sleep on retry-after (the search would have moved on by then).
+   */
+  private async api(
+    path: string,
+    opts: { etag?: string | null; bucket?: TokenBucket; accept?: string; resource?: string; maxWaitMs?: number } = {},
+  ): Promise<Response> {
+    if (opts.resource) this.checkLimit(opts.resource);
     for (let attempt = 0; attempt < 2; attempt++) {
-      if (opts.bucket) await opts.bucket.take();
+      if (opts.bucket) {
+        try {
+          await opts.bucket.take({ maxWaitMs: opts.maxWaitMs });
+        } catch (err) {
+          if (err instanceof RateLimitWait) throw new GitHubError(`GitHub 호출 한도 대기 (${err.message})`, 429);
+          throw err;
+        }
+      }
       const res = await fetch(API + path, {
         headers: this.headers({ ...(opts.etag ? { 'If-None-Match': opts.etag } : {}), ...(opts.accept ? { Accept: opts.accept } : {}) }),
         signal: AbortSignal.timeout(20_000),
@@ -88,8 +138,18 @@ export class GitHub {
       if (resource === 'core' && remaining != null) {
         this.core = { remaining: Number(remaining), reset: Number(res.headers.get('x-ratelimit-reset')) || null };
       }
+      if (resource && remaining != null) {
+        this.limits.set(resource, { remaining: Number(remaining), reset: Number(res.headers.get('x-ratelimit-reset')) || 0 });
+      }
       if (res.status === 403 || res.status === 429) {
         const retryAfter = Number(res.headers.get('retry-after'));
+        if (retryAfter > 0 && opts.resource && opts.maxWaitMs != null) {
+          // secondary limit on the search path: remember it as a closed circuit instead of sleeping
+          // (background collection has time, so it still sleeps and retries below)
+          this.limits.set(opts.resource, { remaining: 0, reset: Date.now() / 1000 + Math.min(retryAfter, 600) });
+          await res.body?.cancel().catch(() => {});
+          throw new GitHubError('GitHub API 한도 초과', res.status);
+        }
         if (retryAfter > 0 && retryAfter <= 60 && attempt === 0) {
           await res.body?.cancel().catch(() => {});
           await sleep(retryAfter * 1000);
@@ -285,8 +345,96 @@ export class GitHub {
     }
   }
 
+  /**
+   * Star counts and metadata for up to GRAPHQL_BATCH repos in one GraphQL call (~1 point of the 5,000/hour
+   * budget, against one REST call each). Repos GitHub reports as not found are stored with no stars and no
+   * default branch, so they are not asked about again until the next refresh. Returns how many were stored.
+   */
+  async refreshRepoMeta(repos: string[]): Promise<number> {
+    if (!this.hasToken) return 0;
+    this.checkLimit('graphql');
+    const list = repos.filter((r) => REPO_RE.test(r)).slice(0, GRAPHQL_BATCH);
+    if (list.length === 0) return 0;
+    const vars: Record<string, string> = {};
+    const defs: string[] = [];
+    const fields: string[] = [];
+    list.forEach((r, i) => {
+      const [owner, name] = r.split('/');
+      vars[`o${i}`] = owner;
+      vars[`n${i}`] = name;
+      defs.push(`$o${i}: String!, $n${i}: String!`);
+      fields.push(`r${i}: repository(owner: $o${i}, name: $n${i}) { stargazerCount pushedAt isArchived isFork licenseInfo { spdxId } defaultBranchRef { name } }`);
+    });
+    const res = await fetch(`${API}/graphql`, {
+      method: 'POST',
+      headers: this.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ query: `query(${defs.join(', ')}) { ${fields.join(' ')} }`, variables: vars }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const remaining = res.headers.get('x-ratelimit-remaining');
+    if (remaining != null) this.limits.set('graphql', { remaining: Number(remaining), reset: Number(res.headers.get('x-ratelimit-reset')) || 0 });
+    if (!res.ok) throw new GitHubError(`GitHub GraphQL 실패 (${res.status})`, res.status);
+    const body = (await res.json()) as {
+      data?: Record<string, GraphRepo | null> | null;
+      errors?: Array<{ type?: string; path?: unknown[] }>;
+    };
+    if ((body.errors ?? []).some((e) => e.type === 'RATE_LIMITED')) throw new GitHubError('GitHub GraphQL 한도 초과', 429);
+    const notFound = new Set((body.errors ?? []).filter((e) => e.type === 'NOT_FOUND').map((e) => String(e.path?.[0] ?? '')));
+    const at = new Date().toISOString();
+    let stored = 0;
+    list.forEach((repo, i) => {
+      const g = body.data?.[`r${i}`];
+      const cached = this.store.getRepo(repo);
+      const base = { full_name: cached?.full_name ?? repo, etag: cached?.etag ?? null, fetched_at: at };
+      if (g && typeof g.stargazerCount === 'number') {
+        this.store.upsertRepo({
+          ...base,
+          stars: g.stargazerCount,
+          pushed_at: typeof g.pushedAt === 'string' ? g.pushedAt : null,
+          archived: g.isArchived ? 1 : 0,
+          fork: g.isFork ? 1 : 0,
+          license: typeof g.licenseInfo?.spdxId === 'string' ? g.licenseInfo.spdxId : null,
+          default_branch: typeof g.defaultBranchRef?.name === 'string' ? g.defaultBranchRef.name : null,
+        });
+        stored++;
+      } else if (notFound.has(`r${i}`)) {
+        if (cached?.stars != null) {
+          // known before (the token may just not see it now): keep what we had, ask again next refresh
+          this.store.touchRepo(cached.full_name);
+        } else {
+          // deleted or private and never seen: remembered as unknown ("모르면 숨김") instead of asked every search
+          this.store.upsertRepo({ ...base, stars: null, pushed_at: null, archived: null, fork: null, license: null, default_branch: null });
+        }
+        stored++;
+      }
+      // any other error (a timeout, a permission problem) leaves the row as it was
+    });
+    return stored;
+  }
+
+  /**
+   * One answer per key for SEARCH_CACHE_MS and one request in flight per key: the same keywords from the
+   * "별 미만 보기"/"위험 모두 보기" re-search, a repeat search, or after a sync no longer spend the 10/min
+   * code-search quota. Kept apart from the result cache (`search:`), which syncs clear.
+   */
+  private cachedSearch<T>(key: string, load: () => Promise<{ value: T; complete: boolean }>): Promise<T> {
+    const cached = this.store.getCached(key, SEARCH_CACHE_MS) as T | undefined;
+    if (cached !== undefined) return Promise.resolve(cached);
+    let p = this.searchInFlight.get(key) as Promise<T> | undefined;
+    if (!p) {
+      p = load()
+        .then(({ value, complete }) => {
+          if (complete) this.store.putCached(key, value);
+          return value;
+        })
+        .finally(() => this.searchInFlight.delete(key));
+      this.searchInFlight.set(key, p);
+    }
+    return p;
+  }
+
   /** `filename:SKILL.md` code search. Requires a token (10/min, we use 9). */
-  async searchSkillFiles(keywords: string[], perPage = 50): Promise<CodeSearchItem[]> {
+  async searchSkillFiles(keywords: string[], perPage = 50, opts: { maxWaitMs?: number } = {}): Promise<CodeSearchItem[]> {
     if (!this.hasToken) throw new GitHubError('GitHub 토큰이 없어 코드 검색을 건너뜁니다', 401);
     const terms = keywords
       .map((k) => k.replace(/[^\p{L}\p{N}\s_-]/gu, ' ').trim())
@@ -294,32 +442,52 @@ export class GitHub {
       .map((k) => (/\s/.test(k) ? `"${k}"` : k));
     if (terms.length === 0) return [];
     const q = ['filename:SKILL.md', ...terms].join(' ');
-    const res = await this.api(`/search/code?q=${encodeURIComponent(q)}&per_page=${perPage}`, { bucket: this.codeSearch });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new GitHubError(`GitHub 코드 검색 실패 (${res.status}) ${text.slice(0, 120)}`, res.status);
-    }
-    const body = (await res.json()) as {
-      items: Array<{ path: string; html_url: string; repository: { full_name: string; fork?: boolean } }>;
-    };
-    // The repo and path go into raw URLs and skill ids later, so only well-formed ones are kept.
-    return body.items
-      .filter((i) => i.path === 'SKILL.md' || i.path.endsWith('/SKILL.md'))
-      .filter((i) => REPO_RE.test(i.repository?.full_name ?? '') && isSafeRepoPath(i.path))
-      .map((i) => ({ repo: i.repository.full_name, path: i.path, htmlUrl: i.html_url }));
+    return this.cachedSearch(`ghcode:v1:${perPage}:${q.toLowerCase()}`, async () => {
+      const res = await this.api(`/search/code?q=${encodeURIComponent(q)}&per_page=${perPage}`, {
+        bucket: this.codeSearch,
+        resource: 'code_search',
+        maxWaitMs: opts.maxWaitMs,
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new GitHubError(`GitHub 코드 검색 실패 (${res.status}) ${text.slice(0, 120)}`, res.status);
+      }
+      const body = (await res.json()) as {
+        incomplete_results?: boolean;
+        items: Array<{ path: string; html_url: string; repository: { full_name: string; fork?: boolean } }>;
+      };
+      // The repo and path go into raw URLs and skill ids later, so only well-formed ones are kept.
+      const value = body.items
+        .filter((i) => i.path === 'SKILL.md' || i.path.endsWith('/SKILL.md'))
+        .filter((i) => REPO_RE.test(i.repository?.full_name ?? '') && isSafeRepoPath(i.path))
+        .map((i) => ({ repo: i.repository.full_name, path: i.path, htmlUrl: i.html_url }));
+      // a search GitHub cut short is used once, not kept
+      return { value, complete: body.incomplete_results !== true };
+    });
   }
 
   /**
    * Repository search (unlike code search it supports `stars:>=N`). Up to 100 per query, most-starred first;
    * star counts are stored so later filters do not need another call.
    */
-  async searchRepos(q: string, perPage = 100): Promise<Array<{ repo: string; stars: number; description: string | null; topics: string[] }>> {
-    const res = await this.api(`/search/repositories?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=${perPage}`, { bucket: this.search });
+  /** `fresh`: ask GitHub even if a cached answer exists (popular-repo collection looks for new repos). */
+  async searchRepos(q: string, perPage = 100, opts: { maxWaitMs?: number; fresh?: boolean } = {}): Promise<RepoSearchHit[]> {
+    if (opts.fresh) return (await this.loadRepos(q, perPage, opts.maxWaitMs)).value;
+    return this.cachedSearch(`ghrepo:v1:${this.hasToken ? 't' : 'n'}:${perPage}:${q.toLowerCase()}`, () => this.loadRepos(q, perPage, opts.maxWaitMs));
+  }
+
+  private async loadRepos(q: string, perPage: number, maxWaitMs?: number): Promise<{ value: RepoSearchHit[]; complete: boolean }> {
+    const res = await this.api(`/search/repositories?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=${perPage}`, {
+      bucket: this.search,
+      resource: 'search',
+      maxWaitMs,
+    });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new GitHubError(`GitHub 저장소 검색 실패 (${res.status}) ${text.slice(0, 120)}`, res.status);
     }
     const body = (await res.json()) as {
+      incomplete_results?: boolean;
       items: Array<{
         full_name: string;
         stargazers_count: number;
@@ -332,7 +500,7 @@ export class GitHub {
         default_branch: string;
       }>;
     };
-    const out: Array<{ repo: string; stars: number; description: string | null; topics: string[] }> = [];
+    const out: RepoSearchHit[] = [];
     for (const i of body.items) {
       if (!REPO_RE.test(i.full_name) || i.archived) continue;
       const cached = this.store.getRepo(i.full_name);
@@ -354,11 +522,6 @@ export class GitHub {
         topics: (i.topics ?? []).filter((t) => /^[a-z0-9-]{1,50}$/.test(t)).slice(0, 20),
       });
     }
-    return out;
-  }
-
-  /** Non-code search endpoints share the 30/min bucket (we use 28). */
-  get searchBucket(): TokenBucket {
-    return this.search;
+    return { value: out, complete: body.incomplete_results !== true };
   }
 }

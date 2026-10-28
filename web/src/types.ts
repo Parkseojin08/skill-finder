@@ -54,6 +54,8 @@ export type SourceProgress = { state: 'running' | 'done' | 'failed' | 'timeout' 
 export type SearchEvent =
   | { type: 'stage'; stage: 'collect' | 'enrich' | 'score'; message: string }
   | ({ type: 'source'; source: SearchSource } & SourceProgress)
+  /** An English query for a Korean one, sent first (offered as a button). */
+  | { type: 'suggest'; query: string }
   | { type: 'candidates'; items: ResultItem[] }
   | { type: 'warning'; source: string; message: string }
   | {

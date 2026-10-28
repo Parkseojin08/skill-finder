@@ -1,5 +1,8 @@
 export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** Thrown by `take({ maxWaitMs })` when the queue would make the caller wait longer than that. */
+export class RateLimitWait extends Error {}
+
 /** Token bucket refilled continuously; `take()` waits until a token is available. */
 export class TokenBucket {
   private tokens: number;
@@ -7,10 +10,16 @@ export class TokenBucket {
   private readonly capacity: number;
   private readonly perMs: number;
   private queue: Promise<void> = Promise.resolve();
+  /** Callers queued and not yet served (each will take one token). */
+  private waiting = 0;
 
-  constructor(perMinute: number) {
-    this.capacity = perMinute;
-    this.tokens = perMinute;
+  /**
+   * `capacity` bounds a burst: a full bucket of `perMinute` plus a minute of refill let 18 calls through in
+   * 60s against GitHub's 10/min code-search limit, so the tail got 403s.
+   */
+  constructor(perMinute: number, capacity = perMinute) {
+    this.capacity = capacity;
+    this.tokens = capacity;
     this.perMs = perMinute / 60_000;
   }
 
@@ -26,7 +35,20 @@ export class TokenBucket {
     return this.tokens >= 1 ? 0 : Math.ceil((1 - this.tokens) / this.perMs);
   }
 
-  take(): Promise<void> {
+  /**
+   * `maxWaitMs`: give up at once (RateLimitWait) when the token would come later than that, instead of
+   * queuing. A caller that stops waiting on its own (a search past its deadline) otherwise still takes a
+   * token later and starves the next search.
+   */
+  take(opts: { maxWaitMs?: number } = {}): Promise<void> {
+    if (opts.maxWaitMs != null) {
+      // tokens this caller needs on top of those already in the bucket (the queue goes first)
+      this.refill();
+      const deficit = this.waiting + 1 - this.tokens;
+      const ahead = deficit <= 0 ? 0 : deficit / this.perMs;
+      if (ahead > opts.maxWaitMs) return Promise.reject(new RateLimitWait(`대기 ${Math.ceil(ahead / 1000)}초 예상`));
+    }
+    this.waiting++;
     const next = this.queue.then(async () => {
       let wait = this.waitTime();
       while (wait > 0) {
@@ -34,6 +56,7 @@ export class TokenBucket {
         wait = this.waitTime();
       }
       this.tokens -= 1;
+      this.waiting--;
     });
     this.queue = next.catch(() => {});
     return next;

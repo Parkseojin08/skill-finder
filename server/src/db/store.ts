@@ -414,6 +414,18 @@ export class Store {
     return this.get<RepoRow>('SELECT * FROM repos WHERE full_name = ? COLLATE NOCASE', fullName);
   }
 
+  /** Repos that indexed skills point at whose metadata is missing or was fetched before `beforeIso`. */
+  listReposToRefresh(beforeIso: string, limit: number): string[] {
+    return this.all<{ repo: string }>(
+      `SELECT DISTINCT s.repo AS repo FROM skills s
+       LEFT JOIN repos r ON r.full_name = s.repo COLLATE NOCASE
+       WHERE s.repo IS NOT NULL AND (r.full_name IS NULL OR r.fetched_at IS NULL OR r.fetched_at < ?)
+       LIMIT ?`,
+      beforeIso,
+      limit,
+    ).map((r) => r.repo);
+  }
+
   upsertRepo(r: RepoRow): void {
     this.run(
       `INSERT INTO repos (full_name, stars, pushed_at, archived, fork, license, default_branch, etag, fetched_at)
@@ -457,8 +469,14 @@ export class Store {
     );
   }
 
+  /**
+   * Drops the cached search results (they depend on the index). External answers kept in the same table
+   * (`skillssh:`, `ghcode:`, `ghrepo:`) do not, so they stay.
+   */
   clearSearchCache(): void {
-    this.run('DELETE FROM search_cache');
+    this.run("DELETE FROM search_cache WHERE key LIKE 'search:%'");
+    // the external answers outlive this, but not forever: nothing reads them after a week
+    this.run("DELETE FROM search_cache WHERE key NOT LIKE 'search:%' AND created_at < ?", new Date(Date.now() - 7 * 86_400_000).toISOString());
   }
 
   // ---- logs

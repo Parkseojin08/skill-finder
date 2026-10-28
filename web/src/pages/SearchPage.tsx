@@ -109,6 +109,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
   const [progress, setProgress] = useState<Partial<Record<SearchSource, SourceProgress>>>({});
   /** The star minimum this search was run without ("보기"), for the badge on cards below it; null normally. */
   const [liftedStars, setLiftedStars] = useState<number | null>(null);
+  /** English query offered for a Korean one (the server sends it first, before any results). */
+  const [suggest, setSuggest] = useState<string | null>(null);
   const [openRepos, setOpenRepos] = useState<Set<string>>(() => new Set());
   const [startedAt, setStartedAt] = useState(0);
   const [githubToken, setGithubToken] = useState<boolean | null>(null);
@@ -194,6 +196,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
       setProgress({});
       setStartedAt(Date.now());
       setLiftedStars(liftStars);
+      setSuggest(null);
       setOpenRepos(new Set());
       setProvisional(false);
       setLastQuery(text);
@@ -207,6 +210,9 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
             switch (e.type) {
               case 'stage':
                 setStage(e.stage);
+                break;
+              case 'suggest':
+                setSuggest(e.query);
                 break;
               case 'source':
                 setProgress((p) => ({ ...p, [e.source]: { state: e.state, count: e.count, ms: e.ms } }));
@@ -507,7 +513,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
                 <Icon name="alert" size={15} /> <span>{w.message}</span>
               </div>
             ))}
-            {final?.suggestQuery && (
+            {suggest && (
               // user decision E: offered, never applied by itself (the query stays as typed)
               <div className="warn-strip">
                 <Icon name="info" size={15} /> <span>영어로 찾으면 결과가 더 많아요 (사전에 없는 단어는 빠져요).</span>
@@ -515,11 +521,11 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
                   type="button"
                   className="status-chip action"
                   onClick={() => {
-                    setQuery(final.suggestQuery!);
-                    run(final.suggestQuery!);
+                    setQuery(suggest);
+                    run(suggest);
                   }}
                 >
-                  <span className="mono">{final.suggestQuery}</span>로 찾기
+                  <span className="mono">{suggest}</span>로 찾기
                 </button>
               </div>
             )}

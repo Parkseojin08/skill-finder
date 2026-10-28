@@ -1,6 +1,7 @@
 import type { AppContext } from './context.ts';
 import { PluginUnavailableError } from './indexer.ts';
 import type { Job, JobControl } from './jobs.ts';
+import { GRAPHQL_BATCH } from './sources/github.ts';
 import { syncMarketplace } from './sources/marketplace.ts';
 import { collectPopularRepos, popularState } from './sources/popularRepos.ts';
 import { searchActivity } from './search/activity.ts';
@@ -64,6 +65,33 @@ export function startSync(ctx: AppContext, marketplace?: string, force = false):
 }
 
 const POPULAR_EVERY_MS = 24 * 60 * 60 * 1000;
+/** How often repo metadata is refreshed, and what counts as old enough to refresh. */
+export const REPO_META_EVERY_MS = 6 * 60 * 60 * 1000;
+const REPO_META_STALE_MS = 18 * 60 * 60 * 1000;
+let repoMetaRunning = false;
+
+/**
+ * Keeps star counts of the repos skills come from current (GraphQL, 100 per call), so a search reads them
+ * from the database instead of asking GitHub per repo, and fills repos never fetched (indexed without a
+ * token). Steps aside while a search runs; does nothing without a token.
+ */
+export async function refreshRepoMeta(ctx: AppContext): Promise<number> {
+  if (repoMetaRunning || !ctx.github.hasToken) return 0;
+  repoMetaRunning = true;
+  let stored = 0;
+  try {
+    const repos = ctx.store.listReposToRefresh(new Date(Date.now() - REPO_META_STALE_MS).toISOString(), 10_000);
+    for (let i = 0; i < repos.length; i += GRAPHQL_BATCH) {
+      while (searchActivity.busy()) await sleep(500);
+      stored += await ctx.github.refreshRepoMeta(repos.slice(i, i + GRAPHQL_BATCH));
+    }
+  } catch (err) {
+    console.warn('[repo-meta]', String((err as Error).message ?? err).slice(0, 200));
+  } finally {
+    repoMetaRunning = false;
+  }
+  return stored;
+}
 export const POPULAR_JOB_LABEL = 'popular-repos';
 
 /** Finds GitHub repos with many stars that hold skills and indexes them (daily after sync, or on demand). */

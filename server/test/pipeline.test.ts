@@ -466,6 +466,41 @@ describe('검색 순서 (1단계 속도)', () => {
     assert.equal(final.items.find((i) => i.name === 'pdf-wizard')?.installs, 999999, '최종 결과에는 합류');
   });
 
+  it('skills.sh도 수집 대기 시간까지만 기다리고, 늦게 온 응답은 최종 결과에 합친다', async () => {
+    const ctx = ctxWithSkills();
+    const events: SearchEvent[] = [];
+    const d = deps(ctx, {
+      githubWaitMs: 50,
+      skillsSh: async () => {
+        await new Promise((r) => setTimeout(r, 200));
+        return [{ id: 'anthropics/skills/pdf', source: 'anthropics/skills', skillId: 'pdf', name: 'pdf', installs: 123456 }];
+      },
+    });
+    await runSearch(d, 'pdf tables', {}, (e) => events.push(e));
+    const enrichAt = events.findIndex((e) => e.type === 'stage' && e.stage === 'enrich');
+    const skillsShAt = events.findIndex((e) => e.type === 'source' && e.source === 'skillssh' && e.state === 'done');
+    assert.ok(enrichAt < skillsShAt, 'skills.sh를 기다리지 않고 확인 단계로 넘어감');
+    const final = events.filter((e) => e.type === 'results').at(-1) as Extract<SearchEvent, { type: 'results' }>;
+    assert.equal(final.items.find((i) => i.name === 'pdf')?.installs, 123456);
+  });
+
+  it('한국어 검색어의 영어 제안은 맨 먼저, 저장된 검색에서도 보낸다', async () => {
+    const ctx = ctxWithSkills();
+    for (let run = 0; run < 2; run++) {
+      const events = await collect(deps(ctx), 'pdf에서 표 추출');
+      assert.deepEqual(events[0], { type: 'suggest', query: 'pdf table extract' });
+      if (run === 1) assert.ok(events.some((e) => e.type === 'done' && e.cached));
+    }
+  });
+
+  it('첫 카드도 저장된 다운로드 수를 싣는다 (최종 결과와 같은 순서로 정렬되도록)', async () => {
+    const ctx = ctxWithSkills();
+    ctx.store.setSkillInstalls('gh:anthropics/skills:skills/pdf', 217000);
+    const events = await collect(deps(ctx), 'pdf tables');
+    const first = events.find((e) => e.type === 'candidates') as Extract<SearchEvent, { type: 'candidates' }>;
+    assert.equal(first.items.find((i) => i.name === 'pdf')?.installs, 217000);
+  });
+
   it('여러 플러그인의 일치 스킬을 한 번에 찾아도 플러그인별로 찾은 것과 같다', () => {
     const ctx = ctxWithSkills();
     const ids = ['document-skills@anthropic-agent-skills', 'risky@claude-community', 'pr-tools@claude-plugins-official'];

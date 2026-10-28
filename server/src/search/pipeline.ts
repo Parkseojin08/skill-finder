@@ -48,6 +48,8 @@ export type SearchEvent =
   | { type: 'stage'; stage: 'collect' | 'enrich' | 'score'; message: string }
   /** Progress of one source; `count` is how many hits it returned, `ms` how long it took. */
   | { type: 'source'; source: SourceName; state: SourceState; count?: number; ms?: number }
+  /** An English query for a Korean one, offered as a button (dictionary-based, never applied by itself). */
+  | { type: 'suggest'; query: string }
   | { type: 'candidates'; items: ResultItem[] }
   | { type: 'warning'; source: string; message: string }
   | {
@@ -223,6 +225,11 @@ export async function runSearch(
   // `r` is the result-item shape; bump it when items gain fields so cached searches are rebuilt.
   const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: 12 });
 
+  // The English query for a Korean one goes out first, cached search or not: it comes from the query alone,
+  // and the button helps most exactly when there is little else to show.
+  const suggestQuery = englishSuggestion(query);
+  if (suggestQuery) emit({ type: 'suggest', query: suggestQuery });
+
   const cached = store.getCached(key, DAY_MS) as CachedSearch | undefined;
   const fresh = cached && !(cached.ttlMs && cached.cachedAt && Date.now() - cached.cachedAt > cached.ttlMs);
   if (cached && fresh) {
@@ -245,7 +252,6 @@ export async function runSearch(
   if (/\p{Script=Hangul}/u.test(query)) {
     warn('query', '스킬 설명이 대부분 영어라 한국어 검색어는 결과가 적거나 부정확합니다. 영어로 검색해 보세요 (예: extract tables from pdf).');
   }
-  const suggestQuery = englishSuggestion(query);
   /** Whether the query has an English word at all (a purely Korean one can't match the English descriptions word for word). */
   const latinQuery = matchTokens(query).some((t) => /[a-z0-9]/.test(t));
   /** Above the risk level this search shows (default: high is hidden). Applied on every path that shows skills. */
@@ -421,7 +427,7 @@ export async function runSearch(
     if (!word) return null;
     try {
       // repository search can filter by stars and returns description and topics for the repo card
-      const hits = await withTimeout(github.searchRepos(`${word} in:name stars:>=${Math.max(1, minStars)}`, 30), 6000, 'timeout');
+      const hits = await withTimeout(github.searchRepos(`${word} in:name stars:>=${Math.max(1, minStars)}`, 30, { maxWaitMs: 4000 }), 6000, 'timeout');
       for (const r of hits) if (r.repo.split('/')[1]?.toLowerCase() === word) repoInfo.set(r.repo, r);
     } catch {
       // GitHub search unavailable: repos already in the local index still count
@@ -490,6 +496,7 @@ export async function runSearch(
       return { state: shortErr(err) === 'timeout' ? 'timeout' : 'failed', count: 0 };
     }
     await localGate;
+    const touched: Candidate[] = [];
     hits.forEach((hit, i) => {
       const src = classifySkillsShSource(hit.source);
       if (!src) return;
@@ -500,7 +507,10 @@ export async function runSearch(
       c.installs = Math.max(c.installs ?? 0, hit.installs);
       c.pos.skillssh = Math.max(c.pos.skillssh ?? 0, posScore(i, hits.length));
       startLookup(c);
+      touched.push(c);
     });
+    // an answer after the collect wait joins like a late GitHub one (indexed hits as they are)
+    addLateIndexed(touched);
     return { state: 'done', count: hits.length };
   };
 
@@ -512,7 +522,8 @@ export async function runSearch(
       return null;
     }
     try {
-      const items = await withTimeout(github.searchSkillFiles(queryKeywords(query)), 10_000, 'timeout');
+      // past ~8s of queue (the 10/min limit) it gives up at once instead of taking a slot the next search needs
+      const items = await withTimeout(github.searchSkillFiles(queryKeywords(query), 50, { maxWaitMs: 8000 }), 10_000, 'timeout');
       await localGate;
       const hits: Candidate[] = [];
       items.forEach((it, i) => {
@@ -552,15 +563,23 @@ export async function runSearch(
   const ranked = () => [...cands.values()].sort((a, b) => prelim(b) - prelim(a));
   // Early cards, sent as each source answers: only ones the final checks (stars, a query word) are likely to
   // keep, so they don't flash and vanish; with their tier, so the page sorts them as it will the results.
+  // They carry the stored installs and stars and go through the same copy merging, so the page sorts them the
+  // way it will sort the results (without them it ordered by rank alone, and the final list reshuffled).
   const emitCandidates = () => {
+    const shown = ranked().filter((c) => {
+      if (!c.skill?.description || tooRisky(c.skill)) return false;
+      // stars unknown is hidden in the end ("모르면 숨김"), so not shown early either
+      const repo = c.skill.repo;
+      if (minStars > 0 && (repo ? storedStarsOf(repo) : null) == null) return false;
+      return !belowMinStars(c, 1) && !noQueryWord(c, matchOf(c));
+    });
     const items: ResultItem[] = [];
-    for (const c of ranked()) {
+    for (const c of dedupeByContent(shown.map((c) => ({ ...c, installs: c.installs ?? c.skill!.installs })), lookup)) {
       if (items.length >= MAX_RESULTS) break;
-      if (!c.skill?.description || belowMinStars(c, 1) || tooRisky(c.skill)) continue;
-      const m = matchOf(c);
-      if (noQueryWord(c, m)) continue;
-      const item = toItem(c, lookup, { R: Math.min(1, prelim(c)), P: 0, F: freshness(c.skill.last_commit_at), T: trust(c.skill, lookup) }, settings.weights);
-      items.push({ ...item, tier: relevanceTier(m) });
+      const s = c.skill!;
+      const st = s.repo ? storedStarsOf(s.repo) : null;
+      const item = toItem(c, lookup, { R: Math.min(1, prelim(c)), P: 0, F: freshness(s.last_commit_at), T: trust(s, lookup) }, settings.weights, st);
+      items.push({ ...item, tier: relevanceTier(matchOf(c)) });
     }
     if (items.length) emit({ type: 'candidates', items });
   };
@@ -579,8 +598,13 @@ export async function runSearch(
   } finally {
     openLocalGate(); // whatever happens, or the network sources would wait forever
   }
-  await skillsShDone;
-  const githubInTime = await Promise.race([githubDone.then(() => true), sleep(Math.max(0, t0 + (deps.githubWaitMs ?? GITHUB_COLLECT_WAIT_MS) - Date.now())).then(() => false)]);
+  // skills.sh and GitHub are waited for up to the same point (it took over 4s in ~1% of measured searches);
+  // a later answer joins the results when it arrives, and that search is cached only briefly.
+  const collectWait = sleep(Math.max(0, t0 + (deps.githubWaitMs ?? GITHUB_COLLECT_WAIT_MS) - Date.now())).then(() => false);
+  const [skillsShInTime, githubInTime] = await Promise.all([
+    Promise.race([skillsShDone.then(() => true), collectWait]),
+    Promise.race([githubDone.then(() => true), collectWait]),
+  ]);
   timings.collect = Date.now() - t0;
   emitCandidates();
 
@@ -597,7 +621,7 @@ export async function runSearch(
   for (const c of top) startLookup(c);
   // GitHub and the repo-name search may still add lookups, so wait until no new ones appear.
   const settled = (async () => {
-    await Promise.all([githubDone, reposDone]);
+    await Promise.all([skillsShDone, githubDone, reposDone]);
     for (let n = -1; n !== lookups.length; ) {
       n = lookups.length;
       await Promise.all(lookups);
@@ -624,7 +648,7 @@ export async function runSearch(
   emit(results);
   if (results.items.length > 0) {
     // A late GitHub answer skipped the lookups of its unindexed hits past the first 30, so cache it briefly too.
-    const partial = outcomes.timeout + outcomes.error > 0 || !githubInTime;
+    const partial = outcomes.timeout + outcomes.error > 0 || !githubInTime || !skillsShInTime;
     store.putCached(key, { warnings, results, cachedAt: Date.now(), ...(partial ? { ttlMs: PARTIAL_CACHE_MS } : {}) } satisfies CachedSearch);
   }
   const elapsedMs = Date.now() - t0;
@@ -633,7 +657,7 @@ export async function runSearch(
     .slice(0, 4)
     .map((s) => `${s.what} ${s.ms}ms${s.outcome === 'found' ? '' : ` (${s.outcome})`}`);
   console.log(
-    `[search] ${elapsedMs}ms ${JSON.stringify(timings)} lookups=${JSON.stringify(outcomes)} results=${results.items.length}${allDone ? '' : ' (interim sent)'}${githubInTime ? '' : ' (github late)'} q=${JSON.stringify(query)}` +
+    `[search] ${elapsedMs}ms ${JSON.stringify(timings)} lookups=${JSON.stringify(outcomes)} results=${results.items.length}${allDone ? '' : ' (interim sent)'}${githubInTime ? '' : ' (github late)'}${skillsShInTime ? '' : ' (skills.sh late)'} q=${JSON.stringify(query)}` +
       (slowest.length ? `\n  slowest: ${slowest.join(' | ')}` : '') +
       (errors.length ? `\n  errors: ${errors.slice(0, 3).join(' | ')}` : ''),
   );

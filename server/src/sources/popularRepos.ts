@@ -45,7 +45,8 @@ export async function collectPopularRepos(ctx: AppContext, ctl: JobControl, back
   for (const q of QUERIES) {
     await ctl.checkpoint();
     try {
-      for (const r of await ctx.github.searchRepos(`${q} stars:>=${minStars}`)) found.set(r.repo, Math.max(found.get(r.repo) ?? 0, r.stars));
+      // fresh: the point is to find repos that are new since the last run (and to store their current stars)
+      for (const r of await ctx.github.searchRepos(`${q} stars:>=${minStars}`, 100, { fresh: true })) found.set(r.repo, Math.max(found.get(r.repo) ?? 0, r.stars));
     } catch (err) {
       ctl.tick(`검색 "${q}": ${String((err as Error).message ?? err).slice(0, 160)}`);
     }
