@@ -13,6 +13,8 @@ const Body = z.object({
       sources: z.array(z.enum(['marketplace', 'skillssh', 'github'])).max(3).optional(),
       maxRisk: z.enum(['low', 'medium', 'high']).optional(),
       marketplaces: z.array(z.string().max(128)).max(20).optional(),
+      // "별 N개 미만 숨김 · 보기": this search only, the setting stays
+      minStars: z.number().int().min(0).max(10_000_000).optional(),
     })
     .optional(),
 });

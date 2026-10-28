@@ -26,4 +26,9 @@ export const MIGRATIONS: string[] = [
   CREATE TABLE events (id INTEGER PRIMARY KEY, kind TEXT /* view|install */, skill_id TEXT, query TEXT, created_at TEXT);
   CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
   `,
+  // Repo lookups ignore case (GitHub names do); without these they scan the whole table (~35ms each).
+  `
+  CREATE INDEX skills_repo_nocase ON skills(repo COLLATE NOCASE);
+  CREATE INDEX repos_full_name_nocase ON repos(full_name COLLATE NOCASE);
+  `,
 ];

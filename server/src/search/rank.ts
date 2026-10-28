@@ -73,10 +73,13 @@ export function stem(word: string): string {
 }
 
 export function matchTokens(text: string): string[] {
-  return (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((t) => t.length >= 2 && !MATCH_STOPWORDS.has(t)).map(stem);
+  // A Latin word with a Korean ending attached ("pdf에서", "엑셀로") counts as the Latin word alone, as in ftsQuery.
+  const words = (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).flatMap((t) => (/[a-z0-9]/.test(t) && /\p{Script=Hangul}/u.test(t) ? (t.match(/[a-z0-9]+/g) ?? []) : [t]));
+  return words.filter((t) => t.length >= 2 && !MATCH_STOPWORDS.has(t)).map(stem);
 }
 
-export type LexicalMatch = { name: number; text: number; phrase: number };
+/** Shares of the query words found in the name, in the description, in either; and the query as a phrase. */
+export type LexicalMatch = { name: number; text: number; any: number; phrase: number };
 
 /**
  * How directly a skill matches the query words: share of query words in the skill name, share in the
@@ -84,13 +87,24 @@ export type LexicalMatch = { name: number; text: number; phrase: number };
  */
 export function lexicalMatch(query: string, name: string, text: string): LexicalMatch {
   const q = [...new Set(matchTokens(query))];
-  if (q.length === 0) return { name: 0, text: 0, phrase: 0 };
+  if (q.length === 0) return { name: 0, text: 0, any: 0, phrase: 0 };
   const nameSet = new Set(matchTokens(name.replace(/[-_.]+/g, ' ')));
   const textSet = new Set(matchTokens(text));
-  const cover = (set: Set<string>) => q.filter((t) => set.has(t)).length / q.length;
+  // a longer query word also matches as a prefix ("docker" in "dockerfile"); short ones ("pdf", "ui") must be exact
+  const has = (set: Set<string>, t: string) => set.has(t) || (t.length >= 4 && [...set].some((w) => w.startsWith(t)));
+  const cover = (set: Set<string>) => q.filter((t) => has(set, t)).length / q.length;
   const normalize = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   const phrase = q.length >= 2 && normalize(text).includes(normalize(query)) ? 1 : 0;
-  return { name: cover(nameSet), text: cover(textSet), phrase };
+  const any = q.filter((t) => has(nameSet, t) || has(textSet, t)).length / q.length;
+  return { name: cover(nameSet), text: cover(textSet), any, phrase };
+}
+
+/**
+ * Relevance tier (user decision): 1 when the name has a query word and at least half the words appear in the
+ * name or description. Results are ordered by tier first, then downloads → stars → R as before.
+ */
+export function relevanceTier(m: LexicalMatch): number {
+  return m.name > 0 && m.any >= 0.5 ? 1 : 0;
 }
 
 /** Final R: the search-engine signal blended with direct word matches, so fuzzy hits without the query words sink. */

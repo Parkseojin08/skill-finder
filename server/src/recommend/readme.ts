@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
 import type { Store } from '../db/store.ts';
+import { koreanTerm } from '../search/koreanTerms.ts';
 import { freshness, matchTokens, popularity, stem, totalScore, TRUST_SCORE, trustTier } from '../search/rank.ts';
 import { buildResultItem, githubSource, marketplaceSource, storeLookup, type ResultItem } from '../search/result.ts';
 import type { Settings } from '../settings.ts';
@@ -53,26 +54,6 @@ const STOP = new Set(
   feature features overview introduction intro about faq support`.split(/\s+/),
 );
 
-/** Korean words → English words actually used in skill descriptions. Prefix match absorbs particles (엑셀로 → 엑셀). */
-export const ALIASES: Record<string, string[]> = {
-  엑셀: ['spreadsheet', 'xlsx', 'excel'],
-  스프레드시트: ['spreadsheet'],
-  리액트: ['react'],
-  워드: ['word', 'docx'],
-  파워포인트: ['powerpoint', 'pptx'],
-  슬라이드: ['slides'],
-  테스트: ['testing'],
-  브라우저: ['browser'],
-  데이터베이스: ['database', 'sql'],
-  배포: ['deploy', 'deployment'],
-  보안: ['security'],
-  디자인: ['design'],
-  문서: ['document', 'documentation'],
-  이미지: ['image'],
-  서버: ['server'],
-  깃허브: ['github'],
-};
-
 /** Code-block languages of install/run snippets: every README has them, they say nothing about the project. */
 const SHELL_LANGS = new Set('bash sh shell zsh fish console terminal cmd bat powershell ps ps1 pwsh shellsession sh-session text txt plaintext output log diff'.split(' '));
 
@@ -113,8 +94,8 @@ export function tokenize(text: string): string[] {
 export function processTerm(raw: string): string[] | null {
   const t = raw.toLowerCase();
   if (t.length < 2 || STOP.has(t) || /^\d+$/.test(t)) return null;
-  const alias = Object.keys(ALIASES).find((k) => t.startsWith(k));
-  if (alias) return ALIASES[alias];
+  const alias = koreanTerm(t, true);
+  if (alias) return alias;
   // the skill index is English; other scripts cannot match it
   return /^[a-z][a-z0-9]*$/.test(t) ? [t] : null;
 }

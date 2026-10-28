@@ -7,7 +7,7 @@ import { createContext } from '../src/bootstrap.ts';
 import type { AppContext } from '../src/context.ts';
 import { TreeIndex } from '../src/discovery/tree.ts';
 import { buildSkillRow, pluginFtsText } from '../src/indexer.ts';
-import { byNameThenPopularity, ftsQuery, nameMatches, navigationalWord, queryKeywords, runSearch, type SearchDeps, type SearchEvent } from '../src/search/pipeline.ts';
+import { byNameThenPopularity, ftsAllQuery, ftsQuery, nameMatches, navigationalWord, queryKeywords, runSearch, type SearchDeps, type SearchEvent } from '../src/search/pipeline.ts';
 
 function ctxWithSkills(): AppContext {
   const dataDir = mkdtempSync(join(tmpdir(), 'sf-pipe-'));
@@ -80,6 +80,66 @@ describe('§7 검색 파이프라인', () => {
   it('FTS 질의는 토큰을 따옴표로 감싼 OR 식이다', () => {
     assert.equal(ftsQuery(['PDF에서 표 추출', 'extract "tables"']), '"pdf에서" OR "추출" OR "pdf" OR "extract" OR "tables"');
     assert.equal(ftsQuery(['a the']), null);
+  });
+
+  it('모든 단어를 요구하는 FTS 질의는 단어가 둘 이상일 때만 만든다', () => {
+    assert.equal(ftsAllQuery(['security holes']), '"security" AND "holes"');
+    assert.equal(ftsAllQuery(['pdf']), null);
+    assert.equal(ftsAllQuery(['pdf에서 표 추출']), '"추출" AND "pdf"', '한국어 어미가 붙은 단어는 빼고 영어 부분만');
+  });
+
+  it('검색어 단어가 모두 있는 스킬이 드문 단어 하나만 맞은 스킬보다 앞선다', async () => {
+    const ctx = ctxWithSkills();
+    const add = (dir: string, name: string, description: string) => {
+      const row = buildSkillRow({ repo: 'misc/skills', sha: 'd'.repeat(40), dirPath: dir, raw: `---\nname: ${name}\ndescription: ${description}\n---\n`, tree: new TreeIndex([]), origin: 'generic', pluginId: null, extraFlags: [], install: null, lastCommitAt: null });
+      ctx.store.upsertSkill(row, '');
+    };
+    add('pihole', 'homelab-pihole', 'Pi-hole DNS: plug holes, holes everywhere in the home network.');
+    add('sec', 'secure-review', 'Review a codebase for security holes.');
+    const events = await collect(deps(ctx), 'security holes');
+    const cands = events.find((e) => e.type === 'candidates') as Extract<SearchEvent, { type: 'candidates' }>;
+    const names = cands.items.map((i) => i.name);
+    assert.ok(names.indexOf('secure-review') >= 0 && names.indexOf('secure-review') < names.indexOf('homelab-pihole'), names.join(','));
+  });
+
+  it('로컬 색인 결과는 skills.sh 응답을 기다리지 않고 먼저 보낸다', async () => {
+    const ctx = ctxWithSkills();
+    const events: SearchEvent[] = [];
+    let candidatesBeforeSkillsSh = false;
+    const d = deps(ctx, {
+      skillsSh: async () => {
+        await new Promise((r) => setTimeout(r, 50));
+        candidatesBeforeSkillsSh = events.some((e) => e.type === 'candidates');
+        return [];
+      },
+    });
+    await runSearch(d, 'pdf tables', {}, (e) => events.push(e));
+    assert.ok(candidatesBeforeSkillsSh);
+    const src = events.filter((e) => e.type === 'source') as Array<Extract<SearchEvent, { type: 'source' }>>;
+    assert.ok(src.some((e) => e.source === 'local' && e.state === 'done' && (e.count ?? 0) > 0));
+    assert.ok(src.some((e) => e.source === 'skillssh' && e.state === 'done'));
+    assert.ok(src.some((e) => e.source === 'github' && e.state === 'skipped'), '토큰이 없으면 건너뜀');
+    assert.ok(events.findIndex((e) => e.type === 'source') < events.findIndex((e) => e.type === 'done'));
+  });
+
+  it('GitHub 코드 검색이 늦게 와도 그 결과를 최종 결과에 넣는다', async () => {
+    const ctx = ctxWithSkills();
+    Object.defineProperty(ctx.github, 'hasToken', { get: () => true });
+    const row = buildSkillRow({ repo: 'misc/skills', sha: 'e'.repeat(40), dirPath: 'late', raw: '---\nname: late-hit\ndescription: Builds a widgetkit dashboard.\n---\n', tree: new TreeIndex([]), origin: 'generic', pluginId: null, extraFlags: [], install: null, lastCommitAt: null });
+    ctx.store.upsertSkill(row, '');
+    ctx.indexer.findByPath = async () => null;
+    // 35 unindexed hits first, so the indexed one is past the 30 looked up right away
+    const unindexed = Array.from({ length: 35 }, (_, i) => ({ repo: `other/r${i}`, path: 'SKILL.md', htmlUrl: `https://github.com/other/r${i}` }));
+    ctx.github.searchSkillFiles = async () => {
+      await new Promise((r) => setTimeout(r, 150)); // past githubWaitMs
+      return [...unindexed, { repo: 'misc/skills', path: 'late/SKILL.md', htmlUrl: 'https://github.com/misc/skills/blob/main/late/SKILL.md' }] as never;
+    };
+    const events = await collect(deps(ctx, { githubWaitMs: 50 }), 'pdf widgets');
+    const enrichAt = events.findIndex((e) => e.type === 'stage' && e.stage === 'enrich');
+    const githubAt = events.findIndex((e) => e.type === 'source' && e.source === 'github' && e.state === 'done');
+    assert.ok(enrichAt < githubAt, 'GitHub를 기다리지 않고 확인 단계로 넘어감');
+    const final = events.filter((e) => e.type === 'results').at(-1) as Extract<SearchEvent, { type: 'results' }>;
+    assert.ok(final.items.some((i) => i.name === 'late-hit'), final.items.map((i) => i.name).join(','));
   });
 
   it('GitHub 키워드는 불용어를 빼고 최대 3개', () => {
@@ -196,6 +256,73 @@ describe('최소 GitHub 스타', () => {
     assert.equal(hit.sources[0].kind, 'github');
   });
 
+  it('저장된 별 수가 기준보다 한참 낮은 후보는 SKILL.md를 읽지 않고 임시 결과에도 내지 않는다', async () => {
+    const ctx = ctxWithSkills();
+    ctx.store.setSetting('app', {});
+    const repo = (full_name: string, stars: number) =>
+      ctx.store.upsertRepo({ full_name, stars, pushed_at: null, archived: 0, fork: 0, license: null, default_branch: 'main', etag: null, fetched_at: new Date().toISOString() });
+    repo('anthropics/skills', 120000);
+    repo('acme/pr-tools', 300);
+    repo('tiny/skills', 12);
+    ctx.github.getRepoMeta = async (r) => ctx.store.getRepo(r) ?? null;
+    const looked: string[] = [];
+    ctx.indexer.findInRepo = async (r) => (looked.push(r), null);
+    const hit = { id: 'tiny/skills/pdf-x', source: 'tiny/skills', skillId: 'pdf-x', name: 'pdf-x', installs: 50000 };
+    const events = await collect(deps(ctx, { skillsSh: async () => [hit] }), 'pdf tables pull request review');
+    assert.deepEqual(looked, [], '별 12개 저장소는 읽지 않음');
+    const cands = events.find((e) => e.type === 'candidates') as Extract<SearchEvent, { type: 'candidates' }>;
+    assert.ok(!cands.items.some((i) => i.name === 'pr-review'), '임시 결과에도 없음');
+    const results = resultsOf(events);
+    assert.ok(results.items.some((i) => i.name === 'pdf'));
+    assert.ok((results.hiddenLowStars ?? 0) >= 2, '앞에서 뺀 것도 숨김 개수에 들어감');
+  });
+
+  it('처음 보는 저장소는 별 수부터 확인하고, 기준 미만이면 읽지 않는다', async () => {
+    const ctx = ctxWithSkills();
+    ctx.store.setSetting('app', {});
+    ctx.github.getRepoMeta = async (r) => (r === 'new/small' ? ({ full_name: r, stars: 10 } as never) : null);
+    const looked: string[] = [];
+    ctx.indexer.findInRepo = async (r) => (looked.push(r), null);
+    const hit = (source: string) => ({ id: `${source}/pdf-x`, source, skillId: 'pdf-x', name: 'pdf-x', installs: 100 });
+    await collect(deps(ctx, { skillsSh: async () => [hit('new/small'), hit('new/unknown')] }), 'pdf tables');
+    assert.deepEqual(looked, ['new/unknown'], '별 수를 모르면 지금처럼 읽어 본다');
+  });
+
+  it('저장된 별 수가 7일보다 오래됐으면 미리 빼지 않고 다시 확인한다', async () => {
+    const ctx = ctxWithSkills();
+    ctx.store.setSetting('app', {});
+    const old = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    ctx.store.upsertRepo({ full_name: 'grown/skills', stars: 300, pushed_at: null, archived: 0, fork: 0, license: null, default_branch: 'main', etag: null, fetched_at: old });
+    ctx.github.getRepoMeta = async (r) => (r === 'grown/skills' ? ({ full_name: r, stars: 8000 } as never) : null);
+    const looked: string[] = [];
+    ctx.indexer.findInRepo = async (r) => (looked.push(r), null);
+    const hit = { id: 'grown/skills/pdf-x', source: 'grown/skills', skillId: 'pdf-x', name: 'pdf-x', installs: 100 };
+    await collect(deps(ctx, { skillsSh: async () => [hit] }), 'pdf tables');
+    assert.deepEqual(looked, ['grown/skills']);
+  });
+
+  it('별 적은 복사본은 숨김 개수에 넣지 않고 다운로드를 원본에 더한다', async () => {
+    const ctx = ctxWithSkills();
+    ctx.store.setSetting('app', {});
+    const repo = (full_name: string, stars: number) =>
+      ctx.store.upsertRepo({ full_name, stars, pushed_at: null, archived: 0, fork: 0, license: null, default_branch: 'main', etag: null, fetched_at: new Date().toISOString() });
+    repo('anthropics/skills', 120000);
+    repo('evil/risky', 50000); // its pdf skills are not what this test counts
+    repo('fork/skills', 12);
+    ctx.github.getRepoMeta = async (r) => ctx.store.getRepo(r) ?? null;
+    // the same SKILL.md as anthropics/skills' pdf
+    const raw = '---\nname: pdf\ndescription: Extract text and tables from PDF files, fill PDF forms.\n---\nBody\n';
+    const row = buildSkillRow({ repo: 'fork/skills', sha: 'c'.repeat(40), dirPath: 'pdf', raw, tree: new TreeIndex([{ path: 'pdf/SKILL.md' }]), origin: 'generic', pluginId: null, extraFlags: [], install: null, lastCommitAt: null });
+    ctx.store.upsertSkill(row, '');
+    const hit = { id: 'fork/skills/pdf', source: 'fork/skills', skillId: 'pdf', name: 'pdf', installs: 7000 };
+    const results = resultsOf(await collect(deps(ctx, { skillsSh: async () => [hit] }), 'pdf tables'));
+    const pdf = results.items.filter((i) => i.name === 'pdf');
+    assert.equal(pdf.length, 1);
+    assert.equal(pdf[0].id, 'gh:anthropics/skills:skills/pdf');
+    assert.equal(pdf[0].installs, 7000);
+    assert.equal(results.hiddenLowStars, 0, results.items.map((i) => i.name).join(','));
+  });
+
   it('설정을 0으로 하면 제한하지 않는다', async () => {
     const ctx = ctxWithSkills();
     const results = resultsOf(await collect(deps(ctx), 'pull request review'));
@@ -211,6 +338,11 @@ describe('이름으로 찾기 (한 단어 검색)', () => {
     assert.deepEqual(sorted.map((i: { name: string }) => i.name).slice(0, 2).sort(), ['rea-tool', 'reverse-engineer-anything']);
     assert.equal(navigationalWord('extract tables'), null, '여러 단어는 이름 검색이 아님');
     assert.ok(!nameMatches({ id: 'gh:x/react:y', name: 'react' }, 'rea'), '앞부분만 같은 단어는 아님');
+    // within the name matches, downloads decide even against a higher relevance tier
+    const rea = (id: string, name: string, installs: number | undefined, tier: number) => ({ id, name, installs, stars: 1, tier, breakdown: { R: 0.5, P: 0, F: 0, T: 0 } }) as never;
+    const main = rea('gh:morluto/rea:a', 'reverse-engineer-anything', 11216, 0);
+    const side = rea('gh:morluto/rea:b', 'rea-tool-design', undefined, 1);
+    assert.equal(([side, main].sort(byNameThenPopularity('rea'))[0] as { name: string }).name, 'reverse-engineer-anything');
   });
 
   it('저장소 이름과 같은 한 단어면 그 저장소를 결과 카드로 보여 주고 스킬을 모두 후보로 넣는다', async () => {
@@ -234,6 +366,81 @@ describe('이름으로 찾기 (한 단어 검색)', () => {
     ctx.indexer.indexRepo = async () => 0;
     const results = resultsOf(await collect(deps(ctx), 'react'));
     assert.deepEqual(results.repos, []);
+  });
+});
+
+describe('검색 개선 3단계 (사용자 결정 A·B·C·E)', () => {
+  const skillsShHit = (source: string, name: string, installs: number) => ({ id: `${source}/${name}`, source, skillId: name, name, installs });
+  const addGeneric = (ctx: AppContext, repo: string, dir: string, name: string, description: string) => {
+    const row = buildSkillRow({ repo, sha: 'f'.repeat(40), dirPath: dir, raw: `---\nname: ${name}\ndescription: ${description}\n---\n`, tree: new TreeIndex([]), origin: 'generic', pluginId: null, extraFlags: [], install: null, lastCommitAt: null });
+    ctx.store.upsertSkill(row, '');
+  };
+
+  it('A: 검색어 단어가 하나도 없는 skills.sh 결과는 숨기고 개수를 알려 준다', async () => {
+    const ctx = ctxWithSkills();
+    addGeneric(ctx, 'big/skills', 'slides', 'frontend-slides', 'Create animation-rich HTML presentations.');
+    const events = await collect(deps(ctx, { skillsSh: async () => [skillsShHit('big/skills', 'frontend-slides', 900000)] }), 'extract tables from pdf');
+    const results = resultsOf(events);
+    assert.ok(!results.items.some((i) => i.name === 'frontend-slides'), results.items.map((i) => i.name).join(','));
+    assert.equal(results.hiddenNoMatch, 1);
+    assert.ok(results.items.some((i) => i.name === 'pdf'));
+  });
+
+  it('A: 한국어로만 된 검색어에는 적용하지 않는다', async () => {
+    const ctx = ctxWithSkills();
+    addGeneric(ctx, 'big/skills', 'xl', 'xlsx', 'Spreadsheet creation and editing.');
+    const results = resultsOf(await collect(deps(ctx, { skillsSh: async () => [skillsShHit('big/skills', 'xlsx', 5000)] }), '엑셀 정리'));
+    assert.ok(results.items.some((i) => i.name === 'xlsx'));
+    assert.equal(results.hiddenNoMatch, 0);
+  });
+
+  it('C: 이름에 검색어가 있고 단어가 절반 이상 맞는 결과가 다운로드가 더 많은 결과보다 앞선다', async () => {
+    const ctx = ctxWithSkills();
+    addGeneric(ctx, 'big/skills', 'dj', 'django-verification', 'Checklist before a Django pull request review.');
+    const hits = [skillsShHit('big/skills', 'django-verification', 90000), skillsShHit('acme/pr-tools', 'pr-review', 10)];
+    const results = resultsOf(await collect(deps(ctx, { skillsSh: async () => hits }), 'pull request review'));
+    const names = results.items.map((i) => i.name);
+    assert.ok(names.indexOf('pr-review') >= 0 && names.indexOf('pr-review') < names.indexOf('django-verification'), names.join(','));
+    assert.equal(results.items.find((i) => i.name === 'pr-review')?.tier, 1);
+    assert.equal(results.items.find((i) => i.name === 'django-verification')?.tier, 0);
+  });
+
+  it('B: 이번 검색만 최소 별을 풀 수 있고, 설정과 캐시는 따로다', async () => {
+    const ctx = ctxWithSkills();
+    ctx.store.setSetting('app', {});
+    ctx.github.getRepoMeta = async (r) => (r === 'anthropics/skills' ? ({ full_name: r, stars: 120000 } as never) : ({ full_name: r, stars: 10 } as never));
+    const d = deps(ctx);
+    const limited = resultsOf(await collect(d, 'pull request review'));
+    assert.ok(!limited.items.some((i) => i.name === 'pr-review'));
+    assert.equal(limited.minStars, 5000);
+    const all = resultsOf(await collect(d, 'pull request review', { minStars: 0 }));
+    assert.ok(all.items.some((i) => i.name === 'pr-review'));
+    assert.equal(all.minStars, 0);
+  });
+
+  it('E: 한국어 검색어에는 사전으로 만든 영어 검색어를 제안한다', async () => {
+    const { englishSuggestion } = await import('../src/search/koreanTerms.ts');
+    assert.equal(englishSuggestion('엑셀 정리해줘'), 'spreadsheet xlsx');
+    assert.equal(englishSuggestion('c# 테스트'), 'testing', '한 글자 영어는 뺌');
+    assert.equal(englishSuggestion('pdf에서 표 추출'), 'pdf table extract');
+    assert.equal(englishSuggestion('표준 문서'), 'document documentation', '표준은 표가 아님');
+    assert.equal(englishSuggestion('extract tables'), null);
+    assert.equal(englishSuggestion('아무말'), null);
+    const ctx = ctxWithSkills();
+    const results = resultsOf(await collect(deps(ctx), 'PDF에서 표 추출'));
+    assert.equal(results.suggestQuery, 'pdf table extract');
+    // the README recommendation keeps its own looser reading and shorter word list
+    const { koreanTerm } = await import('../src/search/koreanTerms.ts');
+    assert.deepEqual(koreanTerm('문서화', true), ['document', 'documentation']);
+    assert.equal(koreanTerm('데이터', true), null);
+  });
+
+  it('A: 마켓플레이스 플러그인 이름으로 찾은 스킬은 설명에 단어가 없어도 남긴다', async () => {
+    const ctx = ctxWithSkills();
+    const events = await collect(deps(ctx), 'risky');
+    const results = resultsOf(events);
+    assert.ok(results.items.some((i) => i.name === 'pdf-magic'), results.items.map((i) => i.name).join(','));
+    assert.equal(results.hiddenNoMatch, 0);
   });
 });
 

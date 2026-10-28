@@ -4,7 +4,20 @@ import { useKorean } from '../translate.ts';
 import type { ResultItem } from '../types.ts';
 import { RiskSummary, ScoreBar, SourceBadges } from './Badges.tsx';
 
-export function ResultCard({ item, position, provisional, onSelect }: { item: ResultItem; position: number; provisional?: boolean; onSelect: () => void }) {
+export function ResultCard({
+  item,
+  position,
+  provisional,
+  belowMinStars,
+  onSelect,
+}: {
+  item: ResultItem;
+  position: number;
+  provisional?: boolean;
+  /** Shown only because the star minimum was lifted for this search: the minimum it falls short of. */
+  belowMinStars?: number;
+  onSelect: () => void;
+}) {
   const { ko, waiting } = useKorean(item.description, position);
   return (
     <article
@@ -46,6 +59,11 @@ export function ResultCard({ item, position, provisional, onSelect }: { item: Re
           {item.stars != null && (
             <span className="stat" title="저장소 별점">
               <Icon name="star" size={14} /> {formatCount(item.stars)}
+            </span>
+          )}
+          {belowMinStars != null && (
+            <span className="status-chip warn" title="설정한 최소 스타 수보다 적거나 스타 수를 모르는 저장소입니다">
+              {item.stars == null ? '별 수 모름' : `별 ${belowMinStars.toLocaleString()} 미만`}
             </span>
           )}
           {item.lastCommitAt && (

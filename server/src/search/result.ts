@@ -28,6 +28,8 @@ export type ResultItem = {
   trust: TrustTier;
   /** 1–2 rule-based categories from the marketplace category and name/description keywords. */
   categories: Category[];
+  /** Search results only: 1 when the name has a query word and half the words match (sorted first), else 0. */
+  tier?: number;
 };
 
 /** A GitHub repository shown as a result of its own (one-word query equal to its name, e.g. "rea"). */

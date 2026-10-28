@@ -65,4 +65,16 @@ describe('직접 단어 일치 (정확도 보정)', () => {
     const phrase = lexicalMatch('extract tables', 'x', 'Tools to extract tables quickly');
     assert.equal(phrase.phrase, 1);
   });
+
+  it('한국어 어미가 붙은 영어 단어도 그 영어 단어로 맞춘다', async () => {
+    const { lexicalMatch, matchTokens } = await import('../src/search/rank.ts');
+    assert.deepEqual(matchTokens('pdf에서 표 추출'), ['pdf', '추출']);
+    assert.equal(lexicalMatch('pdf에서 표 추출', 'pdf', 'Extract tables from PDF files.').name, 0.5);
+  });
+
+  it('긴 검색어 단어는 앞부분 일치도 인정하고, 짧은 단어는 정확히 같아야 한다', async () => {
+    const { lexicalMatch } = await import('../src/search/rank.ts');
+    assert.equal(lexicalMatch('docker', 'multi-stage-dockerfile', 'Write small images.').name, 1);
+    assert.equal(lexicalMatch('pdf', 'pdfkit-helper', 'Build documents.').name, 0);
+  });
 });

@@ -25,6 +25,8 @@ export type ResultItem = {
   trust: TrustTier;
   /** 1–2 rule-based category keys (see CATEGORY in labels.ts). */
   categories: string[];
+  /** Search results: 1 when the name has a query word and half the words match (sorted first). */
+  tier?: number;
 };
 
 export type RepoResult = {
@@ -46,11 +48,27 @@ export type RecommendResult = {
   skills: SkillMatch[];
 };
 
+export type SearchSource = 'local' | 'skillssh' | 'github' | 'repos';
+export type SourceProgress = { state: 'running' | 'done' | 'failed' | 'timeout' | 'skipped'; count?: number; ms?: number };
+
 export type SearchEvent =
   | { type: 'stage'; stage: 'collect' | 'enrich' | 'score'; message: string }
+  | ({ type: 'source'; source: SearchSource } & SourceProgress)
   | { type: 'candidates'; items: ResultItem[] }
   | { type: 'warning'; source: string; message: string }
-  | { type: 'results'; items: ResultItem[]; hiddenHighRisk: number; hiddenNoDescription: number; hiddenLowStars?: number; minStars?: number; repos?: RepoResult[] }
+  | {
+      type: 'results';
+      items: ResultItem[];
+      hiddenHighRisk: number;
+      hiddenNoDescription: number;
+      hiddenLowStars?: number;
+      minStars?: number;
+      /** Results without a single query word in their name or description. */
+      hiddenNoMatch?: number;
+      /** An English query for a Korean one, offered as a button. */
+      suggestQuery?: string;
+      repos?: RepoResult[];
+    }
   | { type: 'done'; cached: boolean; elapsedMs: number };
 
 export type InstallPlan = {

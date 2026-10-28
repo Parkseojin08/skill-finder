@@ -633,6 +633,25 @@ p.status-line {
   display: flex;
   margin: 0 0 12px;
 }
+.source-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 0;
+  margin: 0 0 12px;
+}
+.source-progress > span + span::before {
+  content: '·';
+  content: '·' / '';
+  margin: 0 10px;
+  color: var(--line-strong);
+}
+.source-progress .pending {
+  opacity: 0.6;
+}
+.fold-more {
+  justify-self: start;
+  margin: -4px 0 4px 12px;
+}
 .spinner {
   width: 14px;
   height: 14px;
