@@ -27,6 +27,13 @@ export class GitHubError extends Error {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const API = 'https://api.github.com';
 const REPO_RE = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
+/** A relative path inside a repo: no leading slash, backslash, empty, `.` or `..` segment, control character. */
+function isSafeRepoPath(path: string): boolean {
+  return path.length <= 1024 && !/[\\\x00-\x1f]/.test(path) && path.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
+}
+
+/** Raw files (SKILL.md included) are read up to this many bytes; the rest is cut off. */
+export const RAW_MAX_BYTES = 512 * 1024;
 
 export class GitHub {
   private readonly store: Store;
@@ -191,7 +198,7 @@ export class GitHub {
    * retries throttling (429), server errors and network failures, so a busy moment is not mistaken for
    * a missing file. A real 404 comes back as `status: 404, text: null`.
    */
-  async getRawText(repo: string, ref: string, path: string, maxBytes = 512 * 1024) {
+  async getRawText(repo: string, ref: string, path: string, maxBytes = RAW_MAX_BYTES) {
     const url = `https://raw.githubusercontent.com/${repo}/${ref}/${path.split('/').map(encodeURIComponent).join('/')}`;
     for (let attempt = 0; ; attempt++) {
       try {
@@ -295,8 +302,10 @@ export class GitHub {
     const body = (await res.json()) as {
       items: Array<{ path: string; html_url: string; repository: { full_name: string; fork?: boolean } }>;
     };
+    // The repo and path go into raw URLs and skill ids later, so only well-formed ones are kept.
     return body.items
       .filter((i) => i.path === 'SKILL.md' || i.path.endsWith('/SKILL.md'))
+      .filter((i) => REPO_RE.test(i.repository?.full_name ?? '') && isSafeRepoPath(i.path))
       .map((i) => ({ repo: i.repository.full_name, path: i.path, htmlUrl: i.html_url }));
   }
 

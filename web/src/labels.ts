@@ -14,6 +14,7 @@ export const RISK_FLAGS: Record<string, { label: string; meaning: string; info?:
   curlPipeShell: { label: '원격 스크립트 실행', meaning: '원격 스크립트를 내려받아 바로 실행하는 명령(curl | sh)이 있습니다.' },
   rmRf: { label: 'rm -rf', meaning: '강제 삭제 명령이 들어 있습니다(정보).', info: true },
   commandSource: { label: 'command 출처', meaning: '설치할 때 마켓플레이스가 지정한 명령이 실행됩니다.' },
+  unscanned: { label: '끝까지 검사 못 함', meaning: 'SKILL.md가 512KB를 넘거나 frontmatter가 너무 커서 일부만 검사했습니다. 검사하지 못한 부분에 명령이 있을 수 있습니다.' },
 };
 
 export const QUALITY: Record<string, { label: string; meaning: string; info?: boolean }> = {

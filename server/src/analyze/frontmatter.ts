@@ -1,12 +1,20 @@
 import { parse } from 'yaml';
-import { sanitizeLine, sanitizeText } from '../util/sanitize.ts';
+import { sanitizeLine, sanitizeName, sanitizeText } from '../util/sanitize.ts';
 
 export type ParsedSkillMd = {
   hasFrontmatter: boolean;
   frontmatter: Record<string, unknown>;
   body: string;
   yamlError: string | null;
+  /** The frontmatter was over FRONTMATTER_MAX_CHARS and was not parsed as YAML (only name/description read). */
+  frontmatterTooLarge?: boolean;
 };
+
+/**
+ * YAML is parsed on the main thread; deeply nested frontmatter takes ~0.2s each, so a repo full of them
+ * could block the server for minutes. Real frontmatter is far smaller (largest stored: 13.7K chars).
+ */
+export const FRONTMATTER_MAX_CHARS = 16 * 1024;
 
 // Claude Code only treats the block as frontmatter when the very first line is `---`.
 const FRONTMATTER_RE = /^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*(?:\r?\n|$)([\s\S]*)$/;
@@ -23,6 +31,15 @@ export function parseSkillMd(raw: string): ParsedSkillMd {
   if (!m) return { hasFrontmatter: false, frontmatter: {}, body: text, yamlError: null };
   const block = m[1] ?? '';
   const body = m[2] ?? '';
+  if (block.length > FRONTMATTER_MAX_CHARS) {
+    const fallback: Record<string, unknown> = {};
+    const name = regexField(block, 'name');
+    const description = regexField(block, 'description');
+    if (name) fallback.name = name;
+    if (description) fallback.description = description;
+    const yamlError = `frontmatter가 ${FRONTMATTER_MAX_CHARS / 1024}KB를 넘어 해석하지 않았습니다`;
+    return { hasFrontmatter: true, frontmatter: fallback, body, yamlError, frontmatterTooLarge: true };
+  }
   try {
     const data = parse(block, { prettyErrors: false });
     if (data == null) return { hasFrontmatter: true, frontmatter: {}, body, yamlError: null };
@@ -74,6 +91,7 @@ export type SkillMeta = {
   bodyLines: number;
   hasFrontmatter: boolean;
   yamlError: string | null;
+  frontmatterTooLarge: boolean;
 };
 
 const asString = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
@@ -112,10 +130,10 @@ export function extractSkillMeta(raw: string, folderName: string): SkillMeta {
   for (const k of PICKED_FIELDS) if (fm[k] !== undefined) picked[k] = fm[k];
   const body = parsed.body;
   return {
-    name: sanitizeLine(nameFm ?? folderName),
+    name: sanitizeName(nameFm ?? folderName),
     description: sanitizeLine(descFm ?? firstBodyLine(body)),
     whenToUse: asString(fm.when_to_use) ? sanitizeLine(fm.when_to_use as string) : null,
-    nameFromFrontmatter: nameFm ? sanitizeLine(nameFm) : null,
+    nameFromFrontmatter: nameFm ? sanitizeName(nameFm) : null,
     descriptionFromFrontmatter: descFm ? sanitizeLine(descFm) : null,
     allowedTools: parseAllowedTools(fm['allowed-tools']),
     hasHooks: fm.hooks != null && fm.hooks !== false,
@@ -124,5 +142,6 @@ export function extractSkillMeta(raw: string, folderName: string): SkillMeta {
     bodyLines: body.length === 0 ? 0 : body.replace(/\n$/, '').split('\n').length,
     hasFrontmatter: parsed.hasFrontmatter,
     yamlError: parsed.yamlError,
+    frontmatterTooLarge: parsed.frontmatterTooLarge === true,
   };
 }

@@ -1,7 +1,10 @@
 // Same escape classes the skills CLI strips (src/cli: stripTerminalEscapes).
 const CSI_RE = /\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g;
-const OSC_RE = /\x1b\][\s\S]*?(?:\x07|\x1b\\)/g;
-const DCS_PM_APC_RE = /\x1b[P^_][\s\S]*?(?:\x1b\\)/g;
+// OSC/DCS bodies stop at the next ESC (or BEL): a lazy `[\s\S]*?` scanned to the end of the text from every
+// unterminated ESC], quadratic (95s on a crafted 512KB SKILL.md). A sequence with an ESC inside is no longer
+// removed whole, but its ESCs are still stripped below, so no escape survives either way.
+const OSC_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+const DCS_PM_APC_RE = /\x1b[P^_][^\x1b]*\x1b\\/g;
 const SIMPLE_ESC_RE = /\x1b[\x20-\x7e]/g;
 const C1_RE = /[\x80-\x9f]/g;
 // Keeps \t (0x09) and \n (0x0a); drops other C0 controls, \r and DEL.
@@ -19,9 +22,26 @@ export function sanitizeText(input: string): string {
     .replace(CONTROL_RE, '');
 }
 
+// Direction overrides/isolates and marks, zero-width space, word joiner, BOM: invisible, and able to make a
+// name read as something else ("txt.exe" shown as "exe.txt").
+const INVISIBLE_RE = /[؜​‎‏‪-‮⁠⁦-⁩﻿]/g;
+// Zero-width (non-)joiners shape Persian, Indic scripts and emoji, so descriptions keep them; names do not.
+const JOINER_RE = /[‌‍]/g;
+
 /** sanitizeText plus newline collapsing, for single-line metadata. */
 export function sanitizeLine(input: string): string {
-  return sanitizeText(input).replace(/\s*\n\s*/g, ' ').trim();
+  // split + trim rather than /\s*\n\s*/: that regex rescans a long whitespace run from every position (2.9s at 64K)
+  return sanitizeText(input)
+    .replace(INVISIBLE_RE, '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join(' ');
+}
+
+/** sanitizeLine for names, also without zero-width joiners. */
+export function sanitizeName(input: string): string {
+  return sanitizeLine(input).replace(JOINER_RE, '');
 }
 
 export function truncate(input: string, max: number): string {

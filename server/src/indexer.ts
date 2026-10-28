@@ -7,7 +7,7 @@ import { genericAcceptor, type GenericAcceptor } from './discovery/genericRules.
 import { discoverPluginSkills, type MarketplaceEntry } from './discovery/pluginRules.ts';
 import { basename, joinPath, skillMdPath, TreeIndex } from './discovery/tree.ts';
 import type { PluginRow, SkillRow, Store } from './db/store.ts';
-import type { GitHub, RepoTree } from './sources/github.ts';
+import { RAW_MAX_BYTES, type GitHub, type RepoTree } from './sources/github.ts';
 import { normalizeSource, resolveRelativeRoot } from './sources/pluginSource.ts';
 import { pool } from './util/limiter.ts';
 
@@ -69,7 +69,15 @@ export function buildSkillRow(a: BuildArgs): SkillRow {
   const relPaths = files.map((f) => f.path);
   const flags = [
     ...new Set([
-      ...skillRiskFlags({ files: relPaths, allowedTools: meta.allowedTools, body: meta.body, hasHooks: meta.hasHooks, raw: a.raw }),
+      ...skillRiskFlags({
+        files: relPaths,
+        allowedTools: meta.allowedTools,
+        body: meta.body,
+        hasHooks: meta.hasHooks,
+        raw: a.raw,
+        // a download cut at the limit (a split multi-byte character at the end costs at most 3 bytes)
+        partial: meta.frontmatterTooLarge || Buffer.byteLength(a.raw) >= RAW_MAX_BYTES - 3,
+      }),
       ...a.extraFlags,
     ]),
   ];

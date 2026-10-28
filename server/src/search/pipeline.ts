@@ -111,6 +111,10 @@ const PARTIAL_CACHE_MS = 60 * 1000;
  * the top-MAX_ENRICH cut and never looked up; closer to the minimum the fresh count in buildResults decides.
  */
 const STAR_PREFILTER_SHARE = 0.8;
+/** Characters of a description (and of when_to_use) that word matching reads: the SKILL.md spec's limit. */
+const MATCH_TEXT_MAX = 1024;
+/** Characters of a skill name that word matching reads (the spec allows 64; some real names run longer). */
+const MATCH_NAME_MAX = 128;
 /** Stored star counts older than this are treated as unknown (checked again before a lookup). */
 const STORED_STARS_MAX_AGE_MS = 7 * DAY_MS;
 
@@ -217,7 +221,7 @@ export async function runSearch(
   const sources = new Set<SourceKind>(filters.sources?.length ? filters.sources : ['marketplace', 'skillssh', 'github']);
   const maxRisk: RiskLevel = filters.maxRisk ?? 'medium';
   // `r` is the result-item shape; bump it when items gain fields so cached searches are rebuilt.
-  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: 11 });
+  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: 12 });
 
   const cached = store.getCached(key, DAY_MS) as CachedSearch | undefined;
   const fresh = cached && !(cached.ttlMs && cached.cachedAt && Date.now() - cached.cachedAt > cached.ttlMs);
@@ -244,7 +248,14 @@ export async function runSearch(
   const suggestQuery = englishSuggestion(query);
   /** Whether the query has an English word at all (a purely Korean one can't match the English descriptions word for word). */
   const latinQuery = matchTokens(query).some((t) => /[a-z0-9]/.test(t));
-  const matchOf = (c: Candidate) => lexicalMatch(query, c.skill!.name, [c.skill!.description ?? '', c.skill!.when_to_use ?? ''].join(' '));
+  /** Above the risk level this search shows (default: high is hidden). Applied on every path that shows skills. */
+  const tooRisky = (s: SkillRow) => RISK_ORDER[(s.risk_level as RiskLevel) ?? 'low'] > RISK_ORDER[maxRisk];
+  // Only the first MATCH_TEXT_MAX chars of each field count, the spec's description limit: a keyword list
+  // stuffed past it (the longest stored description is 13.5K chars) would otherwise buy a higher tier.
+  const capped = (t: string | null) => (t ?? '').slice(0, MATCH_TEXT_MAX);
+  // names are capped too (the spec allows 64 chars), or a name stuffed with keywords would buy the name tier
+  const matchOf = (c: Candidate) =>
+    lexicalMatch(query, c.skill!.name.slice(0, MATCH_NAME_MAX), [capped(c.skill!.description), capped(c.skill!.when_to_use)].join(' '));
   /**
    * Not one query word in the name or description (user decision A): mostly skills.sh's semantic matches and
    * GitHub code-search hits on a SKILL.md body. Kept: anything the local index matched (`pos.marketplace`: its
@@ -534,7 +545,7 @@ export async function runSearch(
     const items: ResultItem[] = [];
     for (const c of ranked()) {
       if (items.length >= MAX_RESULTS) break;
-      if (!c.skill?.description || belowMinStars(c, 1)) continue;
+      if (!c.skill?.description || belowMinStars(c, 1) || tooRisky(c.skill)) continue;
       const m = matchOf(c);
       if (noQueryWord(c, m)) continue;
       const item = toItem(c, lookup, { R: Math.min(1, prelim(c)), P: 0, F: freshness(c.skill.last_commit_at), T: trust(c.skill, lookup) }, settings.weights);
@@ -644,11 +655,15 @@ export async function runSearch(
       if (c.installs != null && c.installs > 0 && c.skill) store.setSkillInstalls(c.skill.id, c.installs);
       if (c.installs == null && c.skill?.installs) c.installs = c.skill.installs;
     }
-    const deduped = dedupeByContent(merged, lookup).sort((a, b) => prelim(b) - prelim(a));
+    // The risk filter comes before merging copies: a hidden high-risk representative used to take its
+    // lower-risk copies with it, and high-risk candidates held places in the top MAX_ENRICH.
+    const risky: Candidate[] = [];
+    const allowed = merged.filter((c) => (tooRisky(c.skill!) ? (risky.push(c), false) : true));
+    const deduped = dedupeByContent(allowed, lookup).sort((a, b) => prelim(b) - prelim(a));
 
     // Stars for every candidate repo (cached 24h; the minimum-stars filter needs them all). Interim results
     // use what is cached.
-    const repos = [...new Set(deduped.map((c) => c.skill!.repo).filter((r): r is string => !!r))];
+    const repos = [...new Set([...deduped, ...risky].map((c) => c.skill!.repo).filter((r): r is string => !!r))];
     const stars = new Map<string, number | null>();
     const tStars = Date.now();
     if (final) {
@@ -662,16 +677,23 @@ export async function runSearch(
     const starsOf = (c: Candidate) => (c.skill!.repo ? (stars.get(c.skill!.repo.toLowerCase()) ?? null) : null);
 
     // Minimum GitHub stars (user setting, default 5,000). An unknown count does not pass: it may be below.
+    const starsPass = (c: Candidate) => {
+      if (minStars <= 0) return true;
+      const st = starsOf(c);
+      return st != null && st >= minStars;
+    };
     let hiddenLowStars = 0;
     const finalists = deduped
       .filter((c) => {
-        if (minStars <= 0) return true;
-        const st = starsOf(c);
-        if (st != null && st >= minStars) return true;
+        if (starsPass(c)) return true;
         if (c.skill!.description) hiddenLowStars++;
         return false;
       })
       .slice(0, MAX_ENRICH);
+    // "위험 높음 N개 숨김" counts only what would otherwise have been shown (one per SKILL.md)
+    const hiddenHighRisk = new Set(
+      risky.filter((c) => c.skill!.description && starsPass(c) && !noQueryWord(c, matchOf(c))).map((c) => c.skill!.skill_md_sha256 ?? c.skill!.id),
+    ).size;
     hiddenLowStars += foldDroppedForStars(finalists);
 
     const bm = finalists.map((c) => c.bm25).filter((b): b is number => b != null);
@@ -679,7 +701,6 @@ export async function runSearch(
     const worst = bm.length ? Math.max(...bm) : 0;
     const maxInstalls = Math.max(0, ...finalists.map((c) => c.installs ?? 0));
     const maxStars = Math.max(0, ...finalists.map((c) => stars.get(c.skill!.repo?.toLowerCase() ?? '') ?? 0));
-    let hiddenHighRisk = 0;
     let hiddenNoDescription = 0;
     let hiddenNoMatch = 0;
     const items: ResultItem[] = [];
@@ -693,10 +714,6 @@ export async function runSearch(
       const m = matchOf(c);
       if (noQueryWord(c, m)) {
         hiddenNoMatch++;
-        continue;
-      }
-      if (RISK_ORDER[(s.risk_level as RiskLevel) ?? 'low'] > RISK_ORDER[maxRisk]) {
-        hiddenHighRisk++;
         continue;
       }
       const st = s.repo ? (stars.get(s.repo.toLowerCase()) ?? null) : null;
@@ -721,7 +738,7 @@ export async function runSearch(
         topics: i.topics,
         skills: store
           .findSkillsByRepo(repo)
-          .filter((s) => s.description && s.origin !== 'wellknown')
+          .filter((s) => s.description && s.origin !== 'wellknown' && !tooRisky(s))
           .slice(0, 30)
           .map((s) => {
             const plugin = lookup.plugin(s.plugin_id);

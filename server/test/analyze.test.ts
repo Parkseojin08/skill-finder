@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { extractSkillMeta, parseAllowedTools, parseSkillMd } from '../src/analyze/frontmatter.ts';
 import { qualityWarnings } from '../src/analyze/quality.ts';
-import { pluginRiskFlags, riskLevel, skillRiskFlags, type SkillRiskInput } from '../src/analyze/risk.ts';
-import { sanitizeText } from '../src/util/sanitize.ts';
+import { hasCurlPipeShell, hasRmRf, pluginRiskFlags, riskLevel, skillRiskFlags, type SkillRiskInput } from '../src/analyze/risk.ts';
+import { TreeIndex } from '../src/discovery/tree.ts';
+import { buildSkillRow } from '../src/indexer.ts';
+import { RAW_MAX_BYTES } from '../src/sources/github.ts';
+import { sanitizeLine, sanitizeName, sanitizeText } from '../src/util/sanitize.ts';
 
 describe('§6.1 frontmatter', () => {
   it('첫 줄이 ---가 아니면 frontmatter로 보지 않는다', () => {
@@ -130,5 +133,64 @@ describe('§6.3 위험 신호', () => {
     assert.equal(riskLevel(['shellInjection', 'unscopedBash', 'preapprovedBash']), 'high');
     assert.equal(riskLevel(['curlPipeShell']), 'high');
     assert.equal(riskLevel(['commandSource']), 'high');
+    assert.equal(riskLevel(['unscanned']), 'medium');
+    // padding the frontmatter past the limit must not hide `allowed-tools: Bash` next to a shell injection
+    assert.equal(riskLevel(['shellInjection', 'unscanned']), 'high');
+  });
+});
+
+describe('원격 텍스트 처리 시간 (ReDoS 회귀)', () => {
+  const N = 512 * 1024;
+  const fast = (label: string, fn: () => unknown, maxMs = 200) => {
+    const t = performance.now();
+    fn();
+    const ms = performance.now() - t;
+    assert.ok(ms < maxMs, `${label}: ${ms.toFixed(0)}ms`);
+  };
+
+  it('위험 판정·정리 정규식은 512KB 악성 입력에서도 바로 끝난다', () => {
+    // each of these took 30s–200s with the earlier backtracking regexes
+    fast('curl x 100k', () => hasCurlPipeShell('curl '.repeat(N / 5)));
+    fast('rm -rrr…', () => hasRmRf('rm -' + 'r'.repeat(N)));
+    fast('rm x 170k', () => hasRmRf('rm '.repeat(N / 3)));
+    fast('unterminated OSC', () => sanitizeText('\x1b]'.repeat(N / 2)));
+    fast('unterminated DCS', () => sanitizeText('\x1bP'.repeat(N / 2)));
+    fast('long whitespace line', () => sanitizeLine(' '.repeat(N) + 'x'));
+  });
+
+  it('새 판정 함수는 예전 정규식과 같은 결과를 낸다', () => {
+    const CURL_OLD = /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b/;
+    const RM_OLD = /\brm\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*[fF][a-zA-Z]*|-[a-zA-Z]*[fF][a-zA-Z]*[rR][a-zA-Z]*|-[rR]\s+-[fF]|-[fF]\s+-[rR])\b/;
+    const parts = ['curl', 'wget', ' ', '|', 'sh', 'bash', 'sudo ', '\n', 'x', 'rm', ' -', '-', 'r', 'R', 'f', 'F', 'a', '1', '_', '\t'];
+    let seed = 7;
+    const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed % n);
+    for (let n = 0; n < 20_000; n++) {
+      let s = '';
+      for (let i = 0, len = 1 + rand(14); i < len; i++) s += parts[rand(parts.length)];
+      assert.equal(hasCurlPipeShell(s), CURL_OLD.test(s), JSON.stringify(s));
+      assert.equal(hasRmRf(s), RM_OLD.test(s), JSON.stringify(s));
+    }
+  });
+
+  it('sanitizeLine은 줄바꿈 주변 공백을 한 칸으로 줄이고 보이지 않는 방향 제어 문자를 지운다', () => {
+    assert.equal(sanitizeLine('  a \n\n  b c \n'), 'a b c');
+    assert.equal(sanitizeLine('evil‮txt.exe'), 'eviltxt.exe');
+    assert.equal(sanitizeLine('فارسی‌متن'), 'فارسی‌متن', '설명은 ZWNJ를 남긴다');
+    assert.equal(sanitizeName('pdf‍​-tool'), 'pdf-tool');
+  });
+
+  it('너무 큰 frontmatter와 잘린 SKILL.md는 "끝까지 검사 못 함"으로 표시한다', () => {
+    const big = `---\nname: big\ndescription: Big one\nhooks:\n${'  - x\n'.repeat(4000)}---\nbody\n`;
+    const p = parseSkillMd(big);
+    assert.equal(p.frontmatterTooLarge, true);
+    assert.equal(p.frontmatter.name, 'big');
+    assert.ok(skillRiskFlags({ files: [], allowedTools: [], body: '', hasHooks: false, raw: big, partial: true }).includes('unscanned'));
+    const tree = new TreeIndex([{ path: 's/SKILL.md' }]);
+    const build = (raw: string) =>
+      buildSkillRow({ repo: 'a/b', sha: 'c'.repeat(40), dirPath: 's', raw, tree, origin: 'generic', pluginId: null, extraFlags: [], install: null, lastCommitAt: null });
+    assert.ok(JSON.parse(build(big).risk_json!).includes('unscanned'));
+    const cut = `---\nname: cut\ndescription: Cut at the limit\n---\n${'x'.repeat(RAW_MAX_BYTES)}`;
+    assert.equal(build(cut).risk_level, 'medium');
+    assert.ok(!JSON.parse(build('---\nname: ok\ndescription: Fine\n---\nbody\n').risk_json!).includes('unscanned'));
   });
 });
