@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
 import type { Store } from '../db/store.ts';
 import { koreanTerm } from '../search/koreanTerms.ts';
-import { freshness, matchTokens, popularity, stem, totalScore, TRUST_SCORE, trustTier } from '../search/rank.ts';
+import { freshInstalls, freshness, matchTokens, popularity, stem, totalScore, TRUST_SCORE, trustTier } from '../search/rank.ts';
 import { buildResultItem, githubSource, marketplaceSource, storeLookup, type ResultItem } from '../search/result.ts';
 import type { Settings } from '../settings.ts';
 
@@ -327,8 +327,8 @@ export function matchSkills(store: Store, keywords: Keyword[], weights: Settings
     groups.set(k, [...(groups.get(k) ?? []), x]);
   }
   const unique = [...groups.values()]
-    .map((g) => g.sort((a, b) => trustOf(b.skill) - trustOf(a.skill) || (b.skill.installs ?? -1) - (a.skill.installs ?? -1) || b.score - a.score)[0])
-    .map((x) => ({ ...x, installs: x.skill.installs, stars: starsOf(x.skill.repo) }))
+    .map((g) => g.sort((a, b) => trustOf(b.skill) - trustOf(a.skill) || (freshInstalls(b.skill) ?? -1) - (freshInstalls(a.skill) ?? -1) || b.score - a.score)[0])
+    .map((x) => ({ ...x, installs: freshInstalls(x.skill), stars: starsOf(x.skill.repo) }))
     .sort((a, b) => byPopularity(a, b) || b.score - a.score || a.skill.id.localeCompare(b.skill.id))
     .slice(0, CONFIG.maxResults);
 

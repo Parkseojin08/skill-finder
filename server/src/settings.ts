@@ -15,6 +15,8 @@ export const SettingsSchema = z.object({
   defaultProjectPath: z.string().max(1000),
   /** Search results must come from a GitHub repo with at least this many stars (0 = no limit). */
   minStars: z.number().int().min(0).max(1_000_000),
+  /** Keep a search log on this PC (U5-2): what was searched and which results were opened, 90 days. */
+  searchLog: z.boolean(),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -26,7 +28,11 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultScope: 'user',
   defaultProjectPath: '',
   minStars: 5000,
+  searchLog: true,
 };
+
+/** Search log entries older than this are deleted (at startup and daily). */
+export const SEARCH_LOG_KEEP_MS = 90 * 24 * 60 * 60 * 1000;
 
 export const DEFAULT_MARKETPLACES = [
   { name: 'claude-plugins-official', repo: 'anthropics/claude-plugins-official', enabled: true, index_mode: 'eager' },

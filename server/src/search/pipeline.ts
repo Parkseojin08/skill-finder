@@ -12,6 +12,7 @@ import { koreanSuggestion } from './koreanTerms.ts';
 import {
   blendRelevance,
   bm25ToRelevance,
+  freshInstalls,
   freshness,
   GENERIC_WORDS,
   lexicalMatch,
@@ -69,13 +70,16 @@ export type SearchEvent =
       /** Repositories named like a one-word query, shown above the skills. */
       repos?: RepoResult[];
     }
-  | { type: 'done'; cached: boolean; elapsedMs: number };
+  /** `sid`: this search in the search log (added by the route when the log is on), for the opened results. */
+  | { type: 'done'; cached: boolean; elapsedMs: number; sid?: string };
 
 export type SearchDeps = {
   ctx: AppContext;
   skillsSh(query: string): Promise<SkillsShHit[]>;
   /** Overrides GITHUB_COLLECT_WAIT_MS (tests). */
   githubWaitMs?: number;
+  /** Overrides SEARCH_DEADLINE_MS (tests). */
+  deadlineMs?: number;
 };
 
 type Pending =
@@ -239,7 +243,7 @@ export async function runSearch(
   const sources = new Set<SourceKind>(filters.sources?.length ? filters.sources : ['marketplace', 'skillssh', 'github']);
   const maxRisk: RiskLevel = filters.maxRisk ?? 'medium';
   // `r` is the result-item shape; bump it when items gain fields so cached searches are rebuilt.
-  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: 13 });
+  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: 14 });
 
   // The English query for a Korean one goes out first, cached search or not: it comes from the query alone,
   // and the button helps most exactly when there is little else to show.
@@ -263,6 +267,8 @@ export async function runSearch(
     emit(w);
   };
   const timings = { collect: 0, enrich: 0, local: 0, skillssh: 0, github: 0, repos: 0, stars: 0 };
+  /** Repos whose final star check missed the deadline (their stored count was used). */
+  let starsLate = 0;
   /** Slowest candidate resolutions, for the log line. */
   const slow: Array<{ what: string; ms: number; outcome: Outcome }> = [];
 
@@ -351,7 +357,7 @@ export async function runSearch(
     for (const c of list) if (!c.pending && c.skill && !ready.includes(c) && !dropForStars(c)) ready.push(c);
   };
   const outcomes: Record<Outcome, number> = { found: 0, missing: 0, error: 0, timeout: 0, lowstars: 0 };
-  const deadline = t0 + SEARCH_DEADLINE_MS;
+  const deadline = t0 + (deps.deadlineMs ?? SEARCH_DEADLINE_MS);
   const slots = new Semaphore(ENRICH_CONCURRENCY);
   const started = new Set<Candidate>();
   const lookups: Promise<void>[] = [];
@@ -591,7 +597,7 @@ export async function runSearch(
       return !belowMinStars(c, 1) && !noQueryWord(c, matchOf(c));
     });
     const items: ResultItem[] = [];
-    for (const c of dedupeByContent(shown.map((c) => ({ ...c, installs: c.installs ?? c.skill!.installs })), lookup)) {
+    for (const c of dedupeByContent(shown.map((c) => ({ ...c, installs: c.installs ?? freshInstalls(c.skill!) })), lookup)) {
       if (items.length >= MAX_RESULTS) break;
       const s = c.skill!;
       const st = s.repo ? storedStarsOf(s.repo) : null;
@@ -665,7 +671,7 @@ export async function runSearch(
   emit(results);
   if (results.items.length > 0) {
     // A late GitHub answer skipped the lookups of its unindexed hits past the first 30, so cache it briefly too.
-    const partial = outcomes.timeout + outcomes.error > 0 || !githubInTime || !skillsShInTime;
+    const partial = outcomes.timeout + outcomes.error > 0 || !githubInTime || !skillsShInTime || starsLate > 0;
     store.putCached(key, { warnings, results, cachedAt: Date.now(), ...(partial ? { ttlMs: PARTIAL_CACHE_MS } : {}) } satisfies CachedSearch);
   }
   const elapsedMs = Date.now() - t0;
@@ -674,7 +680,7 @@ export async function runSearch(
     .slice(0, 4)
     .map((s) => `${s.what} ${s.ms}ms${s.outcome === 'found' ? '' : ` (${s.outcome})`}`);
   console.log(
-    `[search] ${elapsedMs}ms ${JSON.stringify(timings)} lookups=${JSON.stringify(outcomes)} results=${results.items.length}${allDone ? '' : ' (interim sent)'}${githubInTime ? '' : ' (github late)'}${skillsShInTime ? '' : ' (skills.sh late)'} q=${JSON.stringify(query)}` +
+    `[search] ${elapsedMs}ms ${JSON.stringify(timings)} lookups=${JSON.stringify(outcomes)} results=${results.items.length}${allDone ? '' : ' (interim sent)'}${githubInTime ? '' : ' (github late)'}${skillsShInTime ? '' : ' (skills.sh late)'}${starsLate ? ` (stars late ${starsLate})` : ''} q=${JSON.stringify(query)}` +
       (slowest.length ? `\n  slowest: ${slowest.join(' | ')}` : '') +
       (errors.length ? `\n  errors: ${errors.slice(0, 3).join(' | ')}` : ''),
   );
@@ -687,14 +693,11 @@ export async function runSearch(
    */
   function foldDroppedForStars(shown: Candidate[]): number {
     const byContent = new Map<string, Candidate>();
-    for (const c of shown) {
-      if (c.skill?.skill_md_sha256) byContent.set(`md:${c.skill.skill_md_sha256}`, c);
-      if (c.skill?.name_desc_sha256) byContent.set(`nd:${c.skill.name_desc_sha256}`, c);
-    }
+    for (const c of shown) if (c.skill?.skill_md_sha256) byContent.set(c.skill.skill_md_sha256, c);
     const hidden = new Set<string>();
     for (const c of droppedForStars) {
       const s = c.skill;
-      const copyOf = s && ((s.skill_md_sha256 && byContent.get(`md:${s.skill_md_sha256}`)) || (s.name_desc_sha256 && byContent.get(`nd:${s.name_desc_sha256}`)));
+      const copyOf = s?.skill_md_sha256 ? byContent.get(s.skill_md_sha256) : undefined;
       if (copyOf) {
         if (c.installs != null) copyOf.installs = (copyOf.installs ?? 0) + c.installs;
         copyOf.sources = mergeSources(copyOf.sources, c.sources);
@@ -710,8 +713,8 @@ export async function runSearch(
   async function buildResults(resolved: Candidate[], final: boolean): Promise<Extract<SearchEvent, { type: 'results' }>> {
     const merged = mergeById([...ready, ...resolved]);
     for (const c of merged) {
-      if (c.installs != null && c.installs > 0 && c.skill) store.setSkillInstalls(c.skill.id, c.installs);
-      if (c.installs == null && c.skill?.installs) c.installs = c.skill.installs;
+      if (c.installs != null && c.skill) store.setSkillInstalls(c.skill.id, c.installs); // the latest count, even 0 (U4)
+      if (c.installs == null && c.skill) c.installs = freshInstalls(c.skill);
     }
     // The risk filter comes before merging copies: a hidden high-risk representative used to take its
     // lower-risk copies with it, and high-risk candidates held places in the top MAX_ENRICH.
@@ -720,16 +723,23 @@ export async function runSearch(
     const deduped = dedupeByContent(allowed, lookup).sort((a, b) => prelim(b) - prelim(a));
 
     // Stars for every candidate repo (cached 24h; the minimum-stars filter needs them all). Interim results
-    // use what is cached.
+    // use what is cached. The final check stops at the search deadline (U5-1, user decision): repos not
+    // checked by then use a stored count up to 7 days old, and without one stay unknown (hidden) as before.
     const repos = [...new Set([...deduped, ...risky].map((c) => c.skill!.repo).filter((r): r is string => !!r))];
     const stars = new Map<string, number | null>();
     const tStars = Date.now();
     if (final) {
-      await pool(repos, 8, async (r) => {
+      let open = true;
+      const check = pool(repos, 8, async (r) => {
+        if (Date.now() >= deadline) return;
         const meta = await github.getRepoMeta(r).catch(() => null);
-        stars.set(r.toLowerCase(), meta?.stars ?? null);
+        if (open) stars.set(r.toLowerCase(), meta?.stars ?? null);
       });
+      await withTimeout(check, Math.max(0, deadline - Date.now()), 'timeout').catch(() => undefined);
+      open = false;
       timings.stars = Date.now() - tStars;
+      starsLate = repos.filter((r) => !stars.has(r.toLowerCase())).length;
+      for (const r of repos) if (!stars.has(r.toLowerCase())) stars.set(r.toLowerCase(), storedStarsOf(r));
     }
     for (const r of repos) if (!stars.has(r.toLowerCase())) stars.set(r.toLowerCase(), store.getRepo(r)?.stars ?? null);
     const starsOf = (c: Candidate) => (c.skill!.repo ? (stars.get(c.skill!.repo.toLowerCase()) ?? null) : null);
@@ -931,30 +941,27 @@ function matchLocal(rows: SkillRow[], hit: SkillsShHit): SkillRow | null {
   );
 }
 
-/** Same SKILL.md (or same name+description) published in several places → one result, sources and installs combined. */
+/**
+ * Same SKILL.md published in several places → one result, sources and installs combined. Only the same file
+ * (U4, user decision): a same name+description with a different body is another skill (an edited fork), so
+ * summing its downloads overstated both; the screen folds same-name results instead, without summing.
+ */
 function dedupeByContent(cands: Candidate[], lookup: Lookup): Candidate[] {
   const groups = new Map<string, Candidate[]>();
-  const out: Candidate[] = [];
+  const merged: Candidate[] = [];
+  const out: Candidate[][] = [];
   for (const c of cands) {
-    const s = c.skill!;
-    const k = s.skill_md_sha256 ? `md:${s.skill_md_sha256}` : null;
-    const k2 = s.name_desc_sha256 ? `nd:${s.name_desc_sha256}` : null;
-    const existing = (k && groups.get(k)) || (k2 && groups.get(k2));
+    const k = c.skill!.skill_md_sha256;
+    const existing = k ? groups.get(k) : undefined;
     if (existing) existing.push(c);
     else {
       const g = [c];
       if (k) groups.set(k, g);
-      if (k2) groups.set(k2, g);
-      out.push(c);
+      out.push(g);
     }
   }
-  const seen = new Set<Candidate[]>();
-  const merged: Candidate[] = [];
-  for (const c of out) {
-    const s = c.skill!;
-    const g = (s.skill_md_sha256 && groups.get(`md:${s.skill_md_sha256}`)) || (s.name_desc_sha256 && groups.get(`nd:${s.name_desc_sha256}`)) || [c];
-    if (seen.has(g)) continue;
-    seen.add(g);
+  for (const g of out) {
+    const c = g[0];
     if (g.length === 1) {
       merged.push(c);
       continue;

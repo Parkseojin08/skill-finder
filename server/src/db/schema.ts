@@ -35,4 +35,15 @@ export const MIGRATIONS: string[] = [
   `
   CREATE INDEX skills_repo_tail ON skills(lower(substr(repo, instr(repo, '/') + 1)));
   `,
+  // Downloads keep the latest count and when it was seen; counts older than 30 days are not ranked on (U4).
+  // Counts stored before this have no time of their own: the row's fetch time is the best guess.
+  `
+  ALTER TABLE skills ADD COLUMN installs_at TEXT;
+  UPDATE skills SET installs_at = fetched_at WHERE installs IS NOT NULL;
+  `,
+  // Local search log (U5-2): details per event, and the 90-day pruning by kind and time.
+  `
+  ALTER TABLE events ADD COLUMN meta_json TEXT;
+  CREATE INDEX events_kind_created ON events(kind, created_at);
+  `,
 ];

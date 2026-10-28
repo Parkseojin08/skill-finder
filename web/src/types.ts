@@ -73,7 +73,8 @@ export type SearchEvent =
       broadQuery?: boolean;
       repos?: RepoResult[];
     }
-  | { type: 'done'; cached: boolean; elapsedMs: number };
+  /** `sid`: this search in the local search log (when it is on). */
+  | { type: 'done'; cached: boolean; elapsedMs: number; sid?: string };
 
 export type InstallPlan = {
   method: InstallMethod;
@@ -146,6 +147,8 @@ export type Settings = {
   defaultScope: 'user' | 'project';
   defaultProjectPath: string;
   minStars: number;
+  /** Keep a search log on this PC (what was searched, which results were opened), 90 days. */
+  searchLog: boolean;
 };
 
 export type MarketplaceInfo = {
@@ -159,7 +162,10 @@ export type MarketplaceInfo = {
   pendingSkillIndex: number;
 };
 
-export type SettingsResponse = { settings: Settings; githubToken: boolean; marketplaces: MarketplaceInfo[] };
+export type SettingsResponse = { settings: Settings; githubToken: boolean; marketplaces: MarketplaceInfo[]; searchLogCount: number };
+
+/** Where an opened result was in its search, for the search log. */
+export type OpenedFrom = { sid?: string; pos: number; page: number; provisional: boolean };
 
 export type Job = {
   id: string;

@@ -7,11 +7,11 @@ import { Markdown, splitFrontmatter } from '../components/Markdown.tsx';
 import { Translated } from '../components/Translated.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { formatAgo, formatBytes, formatCount, METHOD, QUALITY, RISK_FLAGS } from '../labels.ts';
-import type { Breakdown, ResultItem, SettingsResponse, SkillDetail } from '../types.ts';
+import type { Breakdown, OpenedFrom, ResultItem, SettingsResponse, SkillDetail } from '../types.ts';
 
 type Tab = 'overview' | 'install' | 'skill' | 'files';
 
-export function SkillPage({ id, item, query, onBack }: { id: string; item: ResultItem | null; query: string; onBack: () => void }) {
+export function SkillPage({ id, item, query, from, onBack }: { id: string; item: ResultItem | null; query: string; from?: OpenedFrom; onBack: () => void }) {
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
@@ -20,7 +20,13 @@ export function SkillPage({ id, item, query, onBack }: { id: string; item: Resul
 
   useEffect(() => {
     let alive = true;
-    apiGet<SkillDetail>(`/skills/${encodeURIComponent(id)}`, { q: query || undefined })
+    apiGet<SkillDetail>(`/skills/${encodeURIComponent(id)}`, {
+      q: query || undefined,
+      sid: from?.sid,
+      pos: from ? String(from.pos) : undefined,
+      page: from ? String(from.page) : undefined,
+      prov: from?.provisional ? '1' : undefined,
+    })
       .then((d) => alive && setDetail(d))
       .catch((e) => alive && setError(String(e.message ?? e)));
     apiGet<SettingsResponse>('/settings')

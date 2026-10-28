@@ -53,6 +53,8 @@ export type SkillRow = {
   skill_md_sha256: string | null;
   name_desc_sha256: string | null;
   installs: number | null;
+  /** When `installs` was last seen (set by the store; rows built by the indexer leave it out). */
+  installs_at?: string | null;
   quality_json: string | null;
   risk_json: string | null;
   risk_level: string | null;
@@ -279,8 +281,8 @@ export class Store {
     this.run(
       `INSERT INTO skills (id, origin, plugin_id, repo, ref, dir_path, name, description, when_to_use, frontmatter_json,
          body_lines, skill_md_sha256, name_desc_sha256, installs, quality_json, risk_json, risk_level, last_commit_at,
-         fetched_at, files_json, install_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         fetched_at, files_json, install_json, installs_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET origin = excluded.origin, plugin_id = COALESCE(excluded.plugin_id, skills.plugin_id),
          repo = excluded.repo, ref = excluded.ref, dir_path = excluded.dir_path, name = excluded.name,
          description = excluded.description, when_to_use = excluded.when_to_use, frontmatter_json = excluded.frontmatter_json,
@@ -288,7 +290,8 @@ export class Store {
          name_desc_sha256 = excluded.name_desc_sha256, installs = COALESCE(excluded.installs, skills.installs),
          quality_json = excluded.quality_json, risk_json = excluded.risk_json, risk_level = excluded.risk_level,
          last_commit_at = excluded.last_commit_at, fetched_at = excluded.fetched_at, files_json = excluded.files_json,
-         install_json = COALESCE(excluded.install_json, skills.install_json)`,
+         install_json = COALESCE(excluded.install_json, skills.install_json),
+         installs_at = CASE WHEN excluded.installs IS NOT NULL THEN excluded.installs_at ELSE skills.installs_at END`,
       s.id,
       s.origin,
       s.plugin_id,
@@ -310,6 +313,7 @@ export class Store {
       s.fetched_at,
       s.files_json,
       s.install_json,
+      s.installs != null ? new Date().toISOString() : null,
     );
     const rowid = this.get<{ rowid: number }>('SELECT rowid FROM skills WHERE id = ?', s.id)!.rowid;
     this.run('DELETE FROM skills_fts WHERE rowid = ?', rowid);
@@ -324,8 +328,9 @@ export class Store {
     );
   }
 
-  setSkillInstalls(id: string, installs: number): void {
-    this.run('UPDATE skills SET installs = MAX(COALESCE(installs, 0), ?) WHERE id = ?', installs, id);
+  /** The latest count wins, even when lower (U4): skills.sh counts can drop, and the highest ever seen stuck forever. */
+  setSkillInstalls(id: string, installs: number, at = new Date().toISOString()): void {
+    this.run('UPDATE skills SET installs = ?, installs_at = ? WHERE id = ?', installs, at, id);
   }
 
   deleteSkill(id: string): void {
@@ -505,7 +510,30 @@ export class Store {
     );
   }
 
-  logEvent(kind: 'view' | 'install', skillId: string, query: string | null): void {
-    this.run('INSERT INTO events (kind, skill_id, query, created_at) VALUES (?, ?, ?, ?)', kind, skillId, query, now());
+  logEvent(kind: EventKind, skillId: string | null, query: string | null, meta?: Record<string, unknown>): void {
+    this.run(
+      'INSERT INTO events (kind, skill_id, query, created_at, meta_json) VALUES (?, ?, ?, ?, ?)',
+      kind,
+      skillId,
+      query,
+      now(),
+      meta ? JSON.stringify(meta) : null,
+    );
+  }
+
+  /** Search log entries (searches and the results opened from them) on this PC. */
+  countSearchLog(): number {
+    return this.get<{ n: number }>(`SELECT COUNT(*) AS n FROM events WHERE kind IN ${SEARCH_LOG_KINDS}`)!.n;
+  }
+
+  /** Deletes the search log; `olderThan` (ISO time) keeps what came after it. Returns how many were deleted. */
+  clearSearchLog(olderThan?: string): number {
+    const where = `kind IN ${SEARCH_LOG_KINDS}`;
+    const r = olderThan ? this.run(`DELETE FROM events WHERE ${where} AND created_at < ?`, olderThan) : this.run(`DELETE FROM events WHERE ${where}`);
+    return Number(r.changes);
   }
 }
+
+export type EventKind = 'view' | 'install' | 'search';
+/** The kinds that make up the search log (U5-2): what was searched and which result was opened. */
+const SEARCH_LOG_KINDS = "('search', 'view')";

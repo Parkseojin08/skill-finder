@@ -6,7 +6,7 @@ import { RepoCard } from '../components/RepoCard.tsx';
 import { ResultCard } from '../components/ResultCard.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { STAGES } from '../labels.ts';
-import type { Health, Job, ResultItem, RiskLevel, SearchEvent, SearchSource, SettingsResponse, SourceKind, SourceProgress } from '../types.ts';
+import type { Health, Job, OpenedFrom, ResultItem, RiskLevel, SearchEvent, SearchSource, SettingsResponse, SourceKind, SourceProgress } from '../types.ts';
 
 const EXAMPLES = ['pull request review', 'extract tables from pdf', 'react performance', 'postgres migration review', 'commit message'];
 const SOURCE_LABEL: Record<SourceKind, string> = { marketplace: '마켓플레이스', skillssh: 'skills.sh', github: 'GitHub' };
@@ -93,9 +93,43 @@ function foldByRepo(sorted: ResultItem[], open: Set<string>, word: string | null
   return out;
 }
 
+/** Name key for same-name folding, as the README recommendation groups copies ("PDF_Tools" = "pdf-tools"). */
+const nameKey = (item: ResultItem) => item.name.normalize('NFC').toLowerCase().replace(/[\s_]+/g, '-');
+const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2 };
+type Row = { item: ResultItem; more?: { repo: string; count: number }; same?: { key: string; count: number; riskier: boolean } };
+
+/**
+ * Same-name skills (U2, user decision) fold under the first one in the current order: the others follow it
+ * only when its "같은 이름 N개 더" is opened. Downloads are not summed (they are different copies), and the
+ * button says when a folded copy is riskier than the one shown. Repository folding then runs on what is left.
+ */
+function foldResults(sorted: ResultItem[], openRepos: Set<string>, openNames: Set<string>, word: string | null): Row[] {
+  const copies = new Map<string, ResultItem[]>();
+  const firsts: ResultItem[] = [];
+  for (const it of sorted) {
+    const k = nameKey(it);
+    const g = copies.get(k);
+    if (g) g.push(it);
+    else {
+      copies.set(k, []);
+      firsts.push(it);
+    }
+  }
+  const out: Row[] = [];
+  for (const row of foldByRepo(firsts, openRepos, word)) {
+    const k = nameKey(row.item);
+    const rest = copies.get(k)!;
+    if (rest.length === 0) out.push(row);
+    // opened: the copies come right after the card, and its repository's "N개 더" button after the last copy
+    else if (openNames.has(k)) out.push({ item: row.item }, ...rest.map((x, i) => ({ item: x, ...(i === rest.length - 1 && row.more ? { more: row.more } : {}) })));
+    else out.push({ ...row, same: { key: k, count: rest.length, riskier: rest.some((x) => RISK_RANK[x.riskLevel] > RISK_RANK[row.item.riskLevel]) } });
+  }
+  return out;
+}
+
 type Status = 'idle' | 'running' | 'done' | 'error';
 
-export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => void; onQuery: (q: string) => void }) {
+export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, from?: OpenedFrom) => void; onQuery: (q: string) => void }) {
   const [query, setQuery] = useState('');
   const [sources, setSources] = useState<SourceKind[]>(['marketplace', 'skillssh', 'github']);
   const [maxRisk, setMaxRisk] = useState<RiskLevel>('medium');
@@ -106,12 +140,15 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
   const [provisional, setProvisional] = useState(false);
   const [final, setFinal] = useState<Extract<SearchEvent, { type: 'results' }> | null>(null);
   const [doneInfo, setDoneInfo] = useState<{ cached: boolean; elapsedMs: number } | null>(null);
+  /** This search in the local search log; the cards opened from it point back to it. */
+  const [sid, setSid] = useState<string | undefined>(undefined);
   const [progress, setProgress] = useState<Partial<Record<SearchSource, SourceProgress>>>({});
   /** The star minimum this search was run without ("보기"), for the badge on cards below it; null normally. */
   const [liftedStars, setLiftedStars] = useState<number | null>(null);
   /** English query offered for a Korean one (the server sends it first, before any results). */
   const [suggest, setSuggest] = useState<{ query: string; dropped: string[] } | null>(null);
   const [openRepos, setOpenRepos] = useState<Set<string>>(() => new Set());
+  const [openNames, setOpenNames] = useState<Set<string>>(() => new Set());
   const [startedAt, setStartedAt] = useState(0);
   const [githubToken, setGithubToken] = useState<boolean | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
@@ -193,11 +230,13 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
       setPage(1);
       setFinal(null);
       setDoneInfo(null);
+      setSid(undefined);
       setProgress({});
       setStartedAt(Date.now());
       setLiftedStars(liftStars);
       setSuggest(null);
       setOpenRepos(new Set());
+      setOpenNames(new Set());
       setProvisional(false);
       setLastQuery(text);
       onQuery(text);
@@ -231,6 +270,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
                 break;
               case 'done':
                 setDoneInfo({ cached: e.cached, elapsedMs: e.elapsedMs });
+                setSid(e.sid);
                 setStatus('done');
                 break;
             }
@@ -268,7 +308,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
     setFacets(f);
     setPage(1);
   };
-  const shown = foldByRepo(sorted, openRepos, word);
+  const shown = foldResults(sorted, openRepos, openNames, word);
   const pageCount = Math.max(1, Math.ceil(shown.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const pageItems = shown.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -561,15 +601,21 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem) => 
           )}
 
           <div className="results">
-            {pageItems.map(({ item: it, more }, i) => (
+            {pageItems.map(({ item: it, more, same }, i) => (
               <Fragment key={it.id}>
                 <ResultCard
                   item={it}
                   position={i}
                   provisional={provisional}
                   belowMinStars={liftedStars != null && (it.stars ?? 0) < liftedStars ? liftedStars : undefined}
-                  onSelect={() => onOpen(it)}
+                  onSelect={() => onOpen(it, { sid, pos: (currentPage - 1) * pageSize + i + 1, page: currentPage, provisional })}
                 />
+                {same && (
+                  <button type="button" className="linkish small fold-more" onClick={() => setOpenNames((s) => new Set(s).add(same.key))}>
+                    같은 이름 <span className="mono">{it.name}</span> {same.count}개 더 보기
+                    {same.riskier && <span className="warn-text"> · 위험 주의 포함</span>}
+                  </button>
+                )}
                 {more && (
                   <button type="button" className="linkish small fold-more" onClick={() => setOpenRepos((s) => new Set(s).add(more.repo))}>
                     <span className="mono">{more.repo}</span>에서 {more.count}개 더 보기

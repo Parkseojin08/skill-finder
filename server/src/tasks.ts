@@ -5,7 +5,7 @@ import { GRAPHQL_BATCH } from './sources/github.ts';
 import { syncMarketplace } from './sources/marketplace.ts';
 import { collectPopularRepos, popularState } from './sources/popularRepos.ts';
 import { searchActivity } from './search/activity.ts';
-import { getSettings } from './settings.ts';
+import { getSettings, SEARCH_LOG_KEEP_MS } from './settings.ts';
 import { pool, sleep } from './util/limiter.ts';
 
 const COLLECT_CONCURRENCY = 4;
@@ -92,6 +92,17 @@ export async function refreshRepoMeta(ctx: AppContext): Promise<number> {
   }
   return stored;
 }
+
+/** Deletes search-log entries older than 90 days (U5-2; at startup and daily). */
+export function pruneSearchLog(ctx: AppContext, now = Date.now()): number {
+  try {
+    return ctx.store.clearSearchLog(new Date(now - SEARCH_LOG_KEEP_MS).toISOString());
+  } catch (err) {
+    console.warn('[search log]', String((err as Error).message ?? err).slice(0, 200));
+    return 0;
+  }
+}
+
 export const POPULAR_JOB_LABEL = 'popular-repos';
 
 /** Finds GitHub repos with many stars that hold skills and indexes them (daily after sync, or on demand). */

@@ -27,6 +27,16 @@ export function popularity(c: { installs?: number | null; stars?: number | null 
   return 0;
 }
 
+/** Stored downloads older than this are not ranked on (U4, user decision): a copy no longer listed kept its count. */
+export const INSTALLS_MAX_AGE_MS = 30 * DAY_MS;
+
+/** A skill's stored downloads, or null when unknown or older than INSTALLS_MAX_AGE_MS. */
+export function freshInstalls(s: Pick<SkillRow, 'installs' | 'installs_at'>, now = Date.now()): number | null {
+  if (s.installs == null || !s.installs_at) return null;
+  const t = Date.parse(s.installs_at);
+  return Number.isNaN(t) || now - t > INSTALLS_MAX_AGE_MS ? null : s.installs;
+}
+
 export type TrustTier = 'official' | 'partner' | 'community' | 'other';
 
 export function trustTier(skill: Pick<SkillRow, 'repo' | 'dir_path'>, plugin: Pick<PluginRow, 'marketplace'> | null): TrustTier {

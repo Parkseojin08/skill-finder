@@ -5,6 +5,7 @@ import { buildSteps, installLocation, planInstall, type InstallScope } from '../
 import { isProjectDir } from '../install/validate.ts';
 import { freshness, TRUST_SCORE, trustTier } from '../search/rank.ts';
 import { githubSource, marketplaceSource, treeUrl } from '../search/result.ts';
+import { getSettings } from '../settings.ts';
 import { looksBinary } from '../util/http.ts';
 import { sanitizeText } from '../util/sanitize.ts';
 
@@ -18,6 +19,21 @@ export function isTextPath(path: string): boolean {
   return TEXT_EXT.test(name) || TEXT_NAMES.test(name);
 }
 
+/**
+ * Where an opened result was in its search (U5-2): the search's `sid`, its 1-based place in the list, the page,
+ * and whether it was still an early card. Only well-formed values are kept; undefined when there are none.
+ */
+function viewMeta(q: Record<string, unknown>): Record<string, unknown> | undefined {
+  const int = (v: unknown, max: number) => (typeof v === 'string' && /^\d{1,4}$/.test(v) && Number(v) >= 1 && Number(v) <= max ? Number(v) : undefined);
+  const meta = {
+    sid: typeof q.sid === 'string' && /^[0-9a-f-]{36}$/.test(q.sid) ? q.sid : undefined,
+    pos: int(q.pos, 1000),
+    page: int(q.page, 1000),
+    provisional: q.prov === '1' ? true : undefined,
+  };
+  return Object.values(meta).some((v) => v !== undefined) ? meta : undefined;
+}
+
 export function skillsRouter(ctx: AppContext): Router {
   const r = Router();
   const { store, github } = ctx;
@@ -28,7 +44,7 @@ export function skillsRouter(ctx: AppContext): Router {
       res.status(404).json({ error: '스킬을 찾을 수 없습니다' });
       return;
     }
-    store.logEvent('view', skill.id, typeof req.query.q === 'string' ? req.query.q.slice(0, 300) : null);
+    if (getSettings(store).searchLog) store.logEvent('view', skill.id, typeof req.query.q === 'string' ? req.query.q.slice(0, 300) : null, viewMeta(req.query));
     const plugin = skill.plugin_id ? (store.getPlugin(skill.plugin_id) ?? null) : null;
     const marketplace = plugin ? (store.getMarketplace(plugin.marketplace) ?? null) : null;
     const plan = planInstall(skill, plugin, marketplace);

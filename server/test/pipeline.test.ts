@@ -323,6 +323,19 @@ describe('최소 GitHub 스타', () => {
     assert.equal(results.hiddenLowStars, 0, results.items.map((i) => i.name).join(','));
   });
 
+  it('최종 별 확인이 마감을 넘기면 7일 안의 저장값을 쓰고, 없으면 숨긴다 (U5-1)', async () => {
+    const ctx = ctxWithSkills();
+    ctx.store.setSetting('app', {});
+    ctx.store.upsertRepo({ full_name: 'anthropics/skills', stars: 120000, pushed_at: null, archived: 0, fork: 0, license: null, default_branch: 'main', etag: null, fetched_at: new Date().toISOString() });
+    ctx.github.getRepoMeta = () => new Promise(() => {}); // GitHub never answers
+    const t = Date.now();
+    const results = resultsOf(await collect(deps(ctx, { deadlineMs: 300, githubWaitMs: 0 }), 'pdf tables pull request review'));
+    assert.ok(Date.now() - t < 5000, `${Date.now() - t}ms`);
+    const names = results.items.map((i) => i.name);
+    assert.ok(names.includes('pdf'), names.join(','));
+    assert.ok(!names.includes('pr-review'), '저장값이 없으면 지금처럼 숨김');
+  });
+
   it('설정을 0으로 하면 제한하지 않는다', async () => {
     const ctx = ctxWithSkills();
     const results = resultsOf(await collect(deps(ctx), 'pull request review'));
@@ -509,6 +522,39 @@ describe('검색 순서 (1단계 속도)', () => {
     const events = await collect(deps(ctx), 'pdf tables');
     const first = events.find((e) => e.type === 'candidates') as Extract<SearchEvent, { type: 'candidates' }>;
     assert.equal(first.items.find((i) => i.name === 'pdf')?.installs, 217000);
+  });
+
+  it('30일 지난 다운로드 수는 정렬에 쓰지 않고, 새 값은 낮아도 그대로 저장한다 (U4)', async () => {
+    const ctx = ctxWithSkills();
+    const id = 'gh:anthropics/skills:skills/pdf';
+    ctx.store.setSkillInstalls(id, 217000, new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString());
+    const stale = resultsOf(await collect(deps(ctx), 'pdf tables'));
+    assert.equal(stale.items.find((i) => i.name === 'pdf')?.installs, undefined);
+    ctx.store.setSkillInstalls(id, 5000);
+    assert.equal(ctx.store.getSkill(id)?.installs, 5000, '예전 최댓값이 아니라 최신값');
+  });
+
+  it('이름·설명만 같고 SKILL.md가 다른 사본은 합치지 않는다 (U4)', async () => {
+    const ctx = ctxWithSkills();
+    ctx.store.setSetting('app', {});
+    const repo = (full_name: string, stars: number) =>
+      ctx.store.upsertRepo({ full_name, stars, pushed_at: null, archived: 0, fork: 0, license: null, default_branch: 'main', etag: null, fetched_at: new Date().toISOString() });
+    repo('anthropics/skills', 120000);
+    repo('evil/risky', 50000);
+    repo('edited/skills', 9000);
+    ctx.github.getRepoMeta = async (r) => ctx.store.getRepo(r) ?? null;
+    const raw = '---\nname: pdf\ndescription: Extract text and tables from PDF files, fill PDF forms.\n---\nA different body.\n';
+    const row = buildSkillRow({ repo: 'edited/skills', sha: 'c'.repeat(40), dirPath: 'pdf', raw, tree: new TreeIndex([{ path: 'pdf/SKILL.md' }]), origin: 'generic', pluginId: null, extraFlags: [], install: null, lastCommitAt: null });
+    ctx.store.upsertSkill(row, '');
+    const hits = [
+      { id: 'anthropics/skills/pdf', source: 'anthropics/skills', skillId: 'pdf', name: 'pdf', installs: 200000 },
+      { id: 'edited/skills/pdf', source: 'edited/skills', skillId: 'pdf', name: 'pdf', installs: 7000 },
+    ];
+    const pdf = resultsOf(await collect(deps(ctx, { skillsSh: async () => hits }), 'pdf tables')).items.filter((i) => i.name === 'pdf');
+    assert.deepEqual(pdf.map((i) => [i.id, i.installs]).sort(), [
+      ['gh:anthropics/skills:skills/pdf', 200000],
+      ['gh:edited/skills:pdf', 7000],
+    ]);
   });
 
   it('불용어만 있는 검색어(skill)도 로컬 색인을 검색하고 "넓은 검색어"로 알린다', async () => {

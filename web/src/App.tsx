@@ -5,7 +5,7 @@ import { RecommendPage } from './pages/RecommendPage.tsx';
 import { SearchPage } from './pages/SearchPage.tsx';
 import { SettingsPage } from './pages/SettingsPage.tsx';
 import { SkillPage } from './pages/SkillPage.tsx';
-import type { ResultItem } from './types.ts';
+import type { OpenedFrom, ResultItem } from './types.ts';
 
 type Path = '/' | '/recommend' | '/skill' | '/installed' | '/marketplaces' | '/settings';
 type Route = { path: Path; skillId: string | null };
@@ -45,9 +45,17 @@ export function App() {
     window.scrollTo(0, 0);
   }, []);
 
+  // and where in its search it was, for the local search log
+  const [openedFrom, setOpenedFrom] = useState<Map<string, OpenedFrom>>(new Map());
   const openSkill = useCallback(
-    (item: ResultItem) => {
+    (item: ResultItem, from?: OpenedFrom) => {
       setOpened((m) => new Map(m).set(item.id, item));
+      setOpenedFrom((m) => {
+        const next = new Map(m);
+        if (from) next.set(item.id, from);
+        else next.delete(item.id);
+        return next;
+      });
       go('/skill', item.id);
     },
     [go],
@@ -108,6 +116,7 @@ export function App() {
             id={route.skillId}
             item={opened.get(route.skillId) ?? null}
             query={lastQuery}
+            from={openedFrom.get(route.skillId)}
             onBack={() => (window.history.length > 1 ? window.history.back() : go('/'))}
           />
         )}

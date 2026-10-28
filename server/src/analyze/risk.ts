@@ -23,17 +23,33 @@ const SHELL_INLINE = /(^|[\s(])!`[^`\n]+`/m;
 const SHELL_BLOCK = /^[ \t]*```!/m;
 // The two checks below scan remote SKILL.md text, so they must stay linear in its length: the single regexes
 // they replace (`\b(curl|wget)\b[^\n|]*\|…sh` and a nested-`[a-zA-Z]*` rm -rf) took 46s and 207s on a
-// crafted 512KB file, blocking the whole server. Same matches as those regexes (fuzzed, 300k inputs).
-const CURL_WORD = /\b(?:curl|wget)\b/;
-const PIPE_TO_SHELL = /\s*(?:sudo\s+)?(?:ba|z|da)?sh\b/y;
+// crafted 512KB file, blocking the whole server. They catch everything those regexes did (fuzzed) and, since
+// the search debate (U3, user decision), the other common download-and-run forms too. Rows indexed before that
+// keep their old flags until their repo is indexed again (SKILL.md text is not stored to re-check).
+const DOWNLOADER = /\b(?:curl|wget|irm|iwr|invoke-webrequest|invoke-restmethod)\b/i;
+// sh-like shells run stdin whatever follows; python/node/perl/ruby only when the command ends there
+// (`| python3 -`): `| python -m json.tool` just formats the output, and `| curl | node |` is a markdown table.
+// Paths and sudo options never cross a `|`: `[^\s|]` keeps one match from running past the next pipe, which
+// made each pipe rescan the rest of the text (quadratic, 110s on 512KB of "/curl|").
+const PIPE_TO_SHELL =
+  /\s*(?:sudo[ \t]+(?:-[^\s|]+[ \t]+)*)?(?:(?:\/[^\s|]*\/)?env[ \t]+)?(?:\/[^\s|]*\/)?(?:(?:(?:ba|z|da|k)?sh|iex|invoke-expression)\b|(?:python[0-9.]*|node|perl|ruby)(?:[ \t]+-)?(?=[ \t]*(?:[\r\n;&)'"`]|$)))/iy;
+/** `bash <(curl …)`, `sh -c "$(wget …)"`, `eval "$(curl …)"`, `source <(curl …)`: a shell running a download. */
+const SUBST_TO_SHELL = /\b(?:(?:ba|z|da|k)?sh|eval|source)\b[^\n<$]{0,80}[<$]\([ \t]*(?:curl|wget)\b/i;
+/** PowerShell `iex (iwr …)`, `Invoke-Expression (New-Object Net.WebClient).DownloadString(…)`. */
+const PS_EXPR = /\b(?:iex|invoke-expression)[ \t]*\(+[ \t]*(?:iwr|irm|invoke-webrequest|invoke-restmethod|new-object[ \t]+(?:system\.)?net\.webclient)\b/i;
 
-/** curl/wget in a `|`- or newline-delimited segment that ends in `|` followed by (sudo) sh/bash/zsh/dash. */
-export function hasCurlPipeShell(text: string): boolean {
+/**
+ * A downloader (curl, wget, PowerShell iwr/irm) in a `|`- or newline-delimited segment that ends in `|` followed by
+ * a shell or interpreter; or a shell/iex running a download's output directly. A line ending in `\` continues.
+ */
+export function hasCurlPipeShell(raw: string): boolean {
+  const text = raw.replace(/\\\r?\n/g, ' ');
+  if (SUBST_TO_SHELL.test(text) || PS_EXPR.test(text)) return true;
   let start = 0;
   for (let i = 0; i <= text.length; i++) {
     const ch = text[i];
     if (i < text.length && ch !== '|' && ch !== '\n') continue;
-    if (ch === '|' && CURL_WORD.test(text.slice(start, i))) {
+    if (ch === '|' && DOWNLOADER.test(text.slice(start, i))) {
       PIPE_TO_SHELL.lastIndex = i + 1; // \s* may cross newlines, as in the original
       if (PIPE_TO_SHELL.test(text)) return true;
     }

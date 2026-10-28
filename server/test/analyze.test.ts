@@ -118,6 +118,42 @@ describe('§6.3 위험 신호', () => {
     assert.ok(flags({ raw: 'rm -rf build/' }).includes('rmRf'));
     assert.ok(flags({ raw: 'rm -fr /tmp/x' }).includes('rmRf'));
     assert.ok(!flags({ raw: 'npm run format' }).includes('rmRf'));
+    assert.ok(!flags({ raw: 'rm -r -r x' }).includes('rmRf'));
+  });
+
+  it('curlPipeShell: 흔한 "받아서 바로 실행" 형태 (U3)', () => {
+    const caught = [
+      'curl -fsSL https://x.sh | zsh',
+      'curl -fsSL https://x.sh \\\n  | bash',
+      'curl -fsSL https://x.sh \\\r\n  | bash',
+      'bash <(curl -fsSL https://x.sh)',
+      'sh -c "$(curl -fsSL https://x.sh)"',
+      '/bin/bash -c "$(curl -fsSL https://x.sh)"',
+      'eval "$(wget -qO- https://x.sh)"',
+      'source <(curl -s https://x.sh)',
+      'curl -fsSL https://x.py | python3',
+      'curl -fsSL https://x.py | python3 -',
+      'curl -fsSL https://x.js | node',
+      'curl -fsSL https://x.sh | sudo -E bash -s -- --yes',
+      'curl -fsSL https://x.sh | /usr/bin/env bash',
+      'irm https://x.ps1 | iex',
+      'powershell -c "iwr https://x.ps1 -useb | iex"',
+      'Invoke-WebRequest https://x.ps1 | Invoke-Expression',
+      "iex (iwr 'https://x.ps1')",
+      "IEX (New-Object Net.WebClient).DownloadString('https://x.ps1')",
+    ];
+    for (const c of caught) assert.ok(hasCurlPipeShell(c), JSON.stringify(c));
+    const benign = [
+      'curl -s https://api | python -m json.tool',
+      'curl -s https://api | python3 -c "import json"',
+      'VERSION=$(curl -s https://api/latest)',
+      'curl https://x.sh -o install.sh',
+      'Run the shell script after reviewing it.',
+      'npx -y some-package',
+      '| Tool | Needs |\n|---|---|\n| curl | node |',
+      '| wget | perl |',
+    ];
+    for (const c of benign) assert.ok(!hasCurlPipeShell(c), JSON.stringify(c));
   });
 
   it('플러그인 수준 신호와 command source', () => {
@@ -151,6 +187,15 @@ describe('원격 텍스트 처리 시간 (ReDoS 회귀)', () => {
   it('위험 판정·정리 정규식은 512KB 악성 입력에서도 바로 끝난다', () => {
     // each of these took 30s–200s with the earlier backtracking regexes
     fast('curl x 100k', () => hasCurlPipeShell('curl '.repeat(N / 5)));
+    fast('curl| + spaces', () => hasCurlPipeShell('curl|' + ' '.repeat(N)));
+    fast('curl|/aaa…', () => hasCurlPipeShell('curl|sudo -x /' + 'a'.repeat(N)));
+    fast('sh x 170k', () => hasCurlPipeShell('sh '.repeat(N / 3)));
+    fast('bash -c $( x', () => hasCurlPipeShell('bash -c "$('.repeat(N / 10)));
+    fast('iex ((((', () => hasCurlPipeShell('iex ' + '('.repeat(N)));
+    fast('/curl| x 87k', () => hasCurlPipeShell('/curl|'.repeat(N / 6)));
+    fast('sudo -curl| x 47k', () => hasCurlPipeShell('curl|' + 'sudo -curl|'.repeat(N / 11)));
+    fast('curl|sudo -a -a …', () => hasCurlPipeShell('curl|sudo ' + '-a '.repeat(N / 3)));
+    fast('line continuations', () => hasCurlPipeShell('curl \\\n'.repeat(N / 7) + '| python3 x'));
     fast('rm -rrr…', () => hasRmRf('rm -' + 'r'.repeat(N)));
     fast('rm x 170k', () => hasRmRf('rm '.repeat(N / 3)));
     fast('unterminated OSC', () => sanitizeText('\x1b]'.repeat(N / 2)));
@@ -158,7 +203,7 @@ describe('원격 텍스트 처리 시간 (ReDoS 회귀)', () => {
     fast('long whitespace line', () => sanitizeLine(' '.repeat(N) + 'x'));
   });
 
-  it('새 판정 함수는 예전 정규식과 같은 결과를 낸다', () => {
+  it('새 판정 함수는 예전 정규식이 잡던 것을 모두 잡는다', () => {
     const CURL_OLD = /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b/;
     const RM_OLD = /\brm\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*[fF][a-zA-Z]*|-[a-zA-Z]*[fF][a-zA-Z]*[rR][a-zA-Z]*|-[rR]\s+-[fF]|-[fF]\s+-[rR])\b/;
     const parts = ['curl', 'wget', ' ', '|', 'sh', 'bash', 'sudo ', '\n', 'x', 'rm', ' -', '-', 'r', 'R', 'f', 'F', 'a', '1', '_', '\t'];
@@ -167,7 +212,8 @@ describe('원격 텍스트 처리 시간 (ReDoS 회귀)', () => {
     for (let n = 0; n < 20_000; n++) {
       let s = '';
       for (let i = 0, len = 1 + rand(14); i < len; i++) s += parts[rand(parts.length)];
-      assert.equal(hasCurlPipeShell(s), CURL_OLD.test(s), JSON.stringify(s));
+      // the rule now catches more forms (U3), so only "old caught → new catches" must hold
+      if (CURL_OLD.test(s)) assert.ok(hasCurlPipeShell(s), JSON.stringify(s));
       assert.equal(hasRmRf(s), RM_OLD.test(s), JSON.stringify(s));
     }
   });

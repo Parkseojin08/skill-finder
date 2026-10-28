@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiGet, apiSend } from '../api.ts';
+import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
 import { FolderInput } from '../components/FolderInput.tsx';
 import { BREAKDOWN } from '../labels.ts';
 import type { Breakdown, Settings, SettingsResponse } from '../types.ts';
@@ -9,6 +10,7 @@ export function SettingsPage() {
   const [draft, setDraft] = useState<Settings | null>(null);
   const [token, setToken] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const apply = (r: SettingsResponse) => {
     setData(r);
@@ -118,6 +120,47 @@ export function SettingsPage() {
           지연 색인 마켓플레이스의 스킬 정보를 동기화 뒤에 조금씩 모읍니다. 검색하는 동안은 잠시 멈춰서 검색 속도에 영향을 주지 않습니다. 진행 상황은 마켓플레이스 화면에서
           보고 멈출 수 있습니다.
         </p>
+      </section>
+
+      <section>
+        <h2>검색 기록</h2>
+        <label className="chip">
+          <input type="checkbox" checked={draft.searchLog} onChange={(e) => setDraft({ ...draft, searchLog: e.target.checked })} />
+          검색 기록 남기기
+        </label>
+        <p className="muted small">
+          검색어, 결과·숨긴 결과 수, 걸린 시간, 열어 본 결과의 순위를 이 PC에만 저장합니다(밖으로 보내지 않음). 검색 품질을 확인하는 데 쓰고, 90일이 지나면 지웁니다.
+        </p>
+        <div className="row">
+          <span className="muted small">저장된 기록 {data.searchLogCount.toLocaleString()}개</span>
+          <button
+            type="button"
+            className="ghost"
+            disabled={data.searchLogCount === 0}
+            onClick={() => setConfirmClear(true)}
+          >
+            기록 지우기
+          </button>
+        </div>
+        {confirmClear && (
+          <ConfirmDialog
+            title="검색 기록 지우기"
+            confirmLabel="지우기"
+            danger
+            onCancel={() => setConfirmClear(false)}
+            onConfirm={() => {
+              setConfirmClear(false);
+              apiSend<SettingsResponse>('DELETE', '/search-log')
+                .then((r) => {
+                  setData(r);
+                  setMsg({ ok: true, text: '검색 기록을 지웠습니다' });
+                })
+                .catch((e) => setMsg({ ok: false, text: String(e.message ?? e) }));
+            }}
+          >
+            저장된 검색 기록 {data.searchLogCount.toLocaleString()}개를 모두 지웁니다. 되돌릴 수 없습니다.
+          </ConfirmDialog>
+        )}
       </section>
 
       <div className="row">

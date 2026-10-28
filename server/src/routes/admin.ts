@@ -33,8 +33,15 @@ export function adminRouter(ctx: AppContext): Router {
       pendingSkillIndex: store.listPluginsNeedingIndex(m.name).length,
     }));
 
+  const settingsResponse = () => ({
+    settings: getSettings(store),
+    githubToken: !!ctx.config.githubToken,
+    marketplaces: marketplaces(),
+    searchLogCount: store.countSearchLog(),
+  });
+
   r.get('/settings', (_req, res) => {
-    res.json({ settings: getSettings(store), githubToken: !!ctx.config.githubToken, marketplaces: marketplaces() });
+    res.json(settingsResponse());
   });
 
   r.put('/settings', (req, res) => {
@@ -61,7 +68,13 @@ export function adminRouter(ctx: AppContext): Router {
       saveGithubToken(parsed.data.githubToken || null);
       store.clearSearchCache();
     }
-    res.json({ settings: getSettings(store), githubToken: !!ctx.config.githubToken, marketplaces: marketplaces() });
+    res.json(settingsResponse());
+  });
+
+  // "기록 지우기" in the settings (U5-2)
+  r.delete('/search-log', (_req, res) => {
+    store.clearSearchLog();
+    res.json(settingsResponse());
   });
 
   r.get('/marketplaces', (_req, res) => {
