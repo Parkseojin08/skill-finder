@@ -82,14 +82,37 @@ export function matchTokens(text: string): string[] {
 export type LexicalMatch = { name: number; text: number; any: number; phrase: number };
 
 /**
+ * The query words a result is matched against:
+ * - With an English word present, Korean words are left out: the descriptions are English, so they could
+ *   never match and only lowered every share ("react 성능 최적화" capped at 1/3, below the tier's 0.5).
+ * - A query of stopwords only ("skill", "claude code") keeps them, or nothing would be matched at all.
+ */
+export function queryTokens(query: string): string[] {
+  const words = matchTokens(query);
+  const latin = words.filter((t) => !/\p{Script=Hangul}/u.test(t));
+  if (latin.length > 0) return [...new Set(latin)];
+  if (words.length > 0) return [...new Set(words)];
+  return [...new Set(genericWords(query))];
+}
+
+/**
+ * Stopwords that still name something in this domain. Dropped from queries normally, but searched when they
+ * are all there is ("skill", "claude code"); grammar words ("a the") are not.
+ */
+export const GENERIC_WORDS = new Set(['skill', 'skills', 'claude', 'code', 'tool', 'tools']);
+const genericWords = (text: string) => (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((t) => GENERIC_WORDS.has(t)).map(stem);
+/** Words a name or description is matched on: matchTokens plus the generic words a stopword-only query uses. */
+const textWords = (text: string) => new Set([...matchTokens(text), ...genericWords(text)]);
+
+/**
  * How directly a skill matches the query words: share of query words in the skill name, share in the
  * description/when_to_use, and whether the description contains the query as a phrase.
  */
 export function lexicalMatch(query: string, name: string, text: string): LexicalMatch {
-  const q = [...new Set(matchTokens(query))];
+  const q = queryTokens(query);
   if (q.length === 0) return { name: 0, text: 0, any: 0, phrase: 0 };
-  const nameSet = new Set(matchTokens(name.replace(/[-_.]+/g, ' ')));
-  const textSet = new Set(matchTokens(text));
+  const nameSet = textWords(name.replace(/[-_.]+/g, ' '));
+  const textSet = textWords(text);
   // a longer query word also matches as a prefix ("docker" in "dockerfile"); short ones ("pdf", "ui") must be exact
   const has = (set: Set<string>, t: string) => set.has(t) || (t.length >= 4 && [...set].some((w) => w.startsWith(t)));
   const cover = (set: Set<string>) => q.filter((t) => has(set, t)).length / q.length;

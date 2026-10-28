@@ -73,7 +73,7 @@ describe('README 기반 스킬 추천', () => {
     assert.equal(processTerm('the'), null);
     assert.equal(processTerm('2024'), null);
     assert.equal(processTerm('install'), null);
-    assert.deepEqual(processTerm('엑셀로'), ['spreadsheet', 'xlsx', 'excel']);
+    assert.deepEqual([...(processTerm('엑셀로') ?? [])].sort(), ['excel', 'spreadsheet', 'xlsx']);
   });
 
   it('겹친 단어가 1개뿐이어도 비슷한 스킬로 보여 준다', () => {

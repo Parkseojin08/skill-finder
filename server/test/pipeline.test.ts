@@ -420,12 +420,22 @@ describe('검색 개선 3단계 (사용자 결정 A·B·C·E)', () => {
 
   it('E: 한국어 검색어에는 사전으로 만든 영어 검색어를 제안한다', async () => {
     const { englishSuggestion } = await import('../src/search/koreanTerms.ts');
-    assert.equal(englishSuggestion('엑셀 정리해줘'), 'spreadsheet xlsx');
+    assert.equal(englishSuggestion('엑셀 정리해줘'), 'xlsx excel');
     assert.equal(englishSuggestion('c# 테스트'), 'testing', '한 글자 영어는 뺌');
     assert.equal(englishSuggestion('pdf에서 표 추출'), 'pdf table extract');
-    assert.equal(englishSuggestion('표준 문서'), 'document documentation', '표준은 표가 아님');
+    assert.equal(englishSuggestion('표준 문서'), 'document', '표준은 표가 아님, documentation은 document의 다른 형태라 뺌');
     assert.equal(englishSuggestion('extract tables'), null);
     assert.equal(englishSuggestion('아무말'), null);
+    // words written together are split into dictionary words, and what was left out is listed
+    const { koreanSuggestion } = await import('../src/search/koreanTerms.ts');
+    assert.deepEqual(koreanSuggestion('엑셀표추출해줘'), { query: 'xlsx excel table extract', dropped: [] });
+    assert.deepEqual(koreanSuggestion('커밋 메시지 작성'), { query: 'commit message', dropped: ['작성'] });
+    assert.deepEqual(koreanSuggestion('표준 문서'), { query: 'document', dropped: ['표준'] });
+    assert.equal(koreanSuggestion('서버리스'), null, '서버리스는 서버가 아님');
+    assert.equal(koreanSuggestion('문서화')?.query, 'documentation', '긴 사전 단어가 짧은 단어+어미보다 먼저');
+    assert.equal(koreanSuggestion('한글화'), null, '한글화는 한글 + 어미가 아님');
+    assert.equal(koreanSuggestion('스킬 만들기'), null, 'skill 하나뿐인 제안은 하지 않음');
+    assert.deepEqual(koreanSuggestion('pdf 요약 만들어줘'), { query: 'pdf summarize', dropped: [] }, '요청어는 빠진 단어로 안 보임');
     const ctx = ctxWithSkills();
     const results = resultsOf(await collect(deps(ctx), 'PDF에서 표 추출'));
     assert.equal(results.suggestQuery, 'pdf table extract');
@@ -488,7 +498,7 @@ describe('검색 순서 (1단계 속도)', () => {
     const ctx = ctxWithSkills();
     for (let run = 0; run < 2; run++) {
       const events = await collect(deps(ctx), 'pdf에서 표 추출');
-      assert.deepEqual(events[0], { type: 'suggest', query: 'pdf table extract' });
+      assert.deepEqual(events[0], { type: 'suggest', query: 'pdf table extract', dropped: [] });
       if (run === 1) assert.ok(events.some((e) => e.type === 'done' && e.cached));
     }
   });
@@ -499,6 +509,16 @@ describe('검색 순서 (1단계 속도)', () => {
     const events = await collect(deps(ctx), 'pdf tables');
     const first = events.find((e) => e.type === 'candidates') as Extract<SearchEvent, { type: 'candidates' }>;
     assert.equal(first.items.find((i) => i.name === 'pdf')?.installs, 217000);
+  });
+
+  it('불용어만 있는 검색어(skill)도 로컬 색인을 검색하고 "넓은 검색어"로 알린다', async () => {
+    const ctx = ctxWithSkills();
+    const row = buildSkillRow({ repo: 'anthropics/skills', sha: 'b'.repeat(40), dirPath: 'skills/skill-creator', raw: '---\nname: skill-creator\ndescription: Create new skills.\n---\n', tree: new TreeIndex([]), origin: 'generic', pluginId: null, extraFlags: [], install: null, lastCommitAt: null });
+    ctx.store.upsertSkill(row, '');
+    const results = resultsOf(await collect(deps(ctx), 'skill'));
+    assert.ok(results.items.some((i) => i.name === 'skill-creator'), results.items.map((i) => i.name).join(','));
+    assert.equal(results.broadQuery, true);
+    assert.equal(resultsOf(await collect(deps(ctx), 'pdf tables')).broadQuery, undefined);
   });
 
   it('여러 플러그인의 일치 스킬을 한 번에 찾아도 플러그인별로 찾은 것과 같다', () => {

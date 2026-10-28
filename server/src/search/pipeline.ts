@@ -8,13 +8,14 @@ import { planInstall } from '../install/plan.ts';
 import { getSettings } from '../settings.ts';
 import { classifySkillsShSource, type SkillsShHit } from '../sources/skillsSh.ts';
 import { pool, Semaphore, sleep, withTimeout } from '../util/limiter.ts';
-import { englishSuggestion } from './koreanTerms.ts';
+import { koreanSuggestion } from './koreanTerms.ts';
 import {
   blendRelevance,
   bm25ToRelevance,
   freshness,
+  GENERIC_WORDS,
   lexicalMatch,
-  matchTokens,
+  queryTokens,
   popularity,
   relevanceTier,
   totalScore,
@@ -49,7 +50,7 @@ export type SearchEvent =
   /** Progress of one source; `count` is how many hits it returned, `ms` how long it took. */
   | { type: 'source'; source: SourceName; state: SourceState; count?: number; ms?: number }
   /** An English query for a Korean one, offered as a button (dictionary-based, never applied by itself). */
-  | { type: 'suggest'; query: string }
+  | { type: 'suggest'; query: string; dropped: string[] }
   | { type: 'candidates'; items: ResultItem[] }
   | { type: 'warning'; source: string; message: string }
   | {
@@ -63,6 +64,8 @@ export type SearchEvent =
       hiddenNoMatch?: number;
       /** An English query for a Korean one, offered as a button (dictionary-based, never applied by itself). */
       suggestQuery?: string;
+      /** Every query word is a stopword ("skill"): searched as typed, so the results are broad. */
+      broadQuery?: boolean;
       /** Repositories named like a one-word query, shown above the skills. */
       repos?: RepoResult[];
     }
@@ -133,14 +136,27 @@ const STOPWORDS = new Set(
 );
 
 function ftsTokens(texts: string[]): string[] {
-  const tokens = new Set<string>();
-  for (const t of texts) {
-    const lower = t.toLowerCase();
-    for (const m of lower.matchAll(/[\p{L}\p{N}]+/gu)) if (m[0].length >= 2 && !STOPWORDS.has(m[0])) tokens.add(m[0]);
-    // ASCII runs inside mixed Korean words ("pdf에서" → "pdf")
-    for (const m of lower.matchAll(/[a-z0-9]+/g)) if (m[0].length >= 2 && !STOPWORDS.has(m[0])) tokens.add(m[0]);
-  }
+  const collect = (keepGeneric: boolean) => {
+    const tokens = new Set<string>();
+    const ok = (w: string) => w.length >= 2 && (!STOPWORDS.has(w) || (keepGeneric && GENERIC_WORDS.has(w)));
+    for (const t of texts) {
+      const lower = t.toLowerCase();
+      for (const m of lower.matchAll(/[\p{L}\p{N}]+/gu)) if (ok(m[0])) tokens.add(m[0]);
+      // ASCII runs inside mixed Korean words ("pdf에서" → "pdf")
+      for (const m of lower.matchAll(/[a-z0-9]+/g)) if (ok(m[0])) tokens.add(m[0]);
+    }
+    return tokens;
+  };
+  // a query of stopwords only ("skill", "claude code") is searched as typed; dropping them left no local search
+  let tokens = collect(false);
+  if (tokens.size === 0) tokens = collect(true);
   return [...tokens].slice(0, 24).map((t) => `"${t.replace(/"/g, '')}"`);
+}
+
+/** Every word of the query is a stopword and one names something ("skill", "tool use"): searched, but broad. */
+export function isBroadQuery(query: string): boolean {
+  const words = query.toLowerCase().match(/[a-z0-9]+/g)?.filter((w) => w.length >= 2) ?? [];
+  return words.every((w) => STOPWORDS.has(w)) && words.some((w) => GENERIC_WORDS.has(w)) && !/\p{Script=Hangul}/u.test(query);
 }
 
 /** OR-query of distinct tokens for FTS5 (each token quoted, so no FTS syntax leaks through). */
@@ -223,12 +239,13 @@ export async function runSearch(
   const sources = new Set<SourceKind>(filters.sources?.length ? filters.sources : ['marketplace', 'skillssh', 'github']);
   const maxRisk: RiskLevel = filters.maxRisk ?? 'medium';
   // `r` is the result-item shape; bump it when items gain fields so cached searches are rebuilt.
-  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: 12 });
+  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: 13 });
 
   // The English query for a Korean one goes out first, cached search or not: it comes from the query alone,
   // and the button helps most exactly when there is little else to show.
-  const suggestQuery = englishSuggestion(query);
-  if (suggestQuery) emit({ type: 'suggest', query: suggestQuery });
+  const suggestion = koreanSuggestion(query);
+  const suggestQuery = suggestion?.query ?? null;
+  if (suggestion) emit({ type: 'suggest', query: suggestion.query, dropped: suggestion.dropped });
 
   const cached = store.getCached(key, DAY_MS) as CachedSearch | undefined;
   const fresh = cached && !(cached.ttlMs && cached.cachedAt && Date.now() - cached.cachedAt > cached.ttlMs);
@@ -253,7 +270,7 @@ export async function runSearch(
     warn('query', '스킬 설명이 대부분 영어라 한국어 검색어는 결과가 적거나 부정확합니다. 영어로 검색해 보세요 (예: extract tables from pdf).');
   }
   /** Whether the query has an English word at all (a purely Korean one can't match the English descriptions word for word). */
-  const latinQuery = matchTokens(query).some((t) => /[a-z0-9]/.test(t));
+  const latinQuery = queryTokens(query).some((t) => /[a-z0-9]/.test(t));
   /** Above the risk level this search shows (default: high is hidden). Applied on every path that shows skills. */
   const tooRisky = (s: SkillRow) => RISK_ORDER[(s.risk_level as RiskLevel) ?? 'low'] > RISK_ORDER[maxRisk];
   // Only the first MATCH_TEXT_MAX chars of each field count, the spec's description limit: a keyword list
@@ -804,6 +821,7 @@ export async function runSearch(
       hiddenLowStars,
       minStars,
       hiddenNoMatch,
+      ...(isBroadQuery(query) ? { broadQuery: true } : {}),
       repos: repoCards,
       ...(suggestQuery ? { suggestQuery } : {}),
     };

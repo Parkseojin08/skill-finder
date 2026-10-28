@@ -55,7 +55,7 @@ export type SearchEvent =
   | { type: 'stage'; stage: 'collect' | 'enrich' | 'score'; message: string }
   | ({ type: 'source'; source: SearchSource } & SourceProgress)
   /** An English query for a Korean one, sent first (offered as a button). */
-  | { type: 'suggest'; query: string }
+  | { type: 'suggest'; query: string; /** Korean words the suggestion leaves out. */ dropped: string[] }
   | { type: 'candidates'; items: ResultItem[] }
   | { type: 'warning'; source: string; message: string }
   | {
@@ -69,6 +69,8 @@ export type SearchEvent =
       hiddenNoMatch?: number;
       /** An English query for a Korean one, offered as a button. */
       suggestQuery?: string;
+      /** Every query word is a generic one ("skill"): searched as typed, so the results are broad. */
+      broadQuery?: boolean;
       repos?: RepoResult[];
     }
   | { type: 'done'; cached: boolean; elapsedMs: number };
