@@ -314,6 +314,12 @@ export async function runSearch(
   // Lookups for candidates that are not in the local index start as soon as their source answers, so
   // skills.sh hits are being resolved while the (slower) GitHub code search is still running.
   const late: Candidate[] = [];
+  /**
+   * Opens once the local search has run. The network requests leave before it, but their answers (even instant
+   * cached ones) merge only after it, so the first cards are the local ones, as before.
+   */
+  let openLocalGate!: () => void;
+  const localGate = new Promise<void>((r) => (openLocalGate = r));
   /** Indexed candidates scored without a lookup: the top of the ranking, plus GitHub and repo-name hits that arrive after it was cut. */
   const ready: Candidate[] = [];
   let enrichStarted = false;
@@ -420,6 +426,7 @@ export async function runSearch(
     } catch {
       // GitHub search unavailable: repos already in the local index still count
     }
+    await localGate;
     for (const s of store.findSkillsByRepoName(word)) {
       if (s.repo && ![...repoInfo.keys()].some((k) => k.toLowerCase() === s.repo!.toLowerCase())) {
         repoInfo.set(s.repo, { stars: store.getRepo(s.repo)?.stars ?? null, description: null, topics: [] });
@@ -437,11 +444,11 @@ export async function runSearch(
     // Marketplace skills plus skills indexed straight from GitHub repos (popular-repo collection, earlier lookups).
     // Skills with every query word come first, then the rest of the OR matches ("find security holes": a rare
     // word alone, "hole" in Pi-hole, no longer outranks a skill about security holes). bm25 is the same in both.
-    const all = allMatch ? store.searchSkillsFts(allMatch, 120, filters.marketplaces) : [];
+    const all = (allMatch ? store.searchSkillsFts(allMatch, 120, filters.marketplaces) : []).filter((h) => h.skill.origin !== 'wellknown');
     const allIds = new Set(all.map((h) => h.skill.id));
-    const hits = [...all, ...store.searchSkillsFts(match, 120, filters.marketplaces).filter((h) => !allIds.has(h.skill.id))]
-      .filter((h) => h.skill.origin !== 'wellknown')
-      .slice(0, 120);
+    // 120 skills with every word already fill the list; the OR query would only be cut off
+    const rest = all.length >= 120 ? [] : store.searchSkillsFts(match, 120, filters.marketplaces);
+    const hits = [...all, ...rest.filter((h) => !allIds.has(h.skill.id) && h.skill.origin !== 'wellknown')].slice(0, 120);
     hits.forEach((h, i) => {
       const c = upsert(h.skill.id, () => blank(h.skill.id, h.skill));
       const plugin = lookup.plugin(h.skill.plugin_id);
@@ -452,10 +459,12 @@ export async function runSearch(
     });
     addRepoNameSkills();
     const pluginHits = store.searchPluginsFts(match, 20, filters.marketplaces);
+    // the matching skills of every indexed plugin hit in one query
+    const inPlugins = store.searchSkillsInPlugins(match, pluginHits.filter((h) => h.plugin.skills_indexed_at).map((h) => h.plugin.id), 3);
     pluginHits.forEach((h, i) => {
       const score = 0.9 * posScore(i, pluginHits.length);
       if (h.plugin.skills_indexed_at) {
-        let skills = store.searchSkillsInPlugin(match, h.plugin.id, 3).map((x) => x.skill);
+        let skills = (inPlugins.get(h.plugin.id) ?? []).map((x) => x.skill);
         if (skills.length === 0) skills = store.listSkillsByPlugin(h.plugin.id).slice(0, 2);
         for (const s of skills) {
           const c = upsert(s.id, () => blank(s.id, s));
@@ -480,6 +489,7 @@ export async function runSearch(
       warn('skillssh', `skills.sh 검색 실패 (${shortErr(err)})`);
       return { state: shortErr(err) === 'timeout' ? 'timeout' : 'failed', count: 0 };
     }
+    await localGate;
     hits.forEach((hit, i) => {
       const src = classifySkillsShSource(hit.source);
       if (!src) return;
@@ -503,6 +513,7 @@ export async function runSearch(
     }
     try {
       const items = await withTimeout(github.searchSkillFiles(queryKeywords(query)), 10_000, 'timeout');
+      await localGate;
       const hits: Candidate[] = [];
       items.forEach((it, i) => {
         const dir = it.path === 'SKILL.md' ? '' : it.path.replace(/\/SKILL\.md$/, '');
@@ -556,12 +567,18 @@ export async function runSearch(
 
   // The local index answers in a fraction of a second, so its cards show first; skills.sh (a few seconds) is
   // waited for; GitHub code search only up to GITHUB_COLLECT_WAIT_MS, and the repo-name search not at all.
-  const localDone = runSource('local', collectLocal);
+  // The requests are started before the local search (synchronous SQLite) instead of after it, which held them
+  // back for its whole duration (median ~250ms). They get as far as one event-loop turn takes them (sockets
+  // opening); their answers are read once the local search is done.
   const skillsShDone = runSource('skillssh', collectSkillsSh);
   const githubDone = runSource('github', collectGithub);
   const reposDone = word ? runSource('repos', collectRepos) : Promise.resolve();
-  await localDone;
-  emitCandidates();
+  await new Promise<void>((r) => setImmediate(r));
+  try {
+    await runSource('local', collectLocal).then(emitCandidates);
+  } finally {
+    openLocalGate(); // whatever happens, or the network sources would wait forever
+  }
   await skillsShDone;
   const githubInTime = await Promise.race([githubDone.then(() => true), sleep(Math.max(0, t0 + (deps.githubWaitMs ?? GITHUB_COLLECT_WAIT_MS) - Date.now())).then(() => false)]);
   timings.collect = Date.now() - t0;

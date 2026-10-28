@@ -444,6 +444,40 @@ describe('검색 개선 3단계 (사용자 결정 A·B·C·E)', () => {
   });
 });
 
+describe('검색 순서 (1단계 속도)', () => {
+  it('네트워크 요청이 먼저 출발하지만, 첫 카드는 로컬 결과만으로 그린다', async () => {
+    const ctx = ctxWithSkills();
+    const big = buildSkillRow({ repo: 'big/skills', sha: 'f'.repeat(40), dirPath: 'x', raw: '---\nname: pdf-wizard\ndescription: Pdf tables wizard.\n---\n', tree: new TreeIndex([]), origin: 'generic', pluginId: null, extraFlags: [], install: null, lastCommitAt: null });
+    ctx.store.upsertSkill(big, '');
+    const events: SearchEvent[] = [];
+    let skillsShStartedBeforeLocal = false;
+    const d = deps(ctx, {
+      // answers at once, as a cached response would; it names a skill only skills.sh knows about here
+      skillsSh: async () => {
+        skillsShStartedBeforeLocal = !events.some((e) => e.type === 'source' && e.source === 'local');
+        return [{ id: 'big/skills/pdf-wizard', source: 'big/skills', skillId: 'x', name: 'pdf-wizard', installs: 999999 }];
+      },
+    });
+    await runSearch(d, 'pdf tables', {}, (e) => events.push(e));
+    assert.ok(skillsShStartedBeforeLocal, 'skills.sh 요청이 로컬 검색보다 먼저 출발');
+    const first = events.find((e) => e.type === 'candidates') as Extract<SearchEvent, { type: 'candidates' }>;
+    assert.ok(first.items.every((i) => i.installs !== 999999), '첫 카드에는 skills.sh 값이 섞이지 않음');
+    const final = events.filter((e) => e.type === 'results').at(-1) as Extract<SearchEvent, { type: 'results' }>;
+    assert.equal(final.items.find((i) => i.name === 'pdf-wizard')?.installs, 999999, '최종 결과에는 합류');
+  });
+
+  it('여러 플러그인의 일치 스킬을 한 번에 찾아도 플러그인별로 찾은 것과 같다', () => {
+    const ctx = ctxWithSkills();
+    const ids = ['document-skills@anthropic-agent-skills', 'risky@claude-community', 'pr-tools@claude-plugins-official'];
+    const all = ctx.store.searchSkillsInPlugins('"pdf" OR "review"', ids, 3);
+    for (const id of ids) {
+      const one = ctx.store.searchSkillsInPlugin('"pdf" OR "review"', id, 3).map((h) => h.skill.id);
+      assert.deepEqual((all.get(id) ?? []).map((h) => h.skill.id), one);
+    }
+    assert.ok((all.get('risky@claude-community') ?? []).length >= 2);
+  });
+});
+
 describe('위험 필터는 모든 경로에서 먼저', () => {
   it('임시 카드에도 위험 높음은 나오지 않는다', async () => {
     const ctx = ctxWithSkills();

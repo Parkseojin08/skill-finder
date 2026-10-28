@@ -31,4 +31,8 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX skills_repo_nocase ON skills(repo COLLATE NOCASE);
   CREATE INDEX repos_full_name_nocase ON repos(full_name COLLATE NOCASE);
   `,
+  // One-word queries look up skills by repo name ("rea" → morluto/rea); a LIKE '%/rea' scan took ~48ms.
+  `
+  CREATE INDEX skills_repo_tail ON skills(lower(substr(repo, instr(repo, '/') + 1)));
+  `,
 ];

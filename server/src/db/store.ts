@@ -335,11 +335,14 @@ export class Store {
   }
 
   searchSkillsFts(match: string, limit: number, marketplaces?: string[]): FtsSkillHit[] {
+    // rank on the FTS index alone, then read only the kept rows (s.* holds files_json, up to tens of KB);
+    // rowid breaks bm25 ties so the order is stable
     const rows = this.all<SkillRow & { _bm25: number; _mp: string | null }>(
-      `SELECT s.*, bm25(skills_fts, 0, 5.0, 2.0, 1.0, 0.5) AS _bm25, p.marketplace AS _mp
-       FROM skills_fts JOIN skills s ON s.rowid = skills_fts.rowid
-       LEFT JOIN plugins p ON p.id = s.plugin_id
-       WHERE skills_fts MATCH ? ORDER BY _bm25 LIMIT ?`,
+      `WITH hit AS (SELECT rowid AS rid, bm25(skills_fts, 0, 5.0, 2.0, 1.0, 0.5) AS b FROM skills_fts
+         WHERE skills_fts MATCH ? ORDER BY b, rid LIMIT ?)
+       SELECT s.*, hit.b AS _bm25, p.marketplace AS _mp
+       FROM hit JOIN skills s ON s.rowid = hit.rid
+       LEFT JOIN plugins p ON p.id = s.plugin_id ORDER BY hit.b, hit.rid`,
       match,
       marketplaces ? limit * 4 : limit,
     );
@@ -349,10 +352,11 @@ export class Store {
 
   /** Skills of repos whose name (the part after the owner) equals `name`, e.g. "rea" → morluto/rea. */
   findSkillsByRepoName(name: string, limit = 30): SkillRow[] {
+    // same expression as the skills_repo_tail index (migration 3); a LIKE '%/name' scanned every row (~48ms)
     return this.all<SkillRow>(
-      `SELECT * FROM skills WHERE origin != 'wellknown' AND description IS NOT NULL
-       AND lower(repo) LIKE '%/' || lower(?) ESCAPE '\\' LIMIT ?`,
-      name.replace(/[\\%_]/g, (c) => `\\${c}`),
+      `SELECT * FROM skills WHERE lower(substr(repo, instr(repo, '/') + 1)) = ?
+       AND origin != 'wellknown' AND description IS NOT NULL LIMIT ?`,
+      name.toLowerCase(),
       limit,
     );
   }
@@ -376,15 +380,33 @@ export class Store {
 
   /** FTS restricted to one plugin's skills; used to pick the matching skills of a lazily indexed plugin. */
   searchSkillsInPlugin(match: string, pluginId: string, limit: number): FtsSkillHit[] {
+    return this.searchSkillsInPlugins(match, [pluginId], limit).get(pluginId) ?? [];
+  }
+
+  /**
+   * The best `limit` matches in each of several plugins with one full-text pass (one pass per plugin cost
+   * ~15–20ms each, 20 plugins per search). Ids go in as one JSON array; rowids never leave SQL (node:sqlite
+   * binds JS numbers as REAL, which an FTS rowid comparison silently ignores).
+   */
+  searchSkillsInPlugins(match: string, pluginIds: string[], limit: number): Map<string, FtsSkillHit[]> {
+    const out = new Map<string, FtsSkillHit[]>();
+    if (pluginIds.length === 0) return out;
     const rows = this.all<SkillRow & { _bm25: number }>(
-      `SELECT s.*, bm25(skills_fts, 0, 5.0, 2.0, 1.0, 0.5) AS _bm25
-       FROM skills_fts JOIN skills s ON s.rowid = skills_fts.rowid
-       WHERE skills_fts MATCH ? AND s.plugin_id = ? ORDER BY _bm25 LIMIT ?`,
+      `WITH hit AS (SELECT skills_fts.rowid AS rid, bm25(skills_fts, 0, 5.0, 2.0, 1.0, 0.5) AS b, s.plugin_id AS pid
+         FROM skills_fts JOIN skills s ON s.rowid = skills_fts.rowid
+         WHERE skills_fts MATCH ? AND s.plugin_id IN (SELECT value FROM json_each(?))),
+       top AS (SELECT rid, b, pid, ROW_NUMBER() OVER (PARTITION BY pid ORDER BY b, rid) AS rn FROM hit)
+       SELECT s.*, top.b AS _bm25 FROM top JOIN skills s ON s.rowid = top.rid WHERE top.rn <= ? ORDER BY top.pid, top.b, top.rid`,
       match,
-      pluginId,
+      JSON.stringify(pluginIds),
       limit,
     );
-    return rows.map(({ _bm25, ...skill }) => ({ skill: skill as SkillRow, bm25: _bm25 }));
+    for (const { _bm25, ...skill } of rows) {
+      const list = out.get(skill.plugin_id!) ?? [];
+      list.push({ skill: skill as SkillRow, bm25: _bm25 });
+      out.set(skill.plugin_id!, list);
+    }
+    return out;
   }
 
   // ---- repos
