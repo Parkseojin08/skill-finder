@@ -30,7 +30,8 @@ const MAX_REPOS = 150;
 /** Without a star filter the search would be every repo with a matching topic; keep a floor. */
 const MIN_STARS_FLOOR = 1000;
 
-type State = { lastRunAt: string | null; repos: Record<string, { checkedAt: string; skills: number }> };
+/** Per repo: when it was last checked, its skill count, and the head commit indexed then (so an unchanged repo is not read again). */
+type State = { lastRunAt: string | null; repos: Record<string, { checkedAt: string; skills: number; sha?: string }> };
 
 export function popularState(ctx: AppContext): State {
   return ctx.store.getSetting<State>(STATE_KEY) ?? { lastRunAt: null, repos: {} };
@@ -52,11 +53,15 @@ export async function collectPopularRepos(ctx: AppContext, ctl: JobControl, back
     }
   }
   const now = Date.now();
-  const due = [...found]
+  const top = [...found]
     .sort((a, b) => b[1] - a[1])
     .slice(0, MAX_REPOS)
-    .map(([repo]) => repo)
-    .filter((repo) => force || !state.repos[repo] || now - Date.parse(state.repos[repo].checkedAt) > RECHECK_MS);
+    .map(([repo]) => repo);
+  // Repos with enough stars that only a lookup or two put into the index (a skills.sh or code-search hit):
+  // index them whole once, so their other skills can be found too.
+  const known = new Set([...top, ...Object.keys(state.repos)].map((r) => r.toLowerCase()));
+  const partial = ctx.store.listReposWithGithubSkills(minStars).filter((r) => !known.has(r.toLowerCase()));
+  const due = [...top, ...partial].filter((repo) => force || !state.repos[repo] || now - Date.parse(state.repos[repo].checkedAt) > RECHECK_MS);
   ctl.addTotal(due.length);
 
   // 2. index their skills (yields to searches when running in the background)
@@ -67,8 +72,9 @@ export async function collectPopularRepos(ctx: AppContext, ctl: JobControl, back
       await ctl.checkpoint();
       while (background && searchActivity.busy() && !ctl.cancelled) await sleep(500);
       try {
-        const skills = await ctx.indexer.indexRepo(repo);
-        state.repos[repo] = { checkedAt: new Date().toISOString(), skills };
+        const prev = state.repos[repo];
+        const r = await ctx.indexer.indexRepo(repo, { unchangedSince: force ? null : prev?.sha });
+        state.repos[repo] = { checkedAt: new Date().toISOString(), skills: r.unchanged ? (prev?.skills ?? 0) : r.skills, ...(r.sha ? { sha: r.sha } : {}) };
         ctl.tick();
       } catch (err) {
         ctl.tick(`${repo}: ${String((err as Error).message ?? err).slice(0, 200)}`);

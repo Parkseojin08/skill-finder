@@ -376,7 +376,7 @@ describe('이름으로 찾기 (한 단어 검색)', () => {
     const ctx = ctxWithSkills();
     ctx.store.setSetting('app', { minStars: 0 });
     ctx.github.searchRepos = async () => [{ repo: 'facebook/react', stars: 240000, description: 'UI library', topics: [] }];
-    ctx.indexer.indexRepo = async () => 0;
+    ctx.indexer.indexRepo = async () => ({ skills: 0, sha: 'x', unchanged: false, removed: 0 });
     const results = resultsOf(await collect(deps(ctx), 'react'));
     assert.deepEqual(results.repos, []);
   });

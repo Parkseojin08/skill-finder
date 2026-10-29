@@ -79,7 +79,7 @@ function weightedTokens(text: string): Array<[string, number]> {
       if (COMPOUND_NAMES.has(tok.toLowerCase())) return [[tok, 1]];
       const parts = tok
         .replace(/([a-z])([A-Z])/g, '$1 $2')
-        .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+        .replace(/([A-Z])(?=[A-Z][a-z])/g, '$1 ') // XMLParser → XML Parser (a lookahead: `[A-Z]+` rescanned every capital)
         .split(' ');
       return parts.length > 1 ? [[tok, 1], ...parts.map((p): [string, number] => [p, PART_FACTOR])] : [[tok, 1]];
     });
@@ -116,17 +116,49 @@ export function findReadme(projectPath: unknown): string {
   return file;
 }
 
+const TAG = /<[^<>]*>/g;
+// the closing #s are trimmed by atxText: `(.*?)\s*#*\s*$` backtracked over long runs of spaces and #s
+const ATX = /^\s{0,3}(#{1,6})\s+(.*)$/;
+
+/** An ATX heading's text without its closing #s ("## Setup ##" → "Setup"). */
+function atxText(s: string): string {
+  let end = s.trimEnd().length;
+  while (end > 0 && s[end - 1] === '#') end--;
+  return s.slice(0, end).trimEnd();
+}
+
+/**
+ * Drops `<!-- … -->` comments; an unclosed one stays, as with the regex this replaces. A regex had to rescan
+ * the rest of the file from every unclosed "<!--" (quadratic); indexOf moves forward only.
+ */
+function stripHtmlComments(s: string): string {
+  let out = '';
+  let from = 0;
+  for (;;) {
+    const open = s.indexOf('<!--', from);
+    const close = open < 0 ? -1 : s.indexOf('-->', open + 4);
+    if (close < 0) return out + s.slice(from);
+    out += s.slice(from, open);
+    from = close + 3;
+  }
+}
+
 export type ReadmeInfo = { title: string; intro: string; features: string[]; headings: string[]; body: string[]; langs: string[] };
 
-/** Inline markdown → plain text: images (badges) and inline HTML dropped, links reduced to their text. */
+/**
+ * Inline markdown → plain text: images (badges) and inline HTML dropped, links reduced to their text.
+ * Bracket and tag contents exclude their own opening character, so a match that fails stops at the next
+ * opener: with `[^\]]*` a README of "[" or "<" repeated (no closers) took quadratic time. A link target may
+ * hold one level of parentheses (`wiki/Foo_(bar)`, `a_(1).svg`), each pair scanned once.
+ */
 function inlineText(s: string): string {
   return s
-    .replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g, ' ') // linked badge
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ') // image
-    .replace(/!\[[^\]]*\]\[[^\]]*\]/g, ' ') // reference image
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // link
-    .replace(/\[([^\]]*)\]\[[^\]]*\]/g, '$1') // reference link
-    .replace(/<[^>]*>/g, ' ')
+    .replace(/\[!\[[^[\]]*\]\((?:[^()]|\([^()]*\))*\)\]\((?:[^()]|\([^()]*\))*\)/g, ' ') // linked badge
+    .replace(/!\[[^[\]]*\]\((?:[^()]|\([^()]*\))*\)/g, ' ') // image
+    .replace(/!\[[^[\]]*\]\[[^[\]]*\]/g, ' ') // reference image
+    .replace(/\[([^[\]]*)\]\((?:[^()]|\([^()]*\))*\)/g, '$1') // link
+    .replace(/\[([^[\]]*)\]\[[^[\]]*\]/g, '$1') // reference link
+    .replace(TAG, ' ')
     .replace(/\b(?:https?:\/\/|www\.)\S+/gi, ' ') // bare URLs ("https", "github", "com" are not topics)
     .replace(/&[a-z]+;|&#\d+;/gi, ' ')
     .replace(/`([^`]*)`/g, '$1')
@@ -143,16 +175,13 @@ function inlineText(s: string): string {
 export function extractReadme(md: string, fallbackTitle: string): ReadmeInfo {
   const out: ReadmeInfo = { title: '', intro: '', features: [], headings: [], body: [], langs: [] };
   // HTML comments are maintainer notes, not content (one became the "intro" of react-markdown's README).
-  const lines = md
-    .replace(/\r\n?/g, '\n')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .split('\n');
+  const lines = stripHtmlComments(md.replace(/\r\n?/g, '\n')).split('\n');
   let section = '';
   let para: string[] = [];
   let list: string[] = [];
 
   const addText = (raw: string, html = false) => {
-    const text = html ? inlineText(raw.replace(/<[^>]*>/g, ' ')) : inlineText(raw);
+    const text = html ? inlineText(raw.replace(TAG, ' ')) : inlineText(raw);
     if (text.length < CONFIG.minParagraphChars) return; // badge rows and short lines
     if (!out.intro) out.intro = text;
     else out.body.push(text);
@@ -191,9 +220,9 @@ export function extractReadme(md: string, fallbackTitle: string): ReadmeInfo {
       }
       continue;
     }
-    const atx = line.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/);
+    const atx = line.match(ATX);
     if (atx) {
-      heading(atx[1].length, atx[2]);
+      heading(atx[1].length, atxText(atx[2]));
       continue;
     }
     const next = lines[i + 1] ?? '';

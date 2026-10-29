@@ -124,6 +124,38 @@ describe('README 기반 스킬 추천', () => {
     );
   });
 
+  it('1MB 가까운 악성 README도 바로 처리한다 (정규식 회귀)', () => {
+    const N = 1024 * 1024 - 16;
+    for (const [label, md] of [
+      ['[ x', '['.repeat(N)],
+      ['![ x', '!['.repeat(N / 2)],
+      ['[a]( x', '[a]('.repeat(N / 4)],
+      ['[a](( x', '[a](('.repeat(N / 5)],
+      ['[a](b(c) x', '[a](b(c)'.repeat(N / 8)],
+      ['< x', '<'.repeat(N)],
+      ['<!-- x', '<!--'.repeat(N / 4)],
+      ['# + spaces', '# a' + ' '.repeat(N) + 'b'],
+      ['# + #s', '# a ' + '#'.repeat(N) + 'b'],
+      ['CAPS', 'A'.repeat(N)],
+    ] as const) {
+      const t = performance.now();
+      termWeights(extractReadme(md, 'x'));
+      const ms = performance.now() - t;
+      assert.ok(ms < 1000, `${label}: ${ms.toFixed(0)}ms`);
+    }
+  });
+
+  it('제목 끝 #, 닫히지 않은 주석, 대문자 약어 분리는 예전과 같다', () => {
+    const info = extractReadme('# Setup ##\n\n## C#\n\n<!-- note -->Intro paragraph that is long enough here.\n\n<!-- an open comment, long enough to count\n', 'x');
+    assert.equal(info.title, 'Setup');
+    assert.deepEqual(info.headings, ['C']);
+    assert.equal(info.intro, 'Intro paragraph that is long enough here.');
+    assert.deepEqual(info.body, ['<!-- an open comment, long enough to count'], '닫히지 않은 주석은 지우지 않음');
+    assert.deepEqual(tokenize('XMLParser'), ['XMLParser', 'XML', 'Parser']);
+    const paren = extractReadme('# t\n\n![Build](https://x/a_(1).svg) See [Foo](https://en.wikipedia.org/wiki/Foo_(bar)) for the background story.\n', 'x');
+    assert.equal(paren.intro, 'See Foo for the background story.', '괄호가 든 주소도 링크·이미지로 처리');
+  });
+
   it('오류: 상대 경로, 파일 경로, README 없음, 1MB 초과', () => {
     assert.throws(() => findReadme('relative/path'), { code: 'INVALID_PATH' });
     assert.throws(() => findReadme(join(project('kvstore'), 'README.md')), { code: 'INVALID_PATH' });

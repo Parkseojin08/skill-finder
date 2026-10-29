@@ -16,6 +16,24 @@ export type RiskFlag =
 
 export type RiskLevel = 'low' | 'medium' | 'high';
 
+/**
+ * Bumped whenever a rule reading the SKILL.md text changes, so rows checked under older rules are checked
+ * again (stored per row, and part of the search cache key). 2: the wider download-and-run rule (U3).
+ */
+export const RISK_RULES_VERSION = 2;
+
+/** Flags that come from the SKILL.md text; the others come from the file list or the plugin. */
+export const TEXT_RISK_FLAGS: ReadonlySet<RiskFlag> = new Set<RiskFlag>([
+  'preapprovedBash',
+  'unscopedBash',
+  'shellInjection',
+  'skillHooks',
+  'pluginRootDependency',
+  'curlPipeShell',
+  'rmRf',
+  'unscanned',
+]);
+
 export type PluginSignals = { hooks: boolean; mcp: boolean; bin: boolean; monitors: boolean };
 
 const SCRIPT_EXT = /\.(sh|bash|zsh|py|js|mjs|cjs|ts|rb|pl|ps1|bat|cmd|exe)$/i;
@@ -25,7 +43,7 @@ const SHELL_BLOCK = /^[ \t]*```!/m;
 // they replace (`\b(curl|wget)\b[^\n|]*\|…sh` and a nested-`[a-zA-Z]*` rm -rf) took 46s and 207s on a
 // crafted 512KB file, blocking the whole server. They catch everything those regexes did (fuzzed) and, since
 // the search debate (U3, user decision), the other common download-and-run forms too. Rows indexed before that
-// keep their old flags until their repo is indexed again (SKILL.md text is not stored to re-check).
+// are checked again in the background (tasks.ts recheckRiskRules, RISK_RULES_VERSION).
 const DOWNLOADER = /\b(?:curl|wget|irm|iwr|invoke-webrequest|invoke-restmethod)\b/i;
 // sh-like shells run stdin whatever follows; python/node/perl/ruby only when the command ends there
 // (`| python3 -`): `| python -m json.tool` just formats the output, and `| curl | node |` is a markdown table.

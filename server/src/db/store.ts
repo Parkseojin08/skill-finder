@@ -58,6 +58,8 @@ export type SkillRow = {
   quality_json: string | null;
   risk_json: string | null;
   risk_level: string | null;
+  /** RISK_RULES_VERSION the risk flags were computed with (null: before versions). */
+  risk_rules?: number | null;
   last_commit_at: string | null;
   fetched_at: string | null;
   files_json: string | null;
@@ -269,6 +271,16 @@ export class Store {
     return this.all<SkillRow>('SELECT * FROM skills WHERE plugin_id = ? ORDER BY name', pluginId);
   }
 
+  /** Repos with at least `minStars` stars (stored count) that GitHub-indexed skills come from. */
+  listReposWithGithubSkills(minStars: number): string[] {
+    return this.all<{ full_name: string }>(
+      `SELECT r.full_name FROM repos r WHERE r.stars >= ?
+         AND EXISTS (SELECT 1 FROM skills s WHERE s.repo = r.full_name COLLATE NOCASE AND s.origin = 'generic')
+       ORDER BY r.stars DESC`,
+      minStars,
+    ).map((r) => r.full_name);
+  }
+
   findSkillsByRepo(repo: string): SkillRow[] {
     return this.all<SkillRow>('SELECT * FROM skills WHERE repo = ? COLLATE NOCASE', repo);
   }
@@ -281,8 +293,8 @@ export class Store {
     this.run(
       `INSERT INTO skills (id, origin, plugin_id, repo, ref, dir_path, name, description, when_to_use, frontmatter_json,
          body_lines, skill_md_sha256, name_desc_sha256, installs, quality_json, risk_json, risk_level, last_commit_at,
-         fetched_at, files_json, install_json, installs_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         fetched_at, files_json, install_json, installs_at, risk_rules)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET origin = excluded.origin, plugin_id = COALESCE(excluded.plugin_id, skills.plugin_id),
          repo = excluded.repo, ref = excluded.ref, dir_path = excluded.dir_path, name = excluded.name,
          description = excluded.description, when_to_use = excluded.when_to_use, frontmatter_json = excluded.frontmatter_json,
@@ -291,7 +303,8 @@ export class Store {
          quality_json = excluded.quality_json, risk_json = excluded.risk_json, risk_level = excluded.risk_level,
          last_commit_at = excluded.last_commit_at, fetched_at = excluded.fetched_at, files_json = excluded.files_json,
          install_json = COALESCE(excluded.install_json, skills.install_json),
-         installs_at = CASE WHEN excluded.installs IS NOT NULL THEN excluded.installs_at ELSE skills.installs_at END`,
+         installs_at = CASE WHEN excluded.installs IS NOT NULL THEN excluded.installs_at ELSE skills.installs_at END,
+         risk_rules = excluded.risk_rules`,
       s.id,
       s.origin,
       s.plugin_id,
@@ -314,6 +327,7 @@ export class Store {
       s.files_json,
       s.install_json,
       s.installs != null ? new Date().toISOString() : null,
+      s.risk_rules ?? null,
     );
     const rowid = this.get<{ rowid: number }>('SELECT rowid FROM skills WHERE id = ?', s.id)!.rowid;
     this.run('DELETE FROM skills_fts WHERE rowid = ?', rowid);
@@ -328,9 +342,39 @@ export class Store {
     );
   }
 
+  /** Rows from GitHub checked under risk rules older than `version`, after `afterId` in id order. */
+  listSkillsForRiskRecheck(version: number, afterId: string, limit: number): SkillRow[] {
+    return this.all<SkillRow>(
+      `SELECT * FROM skills WHERE (risk_rules IS NULL OR risk_rules < ?) AND repo IS NOT NULL AND ref IS NOT NULL
+         AND dir_path IS NOT NULL AND id > ? ORDER BY id LIMIT ?`,
+      version,
+      afterId,
+      limit,
+    );
+  }
+
+  /** Updates the risk of a row still built from the SKILL.md with hash `sha`; false when it changed meanwhile. */
+  setSkillRisk(id: string, sha: string, riskJson: string, riskLevel: string, version: number): boolean {
+    const r = this.run('UPDATE skills SET risk_json = ?, risk_level = ?, risk_rules = ? WHERE id = ? AND skill_md_sha256 = ?', riskJson, riskLevel, version, id, sha);
+    return Number(r.changes) > 0;
+  }
+
   /** The latest count wins, even when lower (U4): skills.sh counts can drop, and the highest ever seen stuck forever. */
   setSkillInstalls(id: string, installs: number, at = new Date().toISOString()): void {
     this.run('UPDATE skills SET installs = ?, installs_at = ? WHERE id = ?', installs, at, id);
+  }
+
+  /** Deletes these skill rows except those an install was logged for (the installed page still points at them). */
+  deleteSkillsUnlessInstalled(ids: string[]): number {
+    return this.transaction(() => {
+      let n = 0;
+      for (const id of ids) {
+        if (this.get('SELECT 1 FROM install_log WHERE skill_id = ? LIMIT 1', id)) continue;
+        this.deleteSkill(id);
+        n++;
+      }
+      return n;
+    });
   }
 
   deleteSkill(id: string): void {

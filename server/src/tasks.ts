@@ -1,5 +1,7 @@
+import { RISK_RULES_VERSION } from './analyze/risk.ts';
 import type { AppContext } from './context.ts';
-import { PluginUnavailableError } from './indexer.ts';
+import { skillMdPath } from './discovery/tree.ts';
+import { PluginUnavailableError, recheckRisk } from './indexer.ts';
 import type { Job, JobControl } from './jobs.ts';
 import { GRAPHQL_BATCH } from './sources/github.ts';
 import { syncMarketplace } from './sources/marketplace.ts';
@@ -91,6 +93,57 @@ export async function refreshRepoMeta(ctx: AppContext): Promise<number> {
     repoMetaRunning = false;
   }
   return stored;
+}
+
+const RISK_RECHECK_BATCH = 50;
+const RISK_RECHECK_EVERY_MS = 20 * 60 * 60 * 1000;
+/** Setting: when the last risk re-check pass finished. */
+const RISK_RECHECK_KEY = 'riskRecheckAt';
+let riskRecheckRunning = false;
+
+/**
+ * Checks stored skills again after the risk rules changed (RISK_RULES_VERSION): reads each SKILL.md at the
+ * commit it was indexed from (raw.githubusercontent.com, not the API quota) and recomputes the flags that come
+ * from the text. One pass in id order, 50 rows per transaction, stepping aside while a search runs. Rows that
+ * could not be read (gone, or a different file) keep their old version and are tried on the next pass, at most
+ * once a day (RISK_RECHECK_EVERY_MS) however often the app is restarted. `changed`: rows whose flags changed.
+ */
+export async function recheckRiskRules(ctx: AppContext, now = Date.now()): Promise<{ checked: number; changed: number }> {
+  const last = ctx.store.getSetting<string>(RISK_RECHECK_KEY);
+  if (riskRecheckRunning || (last && now - Date.parse(last) < RISK_RECHECK_EVERY_MS)) return { checked: 0, changed: 0 };
+  riskRecheckRunning = true;
+  let checked = 0;
+  let changed = 0;
+  try {
+    for (let after = ''; ; ) {
+      const rows = ctx.store.listSkillsForRiskRecheck(RISK_RULES_VERSION, after, RISK_RECHECK_BATCH);
+      if (rows.length === 0) break;
+      after = rows.at(-1)!.id;
+      const results = await pool(rows, 8, async (row) => {
+        while (searchActivity.busy()) await sleep(500); // raw downloads share their slots with searches
+        const r = await ctx.github.getRawText(row.repo!, row.ref!, skillMdPath(row.dir_path!));
+        return r.text == null ? null : recheckRisk(row, r.text);
+      });
+      ctx.store.transaction(() => {
+        rows.forEach((row, i) => {
+          const res = results[i];
+          const next = res?.ok ? res.value : null;
+          // only onto the same SKILL.md: a row indexed again meanwhile (new commit) already has current flags
+          if (!next || !ctx.store.setSkillRisk(row.id, row.skill_md_sha256!, next.risk_json, next.risk_level, RISK_RULES_VERSION)) return;
+          checked++;
+          if (next.risk_json !== row.risk_json) changed++;
+        });
+      });
+    }
+    ctx.store.setSetting(RISK_RECHECK_KEY, new Date(now).toISOString());
+  } catch (err) {
+    console.warn('[risk recheck]', String((err as Error).message ?? err).slice(0, 200));
+  } finally {
+    riskRecheckRunning = false;
+  }
+  if (changed > 0) ctx.store.clearSearchCache();
+  if (checked > 0) console.log(`[risk recheck] ${checked} skills checked, ${changed} changed`);
+  return { checked, changed };
 }
 
 /** Deletes search-log entries older than 90 days (U5-2; at startup and daily). */

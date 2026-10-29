@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { RISK_ORDER, type RiskLevel } from '../analyze/risk.ts';
+import { RISK_ORDER, RISK_RULES_VERSION, type RiskLevel } from '../analyze/risk.ts';
 import type { AppContext } from '../context.ts';
 import type { PluginRow, SkillRow } from '../db/store.ts';
 import { basename } from '../discovery/tree.ts';
@@ -243,7 +243,7 @@ export async function runSearch(
   const sources = new Set<SourceKind>(filters.sources?.length ? filters.sources : ['marketplace', 'skillssh', 'github']);
   const maxRisk: RiskLevel = filters.maxRisk ?? 'medium';
   // `r` is the result-item shape; bump it when items gain fields so cached searches are rebuilt.
-  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: 14 });
+  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: 14, k: RISK_RULES_VERSION });
 
   // The English query for a Korean one goes out first, cached search or not: it comes from the query alone,
   // and the button helps most exactly when there is little else to show.

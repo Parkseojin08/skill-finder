@@ -46,4 +46,8 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE events ADD COLUMN meta_json TEXT;
   CREATE INDEX events_kind_created ON events(kind, created_at);
   `,
+  // The risk-rules version a row was checked under (risk.ts RISK_RULES_VERSION); NULL = before versions (1).
+  `
+  ALTER TABLE skills ADD COLUMN risk_rules INTEGER;
+  `,
 ];

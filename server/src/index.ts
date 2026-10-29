@@ -1,7 +1,7 @@
 import { config, ensureDataDirs } from './config.ts';
 import { createApp } from './app.ts';
 import { createContext } from './bootstrap.ts';
-import { pruneSearchLog, refreshRepoMeta, REPO_META_EVERY_MS, startSync } from './tasks.ts';
+import { pruneSearchLog, recheckRiskRules, refreshRepoMeta, REPO_META_EVERY_MS, startSync } from './tasks.ts';
 
 const HOST = '127.0.0.1';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -18,6 +18,8 @@ const server = app.listen(config.port, HOST, () => {
   setInterval(() => startSync(ctx), DAY_MS).unref();
   pruneSearchLog(ctx);
   setInterval(() => pruneSearchLog(ctx), DAY_MS).unref();
+  void recheckRiskRules(ctx);
+  setInterval(() => void recheckRiskRules(ctx), DAY_MS).unref();
   void refreshRepoMeta(ctx);
   setInterval(() => void refreshRepoMeta(ctx), REPO_META_EVERY_MS).unref();
 });

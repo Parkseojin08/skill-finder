@@ -34,8 +34,9 @@ export function run(file: string, args: string[], opts: RunOptions = {}): Promis
         }, opts.timeoutMs)
       : null;
 
-    const onData = (stream: 'stdout' | 'stderr') => (chunk: Buffer) => {
-      const text = chunk.toString('utf8');
+    // decoded per stream, not per chunk: a multi-byte character (a Korean folder name in `git ls-tree`) split
+    // across two chunks would otherwise turn into replacement characters
+    const onData = (stream: 'stdout' | 'stderr') => (text: string) => {
       if (stream === 'stdout') stdout += text;
       else stderr += text;
       if (!opts.onLine) return;
@@ -46,6 +47,8 @@ export function run(file: string, args: string[], opts: RunOptions = {}): Promis
         if (clean) opts.onLine(clean, stream);
       }
     };
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
     child.stdout.on('data', onData('stdout'));
     child.stderr.on('data', onData('stderr'));
     child.on('error', (err) => {

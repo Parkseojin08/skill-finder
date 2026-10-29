@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { extractSkillMeta } from './analyze/frontmatter.ts';
 import { qualityWarnings } from './analyze/quality.ts';
-import { pluginRiskFlags, riskLevel, skillRiskFlags, type PluginSignals, type RiskFlag } from './analyze/risk.ts';
+import { pluginRiskFlags, RISK_RULES_VERSION, riskLevel, skillRiskFlags, TEXT_RISK_FLAGS, type PluginSignals, type RiskFlag } from './analyze/risk.ts';
 import { discoverRepo, parseJsonObject, PLUGIN_JSON, type RepoDiscovery } from './discovery/classifyRepo.ts';
 import { genericAcceptor, type GenericAcceptor } from './discovery/genericRules.ts';
 import { discoverPluginSkills, type MarketplaceEntry } from './discovery/pluginRules.ts';
@@ -75,8 +75,7 @@ export function buildSkillRow(a: BuildArgs): SkillRow {
         body: meta.body,
         hasHooks: meta.hasHooks,
         raw: a.raw,
-        // a download cut at the limit (a split multi-byte character at the end costs at most 3 bytes)
-        partial: meta.frontmatterTooLarge || Buffer.byteLength(a.raw) >= RAW_MAX_BYTES - 3,
+        partial: checkedInPart(meta, a.raw),
       }),
       ...a.extraFlags,
     ]),
@@ -103,6 +102,7 @@ export function buildSkillRow(a: BuildArgs): SkillRow {
     quality_json: JSON.stringify(qualityWarnings(meta, folderName)),
     risk_json: JSON.stringify(flags),
     risk_level: riskLevel(flags),
+    risk_rules: RISK_RULES_VERSION,
     last_commit_at: a.lastCommitAt,
     fetched_at: now(),
     files_json: JSON.stringify(stored),
@@ -110,12 +110,40 @@ export function buildSkillRow(a: BuildArgs): SkillRow {
   };
 }
 
+/** A download cut at the limit (a split multi-byte character at the end costs at most 3 bytes), or a frontmatter too large to parse. */
+const checkedInPart = (meta: { frontmatterTooLarge: boolean }, raw: string) => meta.frontmatterTooLarge || Buffer.byteLength(raw) >= RAW_MAX_BYTES - 3;
+
+/**
+ * A stored row's risk under the current rules, from its SKILL.md text: the text flags are computed again, the
+ * others (scripts from the file list, the plugin's own flags) are kept. Null when `raw` is not the file the row
+ * was built from (its hash differs), so nothing is judged on another version of the skill.
+ */
+export function recheckRisk(row: SkillRow, raw: string): { risk_json: string; risk_level: string } | null {
+  if (!row.skill_md_sha256 || sha256(raw.replace(/\r\n/g, '\n')) !== row.skill_md_sha256) return null;
+  const folderName = row.dir_path ? basename(row.dir_path) : (row.repo?.split('/')[1] ?? '');
+  const meta = extractSkillMeta(raw, folderName);
+  const fromText = skillRiskFlags({ files: [], allowedTools: meta.allowedTools, body: meta.body, hasHooks: meta.hasHooks, raw, partial: checkedInPart(meta, raw) });
+  const old = (row.risk_json ? JSON.parse(row.risk_json) : []) as RiskFlag[];
+  // the stored order is kept, so a row whose flags did not change is stored exactly as before
+  const flags = [...old.filter((f) => !TEXT_RISK_FLAGS.has(f) || fromText.includes(f)), ...fromText.filter((f) => !old.includes(f))];
+  return { risk_json: JSON.stringify(flags), risk_level: riskLevel(flags) };
+}
+
 export function pluginFtsText(p: PluginRow | null): string {
   if (!p) return '';
   return [p.name, p.display_name, p.description, p.category, p.keywords].filter(Boolean).join(' ');
 }
 
-type RepoSnapshot = { tree: RepoTree; index: TreeIndex; read: (path: string) => Promise<string | null> };
+/** Rows written per transaction when a whole repo is indexed. */
+const WRITE_BATCH = 50;
+
+/**
+ * `skills`: installable skills found (0 when `unchanged`); `removed`: rows deleted because their SKILL.md is gone.
+ * `sha`: the head commit, null when some skill could not be read (so the next run reads the repo again).
+ */
+export type RepoIndexResult = { skills: number; sha: string | null; unchanged: boolean; removed: number };
+
+type RepoSnapshot ={ tree: RepoTree; index: TreeIndex; read: (path: string) => Promise<string | null> };
 /** What single-skill lookups need from a repo: its tree, plugin layout, and the generic rules per folder. */
 type RepoLookup = { snap: RepoSnapshot; discovery: RepoDiscovery; generic: GenericAcceptor };
 
@@ -255,13 +283,21 @@ export class Indexer {
     return p;
   }
 
-  private async rowFromDiscovery(
+  private async rowFromDiscovery(repo: string, snap: RepoSnapshot, discovery: RepoDiscovery, dirPath: string, raw: string): Promise<SkillRow> {
+    const b = await this.buildFromDiscovery(repo, snap, discovery, dirPath, raw);
+    if ('existing' in b) return b.existing;
+    this.store.upsertSkill(b.row, b.text);
+    return this.store.getSkill(b.row.id)!;
+  }
+
+  /** The row for one discovered folder, unwritten; or the marketplace-indexed row already there, which wins. */
+  private async buildFromDiscovery(
     repo: string,
     snap: RepoSnapshot,
     discovery: RepoDiscovery,
     dirPath: string,
     raw: string,
-  ): Promise<SkillRow> {
+  ): Promise<{ row: SkillRow; text: string } | { existing: SkillRow }> {
     const plugin = discovery.plugins.find((p) => p.skillDirs.includes(dirPath)) ?? null;
     const install: RepoInstallInfo = {
       mode: discovery.mode,
@@ -286,9 +322,8 @@ export class Indexer {
     });
     const existing = this.store.getSkill(row.id);
     // A marketplace-indexed row for the same folder wins; only fill in what is new.
-    if (existing?.origin === 'plugin') return existing;
-    this.store.upsertSkill(row, plugin ? `${plugin.name}` : '');
-    return this.store.getSkill(row.id)!;
+    if (existing?.origin === 'plugin') return { existing };
+    return { row, text: plugin ? `${plugin.name}` : '' };
   }
 
   /**
@@ -359,21 +394,53 @@ export class Indexer {
   /**
    * Indexes every installable skill of one GitHub repo at its default branch (popular-repo collection):
    * marketplace/plugin layouts by their manifests, otherwise the skills CLI's generic rules. Rows already
-   * indexed from a registered marketplace are left as they are. Returns how many skills the repo has.
+   * indexed from a registered marketplace are left as they are.
+   * - `unchangedSince`: the head commit last indexed; when the head is still that commit nothing is read.
+   * - Rows are written 50 per transaction, yielding in between (20 autocommitted upserts took 111ms, one
+   *   transaction 4.9ms, and a big repo no longer holds the event loop while it is written).
+   * - After an index without failures, GitHub rows whose SKILL.md is no longer in the repo are deleted
+   *   (rows an install was logged for stay).
    */
-  async indexRepo(repo: string): Promise<number> {
-    const snap = await this.snapshot(repo, 'HEAD');
-    if (!snap.tree.entries.some((e) => e.path === 'SKILL.md' || e.path.endsWith('/SKILL.md'))) return 0;
+  async indexRepo(repo: string, opts: { unchangedSince?: string | null } = {}): Promise<RepoIndexResult> {
+    const head = await this.github.resolveRef(repo, null);
+    if (!head) throw new Error(`저장소를 찾을 수 없습니다: ${repo}`);
+    if (opts.unchangedSince && head.sha === opts.unchangedSince) return { skills: 0, sha: head.sha, unchanged: true, removed: 0 };
+    const snap = await this.snapshot(repo, head.sha);
+    if (!snap.tree.entries.some((e) => e.path === 'SKILL.md' || e.path.endsWith('/SKILL.md'))) {
+      return { skills: 0, sha: snap.tree.sha, unchanged: false, removed: this.removeVanished(repo, snap.index) };
+    }
     const discovery = await discoverRepo(snap.index, snap.read, genericValidator);
     const found: Array<{ dir: string; raw: string | null }> = [
       ...discovery.generic.map((g) => ({ dir: g.dirPath, raw: g.raw as string | null })),
       ...[...new Set(discovery.plugins.flatMap((p) => p.skillDirs))].map((dir) => ({ dir, raw: null })),
     ].slice(0, 500);
-    const rows = await pool(found, 8, async ({ dir, raw }) => {
+    const built = await pool(found, 8, async ({ dir, raw }) => {
       const text = raw ?? (await snap.read(skillMdPath(dir)));
-      return text == null ? null : this.rowFromDiscovery(repo, snap, discovery, dir, text);
+      return text == null ? null : this.buildFromDiscovery(repo, snap, discovery, dir, text);
     });
-    return rows.filter((r) => r?.ok && r.value).length;
+    const writes = built.flatMap((b) => (b?.ok && b.value && 'row' in b.value ? [b.value] : []));
+    for (let i = 0; i < writes.length; i += WRITE_BATCH) {
+      this.store.transaction(() => {
+        for (const w of writes.slice(i, i + WRITE_BATCH)) this.store.upsertSkill(w.row, w.text);
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const failed = built.some((b) => !b?.ok);
+    return {
+      skills: built.filter((b) => b?.ok && b.value).length,
+      sha: failed ? null : snap.tree.sha,
+      unchanged: false,
+      removed: failed ? 0 : this.removeVanished(repo, snap.index),
+    };
+  }
+
+  /** Deletes this repo's GitHub-indexed rows whose SKILL.md the (complete) tree no longer has. */
+  private removeVanished(repo: string, index: TreeIndex): number {
+    const gone = this.store
+      .findSkillsByRepo(repo)
+      .filter((s) => s.origin === 'generic' && s.dir_path != null && !index.hasFile(skillMdPath(s.dir_path)))
+      .map((s) => s.id);
+    return gone.length ? this.store.deleteSkillsUnlessInstalled(gone) : 0;
   }
 
   /** Placeholder row for a skills.sh hit served from a well-known endpoint (no preview in the MVP). */
