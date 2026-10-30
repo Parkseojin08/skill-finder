@@ -2,6 +2,7 @@ import { config, ensureDataDirs } from './config.ts';
 import { createApp } from './app.ts';
 import { createContext } from './bootstrap.ts';
 import { DataTooNewError } from './db/index.ts';
+import { startUpdateChecks } from './update.ts';
 import { pruneSearchLog, recheckRiskRules, refreshRepoMeta, relevelRisk, REPO_META_EVERY_MS, startSync } from './tasks.ts';
 
 const HOST = '127.0.0.1';
@@ -28,6 +29,7 @@ const server = app.listen(config.port, HOST, () => {
   pruneSearchLog(ctx);
   setInterval(() => pruneSearchLog(ctx), DAY_MS).unref();
   relevelRisk(ctx);
+  startUpdateChecks();
   void recheckRiskRules(ctx);
   setInterval(() => void recheckRiskRules(ctx), DAY_MS).unref();
   void refreshRepoMeta(ctx);

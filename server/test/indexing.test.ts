@@ -174,3 +174,24 @@ describe('데이터 버전', () => {
     assert.throws(() => openDb(path), DataTooNewError);
   });
 });
+
+describe('새 버전 알림', () => {
+  it('설치판에서만 내려받기 페이지를 보고, 더 새 버전일 때만 알린다', async () => {
+    const { checkForUpdate, newerVersion, updateInfo } = await import('../src/update.ts');
+    assert.ok(newerVersion('0.10.0', '0.9.9'));
+    assert.ok(!newerVersion('0.2.0', '0.2.0'));
+    const page = (body: unknown) => (async () => new Response(JSON.stringify(body))) as unknown as typeof fetch;
+    delete process.env.SKILL_FINDER_UPDATES;
+    assert.equal(await checkForUpdate(page({ version: '9.0.0' })), null, '개발 실행에서는 묻지 않음');
+    process.env.SKILL_FINDER_UPDATES = '1';
+    try {
+      await checkForUpdate(page({ version: 'x; rm' }));
+      assert.equal(updateInfo('0.1.0'), null, '형식이 아니면 무시');
+      await checkForUpdate(page({ version: '0.3.0' }));
+      assert.deepEqual(updateInfo('0.2.0'), { version: '0.3.0' });
+      assert.equal(updateInfo('0.3.0'), null);
+    } finally {
+      delete process.env.SKILL_FINDER_UPDATES;
+    }
+  });
+});

@@ -475,6 +475,11 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             </p>
           )}
           {health && !health.claudeVersion && <p className="warn-text small">Claude Code를 찾지 못해 플러그인 설치가 되지 않습니다.</p>}
+          {health?.update && (
+            <p className="state-on small" role="status">
+              새 버전({health.update.version})이 나왔습니다. 검은 Skill Finder 창을 닫았다가 바탕화면의 Skill Finder로 다시 켜면 자동으로 업데이트됩니다.
+            </p>
+          )}
           {githubToken === false && (
             // before the first search only (UI debate D-4); in results it stays in the folded notices (D:48)
             <p className="muted small">
