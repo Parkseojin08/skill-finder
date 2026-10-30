@@ -65,10 +65,24 @@ export function formatCommand(file: string, args: string[]): string {
   return [file, ...args].map((a) => (/^[A-Za-z0-9._@/:=-]+$/.test(a) ? a : `"${a}"`)).join(' ');
 }
 
+const VERSION_RETRY_MS = 60_000;
 let versionPromise: Promise<string | null> | null = null;
+let versionFailedAt = 0;
+/**
+ * `claude --version`, asked once. A failure is asked again after a minute: Claude Code installed while the app
+ * runs would otherwise show as missing until a restart.
+ */
 export function claudeVersion(): Promise<string | null> {
+  if (versionPromise && versionFailedAt && Date.now() - versionFailedAt >= VERSION_RETRY_MS) {
+    versionPromise = null;
+    if (cached === null) cached = undefined; // look for the binary again too
+  }
   versionPromise ??= runClaude(['--version'], { timeoutMs: 15_000 })
     .then((r) => (r.exitCode === 0 ? r.stdout.trim().split(/\s+/)[0] || null : null))
-    .catch(() => null);
+    .catch(() => null)
+    .then((v) => {
+      versionFailedAt = v ? 0 : Date.now();
+      return v;
+    });
   return versionPromise;
 }

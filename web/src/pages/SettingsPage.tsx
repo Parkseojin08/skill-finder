@@ -39,7 +39,7 @@ export function SettingsPage() {
   return (
     <div className="page settings">
       <h1>설정</h1>
-      {msg && <p className={msg.ok ? 'ok-box' : 'warn-box'}>{msg.text}</p>}
+      <div role="status">{msg && <p className={msg.ok ? 'ok-box' : 'warn-box'}>{msg.text}</p>}</div>
 
       <section>
         <h2>GitHub 토큰</h2>
@@ -54,7 +54,15 @@ export function SettingsPage() {
             save({ githubToken: token.trim() }, token.trim() ? '토큰을 .env에 저장했습니다' : '토큰을 지웠습니다').then(() => setToken(''));
           }}
         >
-          <input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="github_pat_… (비우고 저장하면 삭제)" autoComplete="off" spellCheck={false} />
+          <input
+            type="password"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="github_pat_… (비우고 저장하면 삭제)"
+            aria-label="GitHub 토큰"
+            autoComplete="off"
+            spellCheck={false}
+          />
           <button type="submit">저장</button>
         </form>
       </section>

@@ -84,6 +84,9 @@ export type InstallPlan = {
   pluginName?: string;
   marketplace?: { name: string; repo: string };
   repo?: string;
+  source?: string;
+  /** The commit a skills CLI install is pinned to (the one the risk check read). */
+  pinnedRef?: string;
   skillName?: string;
   reason?: string;
   disabled?: boolean;
@@ -122,7 +125,7 @@ export type SkillDetail = {
     description: string | null;
     marketplace: string;
     sourceKind: string;
-    skills: Array<{ id: string; name: string }>;
+    skills: Array<{ id: string; name: string; riskLevel: RiskLevel; riskFlags: string[] }>;
     hooks: boolean;
     mcp: boolean;
     bin: boolean;
@@ -181,7 +184,7 @@ export type Job = {
   finishedAt: string | null;
 };
 
-export type Health = { ok: boolean; node: string; claudeVersion: string | null; skillsCli: string; githubToken: boolean; plugins: number; skills: number };
+export type Health = { ok: boolean; appVersion: string | null; node: string; claudeVersion: string | null; skillsCli: string; githubToken: boolean; plugins: number; skills: number };
 
 export type InstalledResponse = {
   plugins: Array<{ id: string; version: string | null; scope: string; enabled: boolean | null; enabledWhere: string | null; installPath: string | null; projectPath: string | null; removeCommand: string | null }>;

@@ -32,6 +32,9 @@ export const QUALITY: Record<string, { label: string; meaning: string; info?: bo
 };
 
 export const RISK_LEVEL: Record<RiskLevel, string> = { low: '위험 낮음', medium: '주의', high: '위험 높음' };
+export const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2 };
+/** "Low" only means the rule check found no signal (UI debate 1-5). */
+export const LOW_RISK_NOTE = '위험 낮음은 규칙 검사에서 위험 신호를 찾지 못했다는 뜻이지, 안전하다는 보증이 아닙니다. 설치 전에 SKILL.md와 파일을 직접 확인하세요.';
 
 export const METHOD: Record<InstallMethod, string> = { plugin: '플러그인 설치', 'skills-cli': 'skills CLI 설치', 'manual-only': '수동 설치' };
 

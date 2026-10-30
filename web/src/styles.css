@@ -1359,6 +1359,13 @@ button.back:hover:not(:disabled) {
   font-weight: 700;
   color: var(--neon);
 }
+.plugin-skills li {
+  break-inside: avoid;
+}
+.plugin-skills .badge {
+  font-family: var(--font-sans);
+  vertical-align: middle;
+}
 .files-layout {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) 2fr;
@@ -1915,8 +1922,11 @@ dialog.confirm,
 button:not(.linkish):focus-visible,
 .chip:focus-within,
 .topbar nav a:focus-visible,
+.notices summary:focus-visible,
+a.badge:focus-visible,
 [data-slot='input-group']:focus-within {
   outline: 2px solid var(--focus);
+  /* inside the box: the cut corners clip anything drawn outside it */
   outline-offset: -3px;
 }
 

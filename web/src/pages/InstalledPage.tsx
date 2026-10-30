@@ -125,7 +125,7 @@ export function InstalledPage() {
           {loading ? '불러오는 중…' : '새로 고침'}
         </button>
       </form>
-      {msg && <p className={msg.ok ? 'ok-box' : 'warn-box'}>{msg.text}</p>}
+      <div role="status">{msg && <p className={msg.ok ? 'ok-box' : 'warn-box'}>{msg.text}</p>}</div>
       {confirming && (
         <ConfirmDialog title={`${confirming.label} 삭제`} confirmLabel="삭제" danger onConfirm={() => remove(confirming)} onCancel={() => setConfirming(null)}>
           <p>{confirming.detail}</p>
@@ -168,7 +168,7 @@ export function InstalledPage() {
                         {p.enabledWhere && <div className="muted small">{p.scope === 'user' ? '모든 프로젝트' : '해당 프로젝트에서'}</div>}
                       </td>
                       <td className="actions">
-                        <button type="button" className="ghost danger" disabled={busy !== null} onClick={() => removePlugin(p)}>
+                        <button type="button" className="ghost danger" disabled={busy !== null} onClick={() => removePlugin(p)} aria-label={`${p.id} 삭제`}>
                           {busy === key ? '삭제 중…' : '삭제'}
                         </button>
                       </td>
@@ -220,7 +220,7 @@ export function InstalledPage() {
                         <Description text={s.description} />
                       </td>
                       <td className="actions">
-                        <button type="button" className="ghost danger" disabled={busy !== null} onClick={() => removeSkill(s)}>
+                        <button type="button" className="ghost danger" disabled={busy !== null} onClick={() => removeSkill(s)} aria-label={`${s.name} 삭제`}>
                           {busy === key ? '삭제 중…' : '삭제'}
                         </button>
                       </td>

@@ -87,7 +87,7 @@ export function MarketplacesPage() {
     <div className="page">
       <h1>마켓플레이스</h1>
       <p className="muted">스킬을 찾아올 플러그인 마켓플레이스를 관리합니다. 즉시 색인은 동기화할 때 스킬까지 모으고, 지연 색인은 목록만 받아 두었다가 검색에 걸리거나 "스킬 수집"을 누를 때 모읍니다.</p>
-      {msg && <p className={msg.ok ? 'ok-box' : 'warn-box'}>{msg.text}</p>}
+      <div role="status">{msg && <p className={msg.ok ? 'ok-box' : 'warn-box'}>{msg.text}</p>}</div>
 
       <section>
         <h2>목록</h2>

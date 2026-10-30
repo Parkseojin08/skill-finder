@@ -8,6 +8,17 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * fetch rejects with a bare TypeError ("Failed to fetch") when the server is not there; say what that means.
+ * Aborts and every other error pass through unchanged.
+ */
+function request(input: string, init: RequestInit): Promise<Response> {
+  return fetch(input, init).catch((err: unknown) => {
+    if (err instanceof TypeError) throw new ApiError(`Skill Finder 서버에 연결하지 못했습니다. 검은 실행 창이 켜져 있는지 확인하세요. (${err.message})`, 0);
+    throw err;
+  });
+}
+
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -18,11 +29,11 @@ async function handle<T>(res: Response): Promise<T> {
 
 export function apiGet<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
   const qs = params ? new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '') as Array<[string, string]>).toString() : '';
-  return fetch(`/api${path}${qs ? `?${qs}` : ''}`, { headers: HEADERS }).then((r) => handle<T>(r));
+  return request(`/api${path}${qs ? `?${qs}` : ''}`, { headers: HEADERS }).then((r) => handle<T>(r));
 }
 
 export function apiSend<T>(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
-  return fetch(`/api${path}`, {
+  return request(`/api${path}`, {
     method,
     headers: { ...HEADERS, 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -31,7 +42,7 @@ export function apiSend<T>(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: st
 
 /** POSTs and reads an NDJSON response, calling onEvent per line. */
 export async function streamNdjson<E>(path: string, body: unknown, onEvent: (e: E) => void, signal?: AbortSignal): Promise<void> {
-  const res = await fetch(`/api${path}`, {
+  const res = await request(`/api${path}`, {
     method: 'POST',
     headers: { ...HEADERS, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

@@ -5,7 +5,7 @@ import { FacetPanel, facetCount, matchFacets, NO_FACETS, type Facets } from '../
 import { RepoCard } from '../components/RepoCard.tsx';
 import { ResultCard } from '../components/ResultCard.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
-import { STAGES } from '../labels.ts';
+import { RISK_RANK, STAGES } from '../labels.ts';
 import type { Health, Job, OpenedFrom, ResultItem, RiskLevel, SearchEvent, SearchSource, SettingsResponse, SourceKind, SourceProgress } from '../types.ts';
 
 const EXAMPLES = ['pull request review', 'extract tables from pdf', 'react performance', 'postgres migration review', 'commit message'];
@@ -95,7 +95,6 @@ function foldByRepo(sorted: ResultItem[], open: Set<string>, word: string | null
 
 /** Name key for same-name folding, as the README recommendation groups copies ("PDF_Tools" = "pdf-tools"). */
 const nameKey = (item: ResultItem) => item.name.normalize('NFC').toLowerCase().replace(/[\s_]+/g, '-');
-const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2 };
 type Row = { item: ResultItem; more?: { repo: string; count: number }; same?: { key: string; count: number; riskier: boolean } };
 
 /**
@@ -173,7 +172,9 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       try {
         const [h, j] = await Promise.all([apiGet<Health>('/health'), apiGet<{ jobs: Job[] }>('/jobs')]);
         setHealth(h);
-        const running = j.jobs.find((x) => x.kind === 'sync' && (x.status === 'running' || x.status === 'paused')) ?? null;
+        // the popular-repo collection runs on after the sync (about a minute on a first run); show it too
+        const active = j.jobs.filter((x) => x.status === 'running' || x.status === 'paused');
+        const running = active.find((x) => x.kind === 'sync') ?? active.find((x) => x.kind === 'collect') ?? null;
         setSyncJob(running);
         if (running) timer = setTimeout(poll, 3000);
       } catch {
@@ -396,11 +397,14 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
         </div>
       </div>
 
-      {syncJob && (
-        <p className="status-line muted small">
-          <span className="spinner" aria-hidden="true" /> 마켓플레이스 동기화 중 {syncJob.done}/{syncJob.total || '?'} · 색인 스킬 {health?.skills ?? 0}개
-        </p>
-      )}
+      <div role="status">
+        {syncJob && (
+          <p className="status-line muted small">
+            <span className="spinner" aria-hidden="true" /> {syncJob.kind === 'collect' ? '인기 저장소의 스킬 모으는 중' : '마켓플레이스 동기화 중'} {syncJob.done}/
+            {syncJob.total || '?'} · 색인 스킬 {(health?.skills ?? 0).toLocaleString()}개
+          </p>
+        )}
+      </div>
 
       {status === 'idle' && (
         <div className="empty">
@@ -422,6 +426,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
           </div>
           {health && (
             <p className="sysline">
+              {health.appVersion && <span>skill-finder {health.appVersion}</span>}
               <span className={health.claudeVersion ? '' : 'warn-text'}>claude-code {health.claudeVersion ?? '없음'}</span>
               <span>skills-cli {health.skillsCli}</span>
               <span>

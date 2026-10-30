@@ -44,7 +44,10 @@ export function skillsRouter(ctx: AppContext): Router {
       res.status(404).json({ error: '스킬을 찾을 수 없습니다' });
       return;
     }
-    if (getSettings(store).searchLog) store.logEvent('view', skill.id, typeof req.query.q === 'string' ? req.query.q.slice(0, 300) : null, viewMeta(req.query));
+    // Only results opened from a logged search (UI debate 1-6): a page reload, a pasted link or a script reading
+    // the API would otherwise fill the log with views no search led to.
+    const meta = viewMeta(req.query);
+    if (getSettings(store).searchLog && meta?.sid) store.logEvent('view', skill.id, typeof req.query.q === 'string' ? req.query.q.slice(0, 300) : null, meta);
     const plugin = skill.plugin_id ? (store.getPlugin(skill.plugin_id) ?? null) : null;
     const marketplace = plugin ? (store.getMarketplace(plugin.marketplace) ?? null) : null;
     const plan = planInstall(skill, plugin, marketplace);
@@ -100,7 +103,13 @@ export function skillsRouter(ctx: AppContext): Router {
             description: plugin.description,
             marketplace: plugin.marketplace,
             sourceKind: plugin.source_kind,
-            skills: store.listSkillsByPlugin(plugin.id).map((s) => ({ id: s.id, name: s.name })),
+            // with their risk: installing any one of them installs all (UI debate 1-1)
+            skills: store.listSkillsByPlugin(plugin.id).map((s) => ({
+              id: s.id,
+              name: s.name,
+              riskLevel: s.risk_level,
+              riskFlags: s.risk_json ? (JSON.parse(s.risk_json) as string[]) : [],
+            })),
             hooks: !!signals?.hooks,
             mcp: !!signals?.mcp,
             bin: !!signals?.bin,

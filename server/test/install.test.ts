@@ -89,9 +89,34 @@ describe('§10.1 설치 방식', () => {
     assert.deepEqual(plan.scopes, ['user', 'project']);
     const [step] = buildSteps(plan, 'project', tmpdir());
     assert.equal(step.file, 'node');
-    assert.deepEqual(step.args.slice(1), ['add', 'vercel-labs/agent-skills', '--skill', 'web-design-guidelines', '-a', 'claude-code', '--copy', '-y']);
+    // pinned to the commit the risk check read
+    assert.equal(plan.pinnedRef, 'a'.repeat(40));
+    assert.deepEqual(step.args.slice(1), [
+      'add',
+      `https://github.com/vercel-labs/agent-skills/tree/${'a'.repeat(40)}/skills/x`,
+      '--skill',
+      'web-design-guidelines',
+      '-a',
+      'claude-code',
+      '--copy',
+      '-y',
+    ]);
+    assert.ok(plan.command.includes(`/tree/${'a'.repeat(40)}/skills/x`), plan.command);
     const [global] = buildSteps(plan, 'user', null);
     assert.equal(global.args.at(-1), '-g');
+  });
+
+  it('검사한 커밋으로 고정할 수 없으면 저장소 최신으로 (고정 표시 없음)', () => {
+    const skill = { ...baseSkill, origin: 'generic' as const, plugin_id: null, repo: 'o/r', name: 'x' };
+    const source = (s: Partial<SkillRow>) => {
+      const plan = planInstall({ ...skill, ...s }, null, null);
+      return [buildSteps(plan, 'user', null)[0].args[2], plan.pinnedRef];
+    };
+    assert.deepEqual(source({ dir_path: '' }), [`https://github.com/o/r/tree/${'a'.repeat(40)}`, 'a'.repeat(40)], '저장소 맨 위 스킬');
+    assert.deepEqual(source({ dir_path: '.claude/skills/x' }), [`https://github.com/o/r/tree/${'a'.repeat(40)}/.claude/skills/x`, 'a'.repeat(40)]);
+    for (const bad of [{ ref: null }, { ref: 'main' }, { ref: 'A'.repeat(40) }, { dir_path: null }, { dir_path: 'skills/../x' }, { dir_path: '/x' }, { dir_path: 'skills/my skill' }, { dir_path: 'x/' }]) {
+      assert.deepEqual(source(bad), ['o/r', undefined], JSON.stringify(bad));
+    }
   });
 
   it('pluginRootDependency 스킬은 폴더 복사 금지: 마켓플레이스가 있으면 플러그인, 없으면 수동', () => {

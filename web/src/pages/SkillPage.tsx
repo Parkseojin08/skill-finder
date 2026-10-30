@@ -2,11 +2,11 @@ import { Icon } from '../components/Icon.tsx';
 import { useEffect, useState } from 'react';
 import { apiGet } from '../api.ts';
 import { BreakdownTable, QualityBadges, RiskBadge, RiskFlags, RiskSummary, SourceBadges } from '../components/Badges.tsx';
-import { InstallPanel } from '../components/InstallPanel.tsx';
+import { InstallPanel, riskierSiblings, SiblingRiskNote } from '../components/InstallPanel.tsx';
 import { Markdown, splitFrontmatter } from '../components/Markdown.tsx';
 import { Translated } from '../components/Translated.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
-import { formatAgo, formatBytes, formatCount, METHOD, QUALITY, RISK_FLAGS } from '../labels.ts';
+import { formatAgo, formatBytes, formatCount, LOW_RISK_NOTE, METHOD, QUALITY, RISK_FLAGS, RISK_RANK } from '../labels.ts';
 import type { Breakdown, OpenedFrom, ResultItem, SettingsResponse, SkillDetail } from '../types.ts';
 
 type Tab = 'overview' | 'install' | 'skill' | 'files';
@@ -174,6 +174,7 @@ export function SkillPage({ id, item, query, from, onBack }: { id: string; item:
             ) : (
               <p className="muted small">발견된 위험 신호나 품질 경고가 없습니다.</p>
             )}
+            {riskLevel === 'low' && <p className="muted small">{LOW_RISK_NOTE}</p>}
             {detail.plugin?.strictConflict && <p className="warn-box">로드 실패 가능: strict:false 항목과 plugin.json이 모두 구성요소를 선언합니다.</p>}
           </section>
 
@@ -191,10 +192,17 @@ export function SkillPage({ id, item, query, from, onBack }: { id: string; item:
                 {detail.plugin.monitors && <span className="badge flag">모니터</span>}
               </div>
               <p className="muted small">이 스킬을 설치하면 아래 스킬 {detail.plugin.skills.length}개가 들어 있는 플러그인 전체가 설치됩니다.</p>
+              <SiblingRiskNote skills={riskierSiblings(detail)} here />
               <ul className="plugin-skills">
                 {detail.plugin.skills.map((s) => (
                   <li key={s.id} className={s.id === id ? 'current' : ''}>
                     {s.name}
+                    {RISK_RANK[s.riskLevel] > RISK_RANK[detail.riskLevel] && (
+                      <>
+                        {' '}
+                        <RiskBadge level={s.riskLevel} />
+                      </>
+                    )}
                   </li>
                 ))}
               </ul>

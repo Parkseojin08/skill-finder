@@ -4,7 +4,7 @@ import { ROOT_DIR, SKILLS_CLI_PATH, SKILLS_CLI_VERSION } from '../config.ts';
 import type { MarketplaceRow, PluginRow, SkillRow } from '../db/store.ts';
 import type { RepoInstallInfo } from '../indexer.ts';
 import { formatCommand } from '../claude/cli.ts';
-import { isPluginName, isRepo, isSkillName } from './validate.ts';
+import { isCommitSha, isPluginName, isRepo, isRepoDir, isSkillName } from './validate.ts';
 
 export type InstallScope = 'user' | 'project' | 'local';
 export type InstallMethod = 'plugin' | 'skills-cli' | 'manual-only';
@@ -18,6 +18,10 @@ export type InstallPlan = {
   pluginName?: string;
   marketplace?: { name: string; repo: string };
   repo?: string;
+  /** What the skills CLI is given: the checked commit's folder when it can be pinned, else the repo. */
+  source?: string;
+  /** The commit a skills CLI install is pinned to (the one the risk check read); absent when not pinned. */
+  pinnedRef?: string;
   skillName?: string;
   /** Why the app will not install it, or a caveat. */
   reason?: string;
@@ -27,8 +31,18 @@ export type InstallPlan = {
 
 const NPX_SKILLS = `npx skills@${SKILLS_CLI_VERSION}`;
 
-function skillsCliArgs(repo: string, name: string, scope: InstallScope): string[] {
-  return ['add', repo, '--skill', name, '-a', 'claude-code', '--copy', '-y', ...(scope === 'user' ? ['-g'] : [])];
+function skillsCliArgs(source: string, name: string, scope: InstallScope): string[] {
+  return ['add', source, '--skill', name, '-a', 'claude-code', '--copy', '-y', ...(scope === 'user' ? ['-g'] : [])];
+}
+
+/**
+ * The skills CLI takes `…/tree/<sha>/<folder>` and clones exactly that commit, so the files installed are the ones
+ * the risk check read (UI debate 1-3). The plain repo (its latest commit) when the stored commit or folder fails
+ * the checks.
+ */
+function skillsSource(repo: string, ref: string | null, dir: string | null): { source: string; pinnedRef?: string } {
+  if (!isCommitSha(ref) || dir == null || (dir !== '' && !isRepoDir(dir))) return { source: repo };
+  return { source: `https://github.com/${repo}/tree/${ref}${dir ? `/${dir}` : ''}`, pinnedRef: ref };
 }
 
 function pluginPlan(pluginName: string, mp: { name: string; repo: string }, pluginId?: string): InstallPlan {
@@ -82,11 +96,14 @@ export function planInstall(skill: SkillRow, plugin: PluginRow | null, marketpla
   if (!isRepo(repo) || !isSkillName(skill.name)) {
     return manual(formatCommand('npx', [`skills@${SKILLS_CLI_VERSION}`, 'add', repo]), '저장소나 스킬 이름이 검증 규칙에 맞지 않아 앱에서 설치하지 않습니다');
   }
+  const { source, pinnedRef } = skillsSource(repo, skill.ref, skill.dir_path);
   return {
     method: 'skills-cli',
     scopes: ['user', 'project'],
-    command: formatCommand('npx', [`skills@${SKILLS_CLI_VERSION}`, ...skillsCliArgs(repo, skill.name, 'user')]),
+    command: formatCommand('npx', [`skills@${SKILLS_CLI_VERSION}`, ...skillsCliArgs(source, skill.name, 'user')]),
     repo,
+    source,
+    ...(pinnedRef ? { pinnedRef } : {}),
     skillName: skill.name,
   };
 }
@@ -112,7 +129,7 @@ export function buildSteps(plan: InstallPlan, scope: InstallScope, projectPath: 
     ];
   }
   if (plan.method === 'skills-cli') {
-    const args = [SKILLS_CLI_PATH, ...skillsCliArgs(plan.repo!, plan.skillName!, scope)];
+    const args = [SKILLS_CLI_PATH, ...skillsCliArgs(plan.source ?? plan.repo!, plan.skillName!, scope)];
     const shown = ['node', relative(ROOT_DIR, SKILLS_CLI_PATH).replace(/\\/g, '/'), ...args.slice(1)];
     return [{ kind: 'skills-add', file: 'node', args, cwd, display: formatCommand(shown[0], shown.slice(1)) }];
   }

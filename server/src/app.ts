@@ -27,7 +27,7 @@ export function createApp(ctx: AppContext, opts: { searchDeps?: SearchDeps } = {
   app.use('/api', adminRouter(ctx));
 
   app.use('/api', (_req, res) => {
-    res.status(404).json({ error: 'not found' });
+    res.status(404).json({ error: '없는 API 주소입니다' });
   });
 
   if (existsSync(WEB_DIST_DIR)) {

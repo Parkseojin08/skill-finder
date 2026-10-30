@@ -1,11 +1,46 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiGet, streamNdjson } from '../api.ts';
-import { METHOD, SCOPE } from '../labels.ts';
-import type { InstallPreview, InstallScope, RiskLevel, SkillDetail } from '../types.ts';
+import { METHOD, RISK_FLAGS, RISK_LEVEL, RISK_RANK, SCOPE } from '../labels.ts';
+import type { InstallPlan, InstallPreview, InstallScope, RiskLevel, SkillDetail } from '../types.ts';
 import { RiskBadge, RiskFlags } from './Badges.tsx';
 import { FolderInput } from './FolderInput.tsx';
 
 type LogLine = { line: string; stream: string };
+type PluginSkill = NonNullable<SkillDetail['plugin']>['skills'][number];
+
+/**
+ * The other skills a plugin install brings in that rank above the chosen one (UI debate 1-1): a "주의" skill can
+ * install a "위험 높음" one beside it, and the dialog would otherwise show only the chosen skill's level.
+ */
+export function riskierSiblings(skill: SkillDetail): PluginSkill[] {
+  if (skill.install.method !== 'plugin' || !skill.plugin) return [];
+  return skill.plugin.skills
+    .filter((s) => s.id !== skill.id && RISK_RANK[s.riskLevel] > RISK_RANK[skill.riskLevel])
+    .sort((a, b) => RISK_RANK[b.riskLevel] - RISK_RANK[a.riskLevel] || a.name.localeCompare(b.name));
+}
+
+/** `here`: shown above the plugin's own skill list, so no pointer to it. */
+export function SiblingRiskNote({ skills, here = false }: { skills: PluginSkill[]; here?: boolean }) {
+  if (skills.length === 0) return null;
+  const top = skills[0].riskLevel;
+  const named = skills.slice(0, 3).map((s) => {
+    const flag = s.riskFlags.find((f) => !RISK_FLAGS[f]?.info);
+    return `${s.name}(${RISK_LEVEL[s.riskLevel]}${flag ? `, ${RISK_FLAGS[flag]?.label ?? flag}` : ''})`;
+  });
+  return (
+    <p className={top === 'high' ? 'warn-box' : 'note'}>
+      같은 플러그인에 이 스킬보다 위험한 스킬 {skills.length}개가 함께 설치됩니다: {named.join(', ')}
+      {skills.length > named.length && ` 외 ${skills.length - named.length}개`}.{!here && ' 개요 탭의 플러그인 목록에서 확인하세요.'}
+    </p>
+  );
+}
+
+/** Whether the files installed are the ones the risk check read (UI debate 1-3). */
+function versionNote(plan: InstallPlan): string | null {
+  if (plan.method === 'skills-cli' && plan.pinnedRef) return `검사한 커밋 ${plan.pinnedRef.slice(0, 7)} 그대로 설치합니다.`;
+  if (plan.method === 'skills-cli' || plan.method === 'plugin') return '설치할 때 최신 버전을 받습니다. 위험 검사를 한 버전과 다를 수 있습니다.';
+  return null;
+}
 type InstallEvent = { type: 'log'; line: string; stream: string } | { type: 'result'; ok: boolean; exitCode: number; message: string };
 
 export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skill: SkillDetail; defaultScope: 'user' | 'project'; defaultProjectPath: string }) {
@@ -85,6 +120,8 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
   };
 
   const ready = preview && !preview.error && preview.steps.length > 0;
+  const siblings = riskierSiblings(skill);
+  const version = versionNote(plan);
 
   return (
     <section className="install">
@@ -97,6 +134,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
           {skill.plugin ? ` (스킬 ${skill.plugin.skills.length}개${skill.plugin.hooks ? ', 훅' : ''}${skill.plugin.mcp ? ', MCP 서버' : ''}${skill.plugin.bin ? ', 실행 파일' : ''} 포함)` : ''}.
         </p>
       )}
+      <SiblingRiskNote skills={siblings} />
       <fieldset className="scopes" disabled={running}>
         <legend>범위</legend>
         {plan.scopes.map((s) => (
@@ -125,6 +163,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
             설치 위치: {preview.location}
             {preview.createsLockFile && <> · 프로젝트 루트에 <code>skills-lock.json</code>이 생깁니다</>}
           </div>
+          {version && <div className="muted small">{version}</div>}
         </div>
       )}
       <button type="button" className="primary" disabled={!ready || running} onClick={() => setConfirming(true)}>
@@ -148,6 +187,8 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
           preview={preview}
           riskLevel={skill.riskLevel}
           riskFlags={skill.riskFlags}
+          siblings={siblings}
+          version={version}
           onCancel={() => setConfirming(false)}
           onConfirm={install}
         />
@@ -161,6 +202,8 @@ function ConfirmDialog(props: {
   preview: InstallPreview;
   riskLevel: RiskLevel;
   riskFlags: string[];
+  siblings: PluginSkill[];
+  version: string | null;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -185,15 +228,18 @@ function ConfirmDialog(props: {
       <div className="muted small">설치 위치</div>
       <p>{props.preview.location}</p>
       {props.preview.createsLockFile && <p className="muted small">프로젝트 루트에 skills-lock.json 파일이 생성됩니다.</p>}
+      {props.version && <p className="muted small">{props.version}</p>}
       <div className="badges">
         <RiskBadge level={props.riskLevel} />
         <RiskFlags flags={props.riskFlags} />
       </div>
+      <SiblingRiskNote skills={props.siblings} />
       <div className="dialog-actions">
-        <button type="button" className="ghost" onClick={props.onCancel}>
+        {/* Cancel first, as in the delete dialog: Enter alone must not install (UI debate 1-2) */}
+        <button type="button" className="ghost" onClick={props.onCancel} autoFocus>
           취소
         </button>
-        <button type="button" className="primary" onClick={props.onConfirm} autoFocus>
+        <button type="button" className="primary" onClick={props.onConfirm}>
           설치
         </button>
       </div>

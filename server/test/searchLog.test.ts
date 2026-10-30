@@ -61,8 +61,11 @@ describe('검색 기록 (U5-2)', () => {
     const [view] = rows('view');
     assert.equal(view.query, 'x');
     assert.deepEqual(JSON.parse(view.meta_json!), { sid, pos: 7, page: 2, provisional: true });
+    // not opened from a search (a reload, a pasted link, a script reading the API): not logged
+    await rawRequest({ port: srv.port, path: `/api/skills/${encodeURIComponent('gh:a/b:skills/x')}?q=x&pos=1`, headers: headers(srv.port) });
+    assert.equal(rows('view').length, 1, 'sid 없는 열람은 남기지 않음');
 
-    const put = await rawRequest({ port: srv.port, method: 'PUT', path: '/api/settings', headers: headers(srv.port), body: JSON.stringify({ settings: { searchLog: false } }) });
+    const put =await rawRequest({ port: srv.port, method: 'PUT', path: '/api/settings', headers: headers(srv.port), body: JSON.stringify({ settings: { searchLog: false } }) });
     assert.equal(JSON.parse(put.body).settings.searchLog, false);
     await open();
     assert.equal(rows('view').length, 1, '끈 뒤에는 남기지 않음');
