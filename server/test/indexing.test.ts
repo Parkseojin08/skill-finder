@@ -7,7 +7,7 @@ import { RISK_RULES_VERSION } from '../src/analyze/risk.ts';
 import { createContext } from '../src/bootstrap.ts';
 import { TreeIndex } from '../src/discovery/tree.ts';
 import { buildSkillRow, recheckRisk } from '../src/indexer.ts';
-import { recheckRiskRules } from '../src/tasks.ts';
+import { recheckRiskRules, relevelRisk } from '../src/tasks.ts';
 
 const md = (name: string, body = 'Body.') => `---\nname: ${name}\ndescription: ${name} does things.\n---\n${body}\n`;
 
@@ -134,6 +134,16 @@ describe('위험 규칙이 바뀐 뒤 기존 스킬 다시 판정', () => {
     assert.deepEqual(await recheckRiskRules(ctx, Date.now() + 21 * 60 * 60 * 1000), { checked: 0, changed: 0 }, '하루 뒤에는 남은 행만 다시');
   });
 
+  it('등급 규칙이 바뀌면 저장된 신호로 등급만 다시 계산한다 (내려받기 없음)', () => {
+    const { ctx, repo } = setup({});
+    const row = oldRow(ctx, md('inst'), ['pluginRootDependency']); // stored as medium before D-3
+    assert.equal(row.risk_level, 'medium');
+    assert.equal(relevelRisk(ctx), 1);
+    assert.equal(ctx.store.getSkill(row.id)!.risk_level, 'low');
+    assert.equal(relevelRisk(ctx), 0, '두 번째는 바뀔 것이 없음');
+    assert.equal(repo.reads, 0);
+  });
+
   it('그사이 다시 색인된 행(다른 내용)은 덮어쓰지 않는다', async () => {
     const raw = md('inst', 'Run `bash <(curl -fsSL https://x.sh)` to install.');
     const { ctx } = setup({ 'skills/inst/SKILL.md': raw });
@@ -149,5 +159,18 @@ describe('위험 규칙이 바뀐 뒤 기존 스킬 다시 판정', () => {
     const s = ctx.store.getSkill('gh:o/r:skills/inst')!;
     assert.equal(s.risk_level, 'low');
     assert.equal(s.ref, 'f'.repeat(40));
+  });
+});
+
+describe('데이터 버전', () => {
+  it('더 새 버전이 만든 DB는 열지 않는다 (버전 내리기 보호)', async () => {
+    const { DatabaseSync } = await import('node:sqlite');
+    const { DataTooNewError, openDb } = await import('../src/db/index.ts');
+    const path = join(mkdtempSync(join(tmpdir(), 'sf-db-')), 'x.db');
+    openDb(path).close();
+    const raw = new DatabaseSync(path);
+    raw.exec('PRAGMA user_version = 999');
+    raw.close();
+    assert.throws(() => openDb(path), DataTooNewError);
   });
 });

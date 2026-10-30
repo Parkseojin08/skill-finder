@@ -6,9 +6,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { apiGet, streamNdjson } from '../api.ts';
+import { forgetInstalled } from '../installed.ts';
 import { METHOD } from '../labels.ts';
 import type { InstallPreview, RepoResult, SettingsResponse } from '../types.ts';
-import { RiskBadge } from './Badges.tsx';
+import { RiskBadge, RiskSummary } from './Badges.tsx';
 import { FolderInput } from './FolderInput.tsx';
 
 type Step = 'select' | 'confirm' | 'run';
@@ -31,11 +32,14 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<Record<string, Status>>({});
   const [log, setLog] = useState<string[]>([]);
+  /** A chosen skill is high risk: one deliberate tick before installing, as in the single-skill dialog (2-9). */
+  const [highChecked, setHighChecked] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
     if (!open) return;
     setStep('select');
+    setHighChecked(false);
     setError(null);
     setStatus({});
     setLog([]);
@@ -52,6 +56,7 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
   }, [log]);
 
   const chosen = installable.filter((s) => selected.has(s.id));
+  const chosenHigh = chosen.filter((s) => s.riskLevel === 'high');
   const toggle = (id: string, on: boolean) =>
     setSelected((cur) => {
       const next = new Set(cur);
@@ -61,6 +66,7 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
     });
 
   const review = async () => {
+    setHighChecked(false); // the choice may have changed since the last review
     setBusy(true);
     setError(null);
     try {
@@ -99,6 +105,7 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
       }
       setStatus((cur) => ({ ...cur, [s.id]: ok ? 'ok' : 'fail' }));
     }
+    forgetInstalled();
     setBusy(false);
   };
 
@@ -153,7 +160,8 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
               <li key={s.id}>
                 <div className="flex items-center gap-2">
                   <span className="mono">{s.name}</span>
-                  <RiskBadge level={s.riskLevel} />
+                  {/* level and signal names, as the single-skill dialog shows (UI debate 2-9) */}
+                  <RiskSummary level={s.riskLevel} flags={s.riskFlags ?? []} />
                 </div>
                 {previews[s.id]?.steps.map((st, i) => (
                   <div key={i} className="cmd cmd-stacked">
@@ -164,6 +172,12 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
               </li>
             ))}
           </ol>
+        )}
+        {step === 'confirm' && chosenHigh.length > 0 && (
+          <Label className="flex items-center gap-2">
+            <Checkbox checked={highChecked} onCheckedChange={(on) => setHighChecked(on === true)} />
+            위험 높음 {chosenHigh.length}개({chosenHigh.map((s) => s.name).join(', ')})의 명령과 위험 신호를 확인했습니다
+          </Label>
         )}
 
         {step === 'run' && (
@@ -195,7 +209,7 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
               <Button variant="ghost" onClick={() => setStep('select')}>
                 뒤로
               </Button>
-              <Button onClick={() => void run()}>
+              <Button onClick={() => void run()} disabled={chosenHigh.length > 0 && !highChecked}>
                 <DownloadSimpleIcon data-icon="inline-start" />
                 {chosen.length}개 설치
               </Button>

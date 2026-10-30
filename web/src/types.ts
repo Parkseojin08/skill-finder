@@ -21,7 +21,8 @@ export type ResultItem = {
   riskFlags: string[];
   qualityWarnings: string[];
   install: { method: InstallMethod; command: string; pluginId?: string; disabled?: boolean };
-  plugin?: { id: string; name: string; marketplace: string; skillCount: number };
+  /** `topRisk`: the highest level among the plugin's skills, which all install together. */
+  plugin?: { id: string; name: string; marketplace: string; skillCount: number; topRisk?: RiskLevel };
   trust: TrustTier;
   /** 1–2 rule-based category keys (see CATEGORY in labels.ts). */
   categories: string[];
@@ -35,7 +36,7 @@ export type RepoResult = {
   description: string | null;
   stars: number | null;
   topics: string[];
-  skills: Array<{ id: string; name: string; riskLevel: RiskLevel; method: InstallMethod; installable: boolean; scopes: string[] }>;
+  skills: Array<{ id: string; name: string; riskLevel: RiskLevel; riskFlags?: string[]; method: InstallMethod; installable: boolean; scopes: string[] }>;
 };
 
 export type SkillMatch ={ item: ResultItem; score: number; matchedTerms: string[] };
@@ -165,7 +166,15 @@ export type MarketplaceInfo = {
   pendingSkillIndex: number;
 };
 
-export type SettingsResponse = { settings: Settings; githubToken: boolean; marketplaces: MarketplaceInfo[]; searchLogCount: number };
+export type SettingsResponse = {
+  settings: Settings;
+  githubToken: boolean;
+  /** Where the index and search log (dataDir) and the token (envPath) are kept. */
+  dataDir: string;
+  envPath: string;
+  marketplaces: MarketplaceInfo[];
+  searchLogCount: number;
+};
 
 /** Where an opened result was in its search, for the search log. */
 export type OpenedFrom = { sid?: string; pos: number; page: number; provisional: boolean };
@@ -186,8 +195,38 @@ export type Job = {
 
 export type Health = { ok: boolean; appVersion: string | null; node: string; claudeVersion: string | null; skillsCli: string; githubToken: boolean; plugins: number; skills: number };
 
+/** `same`: what is installed is what the index holds; `changed`: the index holds different text or a different commit. */
+export type InstallChange = 'same' | 'changed' | 'unknown';
+
 export type InstalledResponse = {
-  plugins: Array<{ id: string; version: string | null; scope: string; enabled: boolean | null; enabledWhere: string | null; installPath: string | null; projectPath: string | null; removeCommand: string | null }>;
+  plugins: Array<{
+    id: string;
+    version: string | null;
+    scope: string;
+    enabled: boolean | null;
+    enabledWhere: string | null;
+    installPath: string | null;
+    projectPath: string | null;
+    removeCommand: string | null;
+    indexed: boolean;
+    topRisk: RiskLevel | null;
+    change: InstallChange;
+  }>;
   pluginError: string | null;
-  skills: Array<{ scope: 'user' | 'project'; path: string; folder: string; name: string; description: string; removeCommand: string }>;
+  skills: Array<{
+    scope: 'user' | 'project';
+    path: string;
+    folder: string;
+    name: string;
+    description: string;
+    removeCommand: string;
+    skillId: string | null;
+    /** The current risk rules run on the installed files. */
+    risk: { level: RiskLevel; flags: string[] };
+    installedRisk: RiskLevel | null;
+    change: InstallChange;
+  }>;
 };
+
+/** What is installed, by index id (`/installed/ids`), for the "설치됨" badges. */
+export type InstalledIds = { plugins: Array<{ id: string; scope: string }>; skills: Array<{ id: string; scope: string }> };

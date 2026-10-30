@@ -6,7 +6,7 @@ export const RISK_FLAGS: Record<string, { label: string; meaning: string; info?:
   unscopedBash: { label: 'Bash 무제한', meaning: 'Bash 사전 승인에 명령 제한도 없습니다.' },
   shellInjection: { label: '셸 명령 주입', meaning: '스킬이 호출되면 Claude가 내용을 보기 전에 셸 명령이 실행됩니다.' },
   skillHooks: { label: '스킬 훅', meaning: '스킬이 호출되면 훅을 등록합니다.' },
-  pluginRootDependency: { label: '플러그인 전용', meaning: '플러그인으로 설치해야 동작합니다. 폴더만 복사하면 깨집니다.' },
+  pluginRootDependency: { label: '플러그인 전용', meaning: '플러그인으로 설치해야 동작합니다. 폴더만 복사하면 깨집니다. 위험 신호가 아니라 설치 방식 정보입니다.', info: true },
   pluginHooks: { label: '플러그인 훅', meaning: '플러그인을 설치하면 훅이 함께 설치·실행됩니다.' },
   pluginMcp: { label: 'MCP 서버', meaning: '플러그인을 설치하면 MCP 서버가 함께 설치·실행됩니다.' },
   pluginBin: { label: '실행 파일(bin)', meaning: '플러그인이 활성화되면 실행 파일이 Bash PATH에 올라갑니다.' },
@@ -95,3 +95,12 @@ export function formatBytes(n: number | null): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
+
+/** "?" explanations next to a few headings (UI debate stage 4), read from the same labels as the badges. */
+export const HELP = {
+  risk:
+    '위험 낮음·주의·위험 높음은 SKILL.md와 파일 목록을 규칙으로 검사한 결과입니다. 위험 높음: 내려받은 코드를 바로 실행하거나, 아무 명령이나 미리 허락하고 셸을 실행합니다. 주의: 스크립트·훅·MCP 서버처럼 내 PC에서 무언가 실행될 수 있습니다. ' +
+    LOW_RISK_NOTE,
+  scope: `개인: 내 모든 프로젝트에서 씁니다. 프로젝트: 고른 폴더에서만 쓰고, 설정 파일이 git으로 팀과 공유될 수 있습니다. 로컬: 고른 폴더에서 나만 씁니다(플러그인만).`,
+  score: '점수는 관련도·인기·최신성·신뢰도를 고정 비율(55·20·10·15)로 더한 참고값입니다. 결과 순서는 이름 일치 → 다운로드 → 스타 기준이라 점수 순서와 다를 수 있습니다.',
+} as const;

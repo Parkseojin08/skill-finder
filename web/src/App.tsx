@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { InstalledPage } from './pages/InstalledPage.tsx';
 import { MarketplacesPage } from './pages/MarketplacesPage.tsx';
 import { RecommendPage } from './pages/RecommendPage.tsx';
-import { SearchPage } from './pages/SearchPage.tsx';
+import { SearchPage, searchUrl } from './pages/SearchPage.tsx';
 import { SettingsPage } from './pages/SettingsPage.tsx';
 import { SkillPage } from './pages/SkillPage.tsx';
 import type { OpenedFrom, ResultItem } from './types.ts';
@@ -26,6 +26,14 @@ function readRoute(): Route {
   return path === '/skill' && !skillId ? { path: '/', skillId: null } : { path, skillId };
 }
 
+/** Where in a search a skill page opened in a new tab came from (ResultCard skillHref puts it in the link). */
+function fromQuery(): OpenedFrom | undefined {
+  const q = new URLSearchParams(window.location.search);
+  const sid = q.get('sid');
+  if (!sid) return undefined;
+  return { sid, pos: Number(q.get('pos')) || 0, page: Number(q.get('page')) || 0, provisional: q.get('prov') === '1' };
+}
+
 export function App() {
   const [route, setRoute] = useState<Route>(readRoute);
   // Result cards carry the per-search score (R, P); the skill page shows it when opened from a result.
@@ -39,16 +47,52 @@ export function App() {
   }, []);
 
   const go = useCallback((path: Path, skillId: string | null = null) => {
-    const url = skillId ? `${path}?id=${encodeURIComponent(skillId)}` : path;
+    const url = skillId ? `${path}?id=${encodeURIComponent(skillId)}` : path === '/' ? searchUrl() : path;
     window.history.pushState(null, '', url);
     setRoute({ path, skillId });
     window.scrollTo(0, 0);
   }, []);
 
+  // Each screen gets its own tab title, and moving between screens puts the keyboard focus on the new screen's
+  // heading; coming back to a list puts it on the card that was opened (UI debate 2-10).
+  const lastOpened = useRef<string | null>(null);
+  const firstRoute = useRef(true);
+  useEffect(() => {
+    const label = NAV.find((n) => n.path === route.path)?.label;
+    if (route.path !== '/skill') document.title = route.path === '/' || !label ? 'Skill Finder' : `${label} · Skill Finder`;
+    if (firstRoute.current) {
+      firstRoute.current = false;
+      return;
+    }
+    // after the new screen has rendered (a timer, not a frame: frames pause in a background tab)
+    const timer = setTimeout(() => {
+      const visible = (el: Element) => (el as HTMLElement).offsetParent !== null;
+      const card =
+        (route.path === '/' || route.path === '/recommend') && lastOpened.current
+          ? [...document.querySelectorAll<HTMLElement>('main a.card-link')].find((a) => visible(a) && a.dataset.id === lastOpened.current)
+          : undefined;
+      const heading = [...document.querySelectorAll<HTMLElement>('main h1')].find(visible);
+      const target = card ?? heading;
+      if (!target) return;
+      if (target === heading) target.tabIndex = -1;
+      target.focus();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [route]);
+
   // and where in its search it was, for the local search log
-  const [openedFrom, setOpenedFrom] = useState<Map<string, OpenedFrom>>(new Map());
+  // A skill page opened in a new tab from a result carries where it was in the search (skillHref); it is read once
+  // and taken out of the address, so a reload or a copied link does not log the view again.
+  const [openedFrom, setOpenedFrom] = useState<Map<string, OpenedFrom>>(() => {
+    const from = fromQuery();
+    const { skillId } = readRoute();
+    if (!from || !skillId) return new Map();
+    window.history.replaceState(null, '', `/skill?id=${encodeURIComponent(skillId)}`);
+    return new Map([[skillId, from]]);
+  });
   const openSkill = useCallback(
     (item: ResultItem, from?: OpenedFrom) => {
+      lastOpened.current = item.id;
       setOpened((m) => new Map(m).set(item.id, item));
       setOpenedFrom((m) => {
         const next = new Map(m);
@@ -120,7 +164,7 @@ export function App() {
             onBack={() => (window.history.length > 1 ? window.history.back() : go('/'))}
           />
         )}
-        {route.path === '/installed' && <InstalledPage />}
+        {route.path === '/installed' && <InstalledPage onOpenSkill={(id) => go('/skill', id)} />}
         {route.path === '/marketplaces' && <MarketplacesPage />}
         {route.path === '/settings' && <SettingsPage />}
       </main>

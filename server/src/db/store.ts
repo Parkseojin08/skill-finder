@@ -353,6 +353,15 @@ export class Store {
     );
   }
 
+  /** Every skill's stored flags and level (the level follows from the flags; tasks.ts relevelRisk). */
+  listSkillRiskLevels(): Array<{ id: string; risk_json: string | null; risk_level: string }> {
+    return this.all('SELECT id, risk_json, risk_level FROM skills');
+  }
+
+  setSkillRiskLevel(id: string, riskLevel: string): void {
+    this.run('UPDATE skills SET risk_level = ? WHERE id = ?', riskLevel, id);
+  }
+
   /** Updates the risk of a row still built from the SKILL.md with hash `sha`; false when it changed meanwhile. */
   setSkillRisk(id: string, sha: string, riskJson: string, riskLevel: string, version: number): boolean {
     const r = this.run('UPDATE skills SET risk_json = ?, risk_level = ?, risk_rules = ? WHERE id = ? AND skill_md_sha256 = ?', riskJson, riskLevel, version, id, sha);
@@ -538,10 +547,14 @@ export class Store {
     argv: string[][];
     exit_code: number;
     output: string;
+    /** The skill as it was when installed (UI debate 3-3). */
+    ref?: string | null;
+    skill_md_sha256?: string | null;
+    risk_level?: string | null;
   }): void {
     this.run(
-      `INSERT INTO install_log (skill_id, plugin_id, method, scope, project_path, argv_json, exit_code, output, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO install_log (skill_id, plugin_id, method, scope, project_path, argv_json, exit_code, output, created_at, ref, skill_md_sha256, risk_level)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       e.skill_id,
       e.plugin_id,
       e.method,
@@ -551,7 +564,23 @@ export class Store {
       e.exit_code,
       e.output.slice(0, 20_000),
       now(),
+      e.ref ?? null,
+      e.skill_md_sha256 ?? null,
+      e.risk_level ?? null,
     );
+  }
+
+  /** Skills the app installed into a skills folder (skills CLI), newest first, to match those folders to the index. */
+  listInstalledSkillLog(): Array<{ skill_id: string; scope: string; project_path: string | null; risk_level: string | null; created_at: string }> {
+    return this.all(
+      `SELECT skill_id, scope, project_path, risk_level, created_at FROM install_log
+        WHERE skill_id IS NOT NULL AND exit_code = 0 AND method = 'skills-cli' ORDER BY id DESC`,
+    );
+  }
+
+  /** An indexed GitHub skill whose SKILL.md has this hash (newest commit first). */
+  findSkillIdByMdSha(sha: string): string | null {
+    return this.get<{ id: string }>("SELECT id FROM skills WHERE skill_md_sha256 = ? AND id LIKE 'gh:%' ORDER BY last_commit_at DESC LIMIT 1", sha)?.id ?? null;
   }
 
   logEvent(kind: EventKind, skillId: string | null, query: string | null, meta?: Record<string, unknown>): void {

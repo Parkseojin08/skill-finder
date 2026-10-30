@@ -2,8 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet, apiSend } from '../api.ts';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
 import { FolderInput } from '../components/FolderInput.tsx';
+import { forgetInstalled } from '../installed.ts';
 import { useKorean } from '../translate.ts';
-import type { InstalledResponse, SettingsResponse } from '../types.ts';
+import { RiskBadge, RiskSummary } from '../components/Badges.tsx';
+import { RISK_LEVEL } from '../labels.ts';
+import type { InstallChange, InstalledResponse, SettingsResponse } from '../types.ts';
+
+/** How an install compares with the index (UI debate 3-3); shown only, nothing is updated from here. */
+const CHANGE: Record<InstallChange, string | null> = {
+  same: null,
+  changed: '색인된 내용과 다름 (새 버전이 있거나 고친 사본)',
+  unknown: null,
+};
 
 type Plugin = InstalledResponse['plugins'][number];
 type Skill = InstalledResponse['skills'][number];
@@ -25,7 +35,7 @@ function Description({ text }: { text: string }) {
   );
 }
 
-export function InstalledPage() {
+export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => void }) {
   const [projectPath, setProjectPath] = useState('');
   const [data, setData] = useState<InstalledResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +77,7 @@ export function InstalledPage() {
     setMsg(null);
     try {
       const r = await apiSend<{ ok: boolean; message: string }>('POST', '/uninstall', body);
+      forgetInstalled();
       setMsg({ ok: true, text: `${label}: ${r.message}` });
       load(projectPath);
     } catch (e) {
@@ -149,6 +160,7 @@ export function InstalledPage() {
                   <th>버전</th>
                   <th>범위</th>
                   <th>상태</th>
+                  <th>위험</th>
                   <th />
                 </tr>
               </thead>
@@ -166,6 +178,17 @@ export function InstalledPage() {
                       <td>
                         <span className={p.enabled ? 'state-on' : 'muted'}>{p.enabled == null ? '–' : p.enabled ? '켜짐' : '꺼짐'}</span>
                         {p.enabledWhere && <div className="muted small">{p.scope === 'user' ? '모든 프로젝트' : '해당 프로젝트에서'}</div>}
+                      </td>
+                      <td>
+                        {p.topRisk ? (
+                          <>
+                            <RiskBadge level={p.topRisk} />
+                            <div className="muted small">안의 스킬 중 가장 높은 등급</div>
+                          </>
+                        ) : (
+                          <span className="muted small">색인에 없음</span>
+                        )}
+                        {p.change === 'changed' && <div className="warn-text small">설치된 커밋이 색인한 커밋과 다름</div>}
                       </td>
                       <td className="actions">
                         <button type="button" className="ghost danger" disabled={busy !== null} onClick={() => removePlugin(p)} aria-label={`${p.id} 삭제`}>
@@ -203,6 +226,7 @@ export function InstalledPage() {
                   <th>이름</th>
                   <th>범위</th>
                   <th>설명</th>
+                  <th>위험</th>
                   <th />
                 </tr>
               </thead>
@@ -212,12 +236,25 @@ export function InstalledPage() {
                   return (
                     <tr key={key}>
                       <td>
-                        <b className="mono">{s.name}</b>
+                        {s.skillId ? (
+                          <button type="button" className="linkish mono" onClick={() => onOpenSkill(s.skillId!)}>
+                            {s.name}
+                          </button>
+                        ) : (
+                          <b className="mono">{s.name}</b>
+                        )}
                         <div className="muted small">{s.path}</div>
+                        {!s.skillId && <div className="muted small">색인에 없음 (앱 밖에서 설치했거나 아직 모으지 않은 스킬)</div>}
                       </td>
                       <td>{s.scope === 'user' ? '개인' : '프로젝트'}</td>
                       <td className="small">
                         <Description text={s.description} />
+                      </td>
+                      <td>
+                        {/* the current rules run on the installed files, wherever they came from */}
+                        <RiskSummary level={s.risk.level} flags={s.risk.flags} />
+                        {s.installedRisk && s.installedRisk !== s.risk.level && <div className="muted small">설치할 때는 {RISK_LEVEL[s.installedRisk]}</div>}
+                        {CHANGE[s.change] && <div className="warn-text small">{CHANGE[s.change]}</div>}
                       </td>
                       <td className="actions">
                         <button type="button" className="ghost danger" disabled={busy !== null} onClick={() => removeSkill(s)} aria-label={`${s.name} 삭제`}>
@@ -229,7 +266,7 @@ export function InstalledPage() {
                 })}
                 {data.skills.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="muted small">
+                    <td colSpan={5} className="muted small">
                       설치된 스킬이 없습니다.
                     </td>
                   </tr>

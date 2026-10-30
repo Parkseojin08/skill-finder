@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiError, apiGet, apiSend } from '../api.ts';
 import { FolderInput } from '../components/FolderInput.tsx';
 import { Icon } from '../components/Icon.tsx';
-import { ResultCard } from '../components/ResultCard.tsx';
+import { ResultCard, skillHref } from '../components/ResultCard.tsx';
+import { useInstalled } from '../installed.ts';
 import { Translated } from '../components/Translated.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import type { RecommendResult, ResultItem, SettingsResponse } from '../types.ts';
@@ -15,6 +16,7 @@ const ERROR_HINT: Record<number, string> = {
 };
 
 export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }) {
+  const installedAs = useInstalled();
   const [projectPath, setProjectPath] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<RecommendResult | null>(null);
@@ -140,7 +142,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
               <div className="results">
                 {pageItems.map((m, i) => (
                   <div key={m.item.id} title={`README와 겹친 단어: ${m.matchedTerms.join(', ')}`}>
-                    <ResultCard item={m.item} position={i} onSelect={() => onOpen(m.item)} />
+                    <ResultCard item={m.item} position={i} href={skillHref(m.item.id)} installed={installedAs(m.item)} onSelect={() => onOpen(m.item)} />
                   </div>
                 ))}
               </div>

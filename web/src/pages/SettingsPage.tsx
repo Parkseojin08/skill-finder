@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { apiGet, apiSend } from '../api.ts';
+import { searchLogChanged } from './SearchPage.tsx';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
 import { FolderInput } from '../components/FolderInput.tsx';
-import { BREAKDOWN } from '../labels.ts';
-import type { Breakdown, Settings, SettingsResponse } from '../types.ts';
+import type { Settings, SettingsResponse } from '../types.ts';
 
 export function SettingsPage() {
   const [data, setData] = useState<SettingsResponse | null>(null);
@@ -25,7 +25,9 @@ export function SettingsPage() {
 
   const save = async (body: unknown, okText: string) => {
     try {
-      apply(await apiSend<SettingsResponse>('PUT', '/settings', body));
+      const r = await apiSend<SettingsResponse>('PUT', '/settings', body);
+      apply(r);
+      searchLogChanged(r.settings.searchLog);
       setMsg({ ok: true, text: okText });
     } catch (e) {
       setMsg({ ok: false, text: String((e as Error).message ?? e) });
@@ -34,7 +36,6 @@ export function SettingsPage() {
 
   if (!data || !draft) return <div className="page">{msg ? <p className="warn-box">{msg.text}</p> : <p className="muted">불러오는 중…</p>}</div>;
 
-  const setW = (k: keyof Breakdown, v: number) => setDraft({ ...draft, weights: { ...draft.weights, [k]: v } });
 
   return (
     <div className="page settings">
@@ -80,21 +81,6 @@ export function SettingsPage() {
           />
         </label>
         <p className="muted small">이 수보다 스타가 적거나 스타 수를 알 수 없는 저장소의 스킬은 검색 결과에서 숨깁니다. 0이면 제한하지 않습니다.</p>
-      </section>
-
-      <section>
-        <h2>점수 가중치</h2>
-        <div className="grid2">
-          {(Object.keys(BREAKDOWN) as Array<keyof Breakdown>).map((k) => (
-            <label key={k} className="field">
-              <span>
-                {BREAKDOWN[k]} ({k}): {draft.weights[k].toFixed(2)}
-              </span>
-              <input type="range" min={0} max={1} step={0.05} value={draft.weights[k]} onChange={(e) => setW(k, Number(e.target.value))} />
-            </label>
-          ))}
-        </div>
-        <p className="muted small">근거 데이터가 없는 기본값입니다. 합이 1이 아니어도 비율로 정규화됩니다.</p>
       </section>
 
       <section>
@@ -169,6 +155,17 @@ export function SettingsPage() {
             저장된 검색 기록 {data.searchLogCount.toLocaleString()}개를 모두 지웁니다. 되돌릴 수 없습니다.
           </ConfirmDialog>
         )}
+      </section>
+
+      <section>
+        <h2>데이터 위치</h2>
+        <p className="muted small">스킬 색인·검색 기록과 GitHub 토큰은 이 PC의 아래 위치에만 저장됩니다. 새 버전으로 바꿔도 그대로 이어지고, 완전히 지우려면 이 폴더와 파일을 지우세요.</p>
+        <dl className="kv">
+          <dt>색인·기록</dt>
+          <dd className="mono">{data.dataDir}</dd>
+          <dt>토큰</dt>
+          <dd className="mono">{data.envPath}</dd>
+        </dl>
       </section>
 
       <div className="row">

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { saveGithubToken } from '../config.ts';
+import { ENV_PATH, saveGithubToken } from '../config.ts';
 import type { AppContext } from '../context.ts';
 import { isPluginName, isRepo } from '../install/validate.ts';
 import { getSettings, saveSettings, SettingsSchema } from '../settings.ts';
@@ -36,6 +36,9 @@ export function adminRouter(ctx: AppContext): Router {
   const settingsResponse = () => ({
     settings: getSettings(store),
     githubToken: !!ctx.config.githubToken,
+    /** Where the index, search log and token live, so people know what to keep or delete (UI debate D-6). */
+    dataDir: ctx.config.dataDir,
+    envPath: ENV_PATH,
     marketplaces: marketplaces(),
     searchLogCount: store.countSearchLog(),
   });
@@ -52,11 +55,7 @@ export function adminRouter(ctx: AppContext): Router {
     }
     if (parsed.data.settings) {
       const cur = getSettings(store);
-      const next = SettingsSchema.safeParse({
-        ...cur,
-        ...parsed.data.settings,
-        weights: { ...cur.weights, ...(parsed.data.settings.weights ?? {}) },
-      });
+      const next = SettingsSchema.safeParse({ ...cur, ...parsed.data.settings, weights: cur.weights });
       if (!next.success) {
         res.status(400).json({ error: next.error.issues[0]?.message ?? '설정 형식이 올바르지 않습니다' });
         return;

@@ -1,14 +1,35 @@
+import type { MouseEvent } from 'react';
 import { Icon } from './Icon.tsx';
-import { CATEGORY, formatAgo, formatCount, METHOD } from '../labels.ts';
+import { CATEGORY, formatAgo, formatCount } from '../labels.ts';
 import { useKorean } from '../translate.ts';
-import type { ResultItem } from '../types.ts';
+import type { OpenedFrom, ResultItem } from '../types.ts';
 import { RiskSummary, ScoreBar, SourceBadges } from './Badges.tsx';
+
+/** `owner/repo` of a GitHub-indexed result (ids are `gh:<owner>/<repo>:<dir>`). */
+export const repoOf = (item: ResultItem) => item.id.match(/^gh:([^/]+\/[^:]+):/)?.[1] ?? null;
+
+/** The skill page's address; `from` (where in a search it was) rides along so a new tab still logs the view. */
+export function skillHref(id: string, from?: OpenedFrom): string {
+  const q = new URLSearchParams({ id });
+  if (from?.sid) {
+    q.set('sid', from.sid);
+    if (from.pos) q.set('pos', String(from.pos));
+    if (from.page) q.set('page', String(from.page));
+    if (from.provisional) q.set('prov', '1');
+  }
+  return `/skill?${q}`;
+}
+
+/** A plain left click opens the skill in place; with a modifier or the middle button the browser opens the link. */
+const plainClick = (e: MouseEvent) => e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
 
 export function ResultCard({
   item,
   position,
   provisional,
   belowMinStars,
+  href,
+  installed,
   onSelect,
 }: {
   item: ResultItem;
@@ -16,25 +37,41 @@ export function ResultCard({
   provisional?: boolean;
   /** Shown only because the star minimum was lifted for this search: the minimum it falls short of. */
   belowMinStars?: number;
+  /** The skill page's address (with where in the search it was), so it also opens in a new tab. */
+  href: string;
+  /** Where it is installed ("개인", "플러그인 프로젝트"), when known. */
+  installed?: string | null;
   onSelect: () => void;
 }) {
   const { ko, waiting } = useKorean(item.description, position);
+  const repo = repoOf(item);
+  // installing this skill installs the whole plugin, riskier skills included (UI debate 2-6)
+  const pluginHigh = item.plugin?.topRisk === 'high' && item.riskLevel !== 'high';
   return (
-    <article
-      className={`card ${provisional ? 'provisional' : ''}`}
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
-      aria-label={`${item.name} 상세 페이지로 이동`}
-    >
+    // The title link covers the card (CSS), so the card reads as one link named after the skill and the
+    // rest of its text is read as usual (UI debate 2-2).
+    <article className={`card ${provisional ? 'provisional' : ''}`}>
       <div className="card-head">
         <div className="card-title">
-          <h3>{item.name}</h3>
+          <h3>
+            <a
+              className="card-link"
+              href={href}
+              data-id={item.id}
+              onClick={(e) => {
+                if (!plainClick(e)) return;
+                e.preventDefault();
+                onSelect();
+              }}
+            >
+              {item.name}
+            </a>
+          </h3>
+          {repo && (
+            <span className="muted small mono card-owner" title="만든 곳 (GitHub 저장소)">
+              {repo}
+            </span>
+          )}
           {item.plugin && (
             <span className="muted small" title={`${item.plugin.marketplace} 마켓플레이스의 플러그인`}>
               {item.plugin.name}
@@ -53,12 +90,14 @@ export function ResultCard({
           <SourceBadges sources={item.sources} />
           {item.installs != null && (
             <span className="stat" title="설치 수 (skills.sh)">
-              <Icon name="download" size={14} /> {formatCount(item.installs)}
+              <Icon name="download" size={14} /> <span className="sr-only">설치 수 </span>
+              {formatCount(item.installs)}
             </span>
           )}
           {item.stars != null && (
-            <span className="stat" title="저장소 별점">
-              <Icon name="star" size={14} /> {formatCount(item.stars)}
+            <span className="stat" title="GitHub 스타">
+              <Icon name="star" size={14} /> <span className="sr-only">GitHub 스타 </span>
+              {formatCount(item.stars)}
             </span>
           )}
           {belowMinStars != null && (
@@ -68,7 +107,8 @@ export function ResultCard({
           )}
           {item.lastCommitAt && (
             <span className="stat" title="최근 커밋">
-              <Icon name="clock" size={14} /> {formatAgo(item.lastCommitAt)}
+              <Icon name="clock" size={14} /> <span className="sr-only">최근 커밋 </span>
+              {formatAgo(item.lastCommitAt)}
             </span>
           )}
           {(item.categories ?? [])
@@ -80,8 +120,17 @@ export function ResultCard({
             ))}
         </div>
         <div className="card-tags">
+          {installed && (
+            <span className="status-chip ok" title="이 PC에 설치되어 있습니다">
+              <Icon name="check" size={13} /> 설치됨 · {installed}
+            </span>
+          )}
           <RiskSummary level={item.riskLevel} flags={item.riskFlags} />
-          <span className="pill">{METHOD[item.install.method]}</span>
+          {pluginHigh && (
+            <span className="status-chip warn" title="이 스킬을 설치하면 플러그인 전체가 설치되고, 그 안에 위험 높음 스킬이 있습니다">
+              <Icon name="alert" size={13} /> 플러그인에 위험 높음 포함
+            </span>
+          )}
         </div>
       </div>
     </article>

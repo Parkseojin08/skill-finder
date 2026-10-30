@@ -1,22 +1,18 @@
 import { readFileSync } from 'node:fs';
-import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Router } from 'express';
 import { z } from 'zod';
-import { extractSkillMeta } from '../analyze/frontmatter.ts';
-import { runClaude } from '../claude/cli.ts';
 import type { AppContext } from '../context.ts';
 import { buildSteps, planInstall } from '../install/plan.ts';
-import { executeInstall, parseJsonArray } from '../install/run.ts';
+import { executeInstall } from '../install/run.ts';
+import { forgetPlugins, installedPluginCommits, listInstalledPlugins, pluginCommitKey, pluginIndexInfo, scanInstalledSkills } from '../install/installed.ts';
 import { uninstallPlugin, uninstallSkill } from '../install/uninstall.ts';
 import { isProjectDir } from '../install/validate.ts';
 import { getSettings } from '../settings.ts';
 import { FolderPickerUnavailable, pickFolder } from '../util/folderPicker.ts';
 import { ndjson } from '../util/ndjson.ts';
 import { isPlainFolderName, resolveDroppedFolder } from '../util/resolveFolder.ts';
-import { truncate } from '../util/sanitize.ts';
-import { SKILLS_CLI_VERSION } from '../config.ts';
 
 const Body = z.object({
   id: z.string().min(1).max(500),
@@ -53,34 +49,6 @@ function enabledInSettings(id: string, scope: string, projectPath: string | null
 
 let installing = false;
 let picking = false;
-
-async function scanSkills(dir: string, scope: 'user' | 'project') {
-  const out: Array<{ scope: string; path: string; folder: string; name: string; description: string; removeCommand: string }> = [];
-  let entries: string[] = [];
-  try {
-    entries = (await readdir(dir, { withFileTypes: true })).filter((e) => e.isDirectory() || e.isSymbolicLink()).map((e) => e.name);
-  } catch {
-    return out;
-  }
-  for (const name of entries.sort()) {
-    const path = join(dir, name);
-    try {
-      const raw = await readFile(join(path, 'SKILL.md'), 'utf8');
-      const meta = extractSkillMeta(raw, name);
-      out.push({
-        scope,
-        path,
-        folder: name,
-        name: meta.name,
-        description: truncate(meta.description, 200),
-        removeCommand: `npx skills@${SKILLS_CLI_VERSION} remove ${/\s/.test(name) ? `"${name}"` : name} -a claude-code -y${scope === 'user' ? ' -g' : ''}`,
-      });
-    } catch {
-      // not a skill folder
-    }
-  }
-  return out;
-}
 
 export function installRouter(ctx: AppContext): Router {
   const r = Router();
@@ -133,9 +101,21 @@ export function installRouter(ctx: AppContext): Router {
         argv: result.argv,
         exit_code: result.exitCode,
         output: result.output,
+        ref: plan.pinnedRef ?? skill.ref,
+        skill_md_sha256: skill.skill_md_sha256,
+        risk_level: skill.risk_level,
       });
-      if (result.ok) store.logEvent('install', skill.id, null);
-      out.send({ type: 'result', ok: result.ok, exitCode: result.exitCode, message: result.message });
+      forgetPlugins();
+      let message = result.message;
+      if (result.ok) {
+        store.logEvent('install', skill.id, null);
+        // a plugin cannot be pinned: say when Claude Code fetched another commit than the one checked (UI debate 3-3)
+        if (plan.method === 'plugin' && plan.pluginId) {
+          const info = pluginIndexInfo(store, plan.pluginId, installedPluginCommits().get(pluginCommitKey(plan.pluginId, scope, projectPath)));
+          if (info.change === 'changed') message += ' 설치된 커밋이 위험 검사를 한 커밋과 다릅니다. 설치됨 화면에서 위험 등급을 다시 확인하세요.';
+        }
+      }
+      out.send({ type: 'result', ok: result.ok, exitCode: result.exitCode, message });
     } catch (err) {
       out.send({ type: 'result', ok: false, exitCode: -1, message: `실행 실패: ${String((err as Error).message ?? err).slice(0, 200)}` });
     } finally {
@@ -184,6 +164,7 @@ export function installRouter(ctx: AppContext): Router {
         exit_code: result.ok ? 0 : 1,
         output: result.output,
       });
+      forgetPlugins();
       res.status(result.ok ? 200 : 500).json(result.ok ? { ok: true, message: result.message } : { error: result.message });
     } catch (err) {
       res.status(500).json({ error: `삭제 실패: ${String((err as Error).message ?? err).slice(0, 200)}` });
@@ -226,37 +207,45 @@ export function installRouter(ctx: AppContext): Router {
       res.status(400).json({ error: '프로젝트 경로는 존재하는 디렉터리의 절대경로여야 합니다' });
       return;
     }
-    let plugins: unknown[] = [];
-    let pluginError: string | null = null;
-    try {
-      const list = await runClaude(['plugin', 'list', '--json'], { cwd: projectPath ?? homedir(), timeoutMs: 60_000 });
-      plugins = (parseJsonArray(list.stdout) ?? []).map((p) => {
-        const o = p as Record<string, unknown>;
-        const scope = typeof o.scope === 'string' ? o.scope : 'user';
-        const pid = String(o.id ?? '');
-        const ownProject = typeof o.projectPath === 'string' ? o.projectPath : null;
-        // `claude plugin list` reports enabled for the folder it runs in; read the settings file that owns this install instead.
-        const fromSettings = enabledInSettings(pid, scope, ownProject);
-        return {
-          id: pid,
-          version: o.version ?? null,
-          scope,
-          enabled: fromSettings ?? o.enabled ?? null,
-          enabledWhere: scope === 'user' ? '모든 프로젝트' : scope === 'project' || scope === 'local' ? ownProject : null,
-          installPath: o.installPath ?? null,
-          projectPath: o.projectPath ?? null,
-          removeCommand: ['user', 'project', 'local'].includes(scope) ? `claude plugin uninstall ${pid} --scope ${scope}` : null,
-        };
-      });
-      if (list.exitCode !== 0) pluginError = 'claude plugin list 실패';
-    } catch (err) {
-      pluginError = String((err as Error).message ?? err);
-    }
+    const listed = await listInstalledPlugins(projectPath ?? homedir(), true);
+    const commits = installedPluginCommits();
+    const plugins = listed.plugins.map((o) => {
+      const { scope, id: pid } = o;
+      const ownProject = o.projectPath;
+      // `claude plugin list` reports enabled for the folder it runs in; read the settings file that owns this install instead.
+      const fromSettings = enabledInSettings(pid, scope, ownProject);
+      return {
+        id: pid,
+        version: o.version,
+        scope,
+        enabled: fromSettings ?? o.enabled ?? null,
+        enabledWhere: scope === 'user' ? '모든 프로젝트' : scope === 'project' || scope === 'local' ? ownProject : null,
+        installPath: o.installPath,
+        projectPath: ownProject,
+        removeCommand: ['user', 'project', 'local'].includes(scope) ? `claude plugin uninstall ${pid} --scope ${scope}` : null,
+        ...pluginIndexInfo(store, pid, commits.get(pluginCommitKey(pid, scope, ownProject))),
+      };
+    });
     const skills = [
-      ...(await scanSkills(join(homedir(), '.claude', 'skills'), 'user')),
-      ...(projectPath ? await scanSkills(join(projectPath, '.claude', 'skills'), 'project') : []),
+      ...(await scanInstalledSkills(store, 'user', null)),
+      ...(projectPath ? await scanInstalledSkills(store, 'project', projectPath) : []),
     ];
-    res.json({ plugins, pluginError, skills });
+    res.json({ plugins, pluginError: listed.error, skills });
+  });
+
+  // What is installed, by index id, for the "설치됨" badges on results (UI debate 3-1). Project skills are those of
+  // the default project folder in the settings. Unknown ones are simply absent: no badge, never "not installed".
+  r.get('/installed/ids', async (_req, res) => {
+    const project = getSettings(store).defaultProjectPath;
+    const listed = await listInstalledPlugins();
+    const skills = [
+      ...(await scanInstalledSkills(store, 'user', null)),
+      ...(isProjectDir(project) ? await scanInstalledSkills(store, 'project', project) : []),
+    ];
+    res.json({
+      plugins: listed.plugins.map((p) => ({ id: p.id, scope: p.scope })),
+      skills: skills.filter((s) => s.skillId).map((s) => ({ id: s.skillId, scope: s.scope })),
+    });
   });
 
   return r;

@@ -1,4 +1,4 @@
-import type { RiskLevel } from '../analyze/risk.ts';
+import { RISK_ORDER, type RiskLevel } from '../analyze/risk.ts';
 import type { MarketplaceRow, PluginRow, SkillRow, Store } from '../db/store.ts';
 import { planInstall, type InstallMethod } from '../install/plan.ts';
 import { truncate } from '../util/sanitize.ts';
@@ -23,7 +23,7 @@ export type ResultItem = {
   riskFlags: string[];
   qualityWarnings: string[];
   install: { method: InstallMethod; command: string; pluginId?: string; disabled?: boolean };
-  plugin?: { id: string; name: string; marketplace: string; skillCount: number };
+  plugin?: { id: string; name: string; marketplace: string; skillCount: number; topRisk: RiskLevel };
   /** Who stands behind it (same tiers as the T score); the sidebar filters on it. */
   trust: TrustTier;
   /** 1–2 rule-based categories from the marketplace category and name/description keywords. */
@@ -40,7 +40,7 @@ export type RepoResult = {
   stars: number | null;
   topics: string[];
   /** Skills found in the repo (also listed among the skill results), with what installing them would take. */
-  skills: Array<{ id: string; name: string; riskLevel: RiskLevel; method: InstallMethod; installable: boolean; scopes: string[] }>;
+  skills: Array<{ id: string; name: string; riskLevel: RiskLevel; riskFlags: string[]; method: InstallMethod; installable: boolean; scopes: string[] }>;
 };
 
 export const TRUST_LABEL = { official: '공식', partner: '파트너', community: '커뮤니티' } as const;
@@ -72,12 +72,18 @@ export type Lookup = {
   plugin(id: string | null): PluginRow | null;
   marketplace(name: string | null | undefined): MarketplaceRow | null;
   pluginSkillCount(id: string): number;
+  /** The highest risk level among the plugin's skills (they all install together). */
+  pluginTopRisk(id: string): RiskLevel;
 };
 
 export function storeLookup(store: Store): Lookup {
   const plugins = new Map<string, PluginRow | null>();
   const mps = new Map<string, MarketplaceRow | null>();
-  const counts = new Map<string, number>();
+  const skillsOf = new Map<string, SkillRow[]>();
+  const list = (id: string) => {
+    if (!skillsOf.has(id)) skillsOf.set(id, store.listSkillsByPlugin(id));
+    return skillsOf.get(id)!;
+  };
   return {
     plugin(id) {
       if (!id) return null;
@@ -90,8 +96,10 @@ export function storeLookup(store: Store): Lookup {
       return mps.get(name)!;
     },
     pluginSkillCount(id) {
-      if (!counts.has(id)) counts.set(id, store.listSkillsByPlugin(id).length);
-      return counts.get(id)!;
+      return list(id).length;
+    },
+    pluginTopRisk(id) {
+      return list(id).reduce<RiskLevel>((top, s) => (RISK_ORDER[s.risk_level as RiskLevel] > RISK_ORDER[top] ? (s.risk_level as RiskLevel) : top), 'low');
     },
   };
 }
@@ -134,7 +142,15 @@ export function buildResultItem(a: {
       ...(plan.disabled ? { disabled: true } : {}),
     },
     ...(plugin
-      ? { plugin: { id: plugin.id, name: plugin.name, marketplace: plugin.marketplace, skillCount: a.lookup.pluginSkillCount(plugin.id) } }
+      ? {
+          plugin: {
+            id: plugin.id,
+            name: plugin.name,
+            marketplace: plugin.marketplace,
+            skillCount: a.lookup.pluginSkillCount(plugin.id),
+            topRisk: a.lookup.pluginTopRisk(plugin.id),
+          },
+        }
       : {}),
     trust: trustTier(skill, plugin),
     categories: categorize({ name: skill.name, description: desc, whenToUse: skill.when_to_use, marketplaceCategory: plugin?.category }),

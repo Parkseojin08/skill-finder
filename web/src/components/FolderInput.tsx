@@ -1,5 +1,5 @@
 import { FolderOpenIcon, FolderSimpleIcon, UploadSimpleIcon } from '@phosphor-icons/react';
-import { useEffect, useRef, useState, type DragEvent } from 'react';
+import { useEffect, useId, useRef, useState, type DragEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { apiSend } from '../api.ts';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,26 @@ import { cn } from '@/lib/utils';
 import { Icon } from './Icon.tsx';
 
 type Match = { path: string; overlap: number };
+
+/** Project folders used before, newest first, offered as suggestions (this browser only; UI debate stage 4). */
+const RECENT_KEY = 'skill-finder-recent-projects';
+export function recentProjects(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]') as unknown;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 8) : [];
+  } catch {
+    return [];
+  }
+}
+export function rememberProject(path: string): void {
+  const p = path.trim();
+  if (!p) return;
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify([p, ...recentProjects().filter((x) => x !== p)].slice(0, 8)));
+  } catch {
+    // storage blocked: no suggestions, nothing else changes
+  }
+}
 
 /** Names directly inside a dropped folder (first batch is enough to tell same-named folders apart). */
 function readNames(dir: FileSystemDirectoryEntry): Promise<string[]> {
@@ -64,7 +84,10 @@ export function FolderInput({
     return () => main.removeAttribute('inert');
   }, [picking]);
 
+  const listId = useId();
+  const [recent] = useState(recentProjects);
   const choose = (path: string) => {
+    rememberProject(path);
     setChoices([]);
     setError(null);
     onChange(path);
@@ -151,6 +174,7 @@ export function FolderInput({
           spellCheck={false}
           disabled={disabled}
           aria-label={label ?? '프로젝트 경로'}
+          list={recent.length ? listId : undefined}
         />
         <InputGroupAddon align="inline-end">
           <InputGroupButton size="sm" variant="secondary" onClick={pick} disabled={disabled || picking}>
@@ -159,6 +183,13 @@ export function FolderInput({
           </InputGroupButton>
         </InputGroupAddon>
       </InputGroup>
+      {recent.length > 0 && (
+        <datalist id={listId}>
+          {recent.map((p) => (
+            <option key={p} value={p} />
+          ))}
+        </datalist>
+      )}
       {dragging && (
         <div className="drop-hint" aria-hidden="true">
           <UploadSimpleIcon /> 여기에 놓으면 이 폴더로 정합니다

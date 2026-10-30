@@ -50,4 +50,12 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE skills ADD COLUMN risk_rules INTEGER;
   `,
+  // What was installed (UI debate 3-3): the commit, SKILL.md hash and risk level at install time; installed skills
+  // are matched to the index by their SKILL.md hash.
+  `
+  ALTER TABLE install_log ADD COLUMN ref TEXT;
+  ALTER TABLE install_log ADD COLUMN skill_md_sha256 TEXT;
+  ALTER TABLE install_log ADD COLUMN risk_level TEXT;
+  CREATE INDEX skills_md_sha ON skills(skill_md_sha256);
+  `,
 ];

@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 export const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export const SERVER_DIR = join(ROOT_DIR, 'server');
 export const WEB_DIST_DIR = join(ROOT_DIR, 'web', 'dist');
-export const ENV_PATH = join(ROOT_DIR, '.env');
+/** The release launcher keeps the token outside the app folder (UI debate D-6); from the environment only. */
+export const ENV_PATH = process.env.SKILL_FINDER_ENV_PATH ? resolve(process.env.SKILL_FINDER_ENV_PATH) : join(ROOT_DIR, '.env');
 export const SKILLS_CLI_VERSION = '1.7.4';
 export const SKILLS_CLI_PATH = join(ROOT_DIR, 'node_modules', 'skills', 'bin', 'cli.mjs');
 export const DEV_VITE_PORT = 5173;

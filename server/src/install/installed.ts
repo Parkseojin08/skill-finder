@@ -1,0 +1,200 @@
+// What is installed on this PC and how it matches the index (UI debate stage 3: shown only, nothing is run).
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { readdir, readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join, posix } from 'node:path';
+import { extractSkillMeta } from '../analyze/frontmatter.ts';
+import { riskLevel, skillRiskFlags, type RiskFlag, type RiskLevel } from '../analyze/risk.ts';
+import { runClaude } from '../claude/cli.ts';
+import { SKILLS_CLI_VERSION } from '../config.ts';
+import type { Store } from '../db/store.ts';
+import { truncate } from '../util/sanitize.ts';
+import { parseJsonArray } from './run.ts';
+
+/** `same`: the installed SKILL.md is the indexed one; `changed`: the index holds different text (newer or edited). */
+export type Change = 'same' | 'changed' | 'unknown';
+
+export type InstalledSkill = {
+  scope: 'user' | 'project';
+  path: string;
+  folder: string;
+  name: string;
+  description: string;
+  removeCommand: string;
+  /** The indexed skill it came from; null when it cannot be told (installed some other way, or not indexed). */
+  skillId: string | null;
+  /** The current risk rules run on the installed files themselves. */
+  risk: { level: RiskLevel; flags: RiskFlag[] };
+  /** Its level when the app installed it, if the app did. */
+  installedRisk: RiskLevel | null;
+  change: Change;
+};
+
+const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+/** As the indexer hashes SKILL.md (indexer.ts buildSkillRow): line endings would otherwise make every copy differ. */
+const mdHash = (raw: string) => sha256(raw.replace(/\r\n/g, '\n'));
+
+/** Paths relative to the skill folder, for the "scripts" signal; at most 500, no dependency folders. */
+async function listFiles(dir: string, prefix = '', out: string[] = []): Promise<string[]> {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    if (out.length >= 500) break;
+    if (e.name === 'node_modules' || e.name === '.git') continue;
+    const rel = prefix ? `${prefix}/${e.name}` : e.name;
+    if (e.isDirectory()) await listFiles(join(dir, e.name), rel, out);
+    else out.push(rel);
+  }
+  return out;
+}
+
+type LockEntry = { source?: unknown; sourceType?: unknown; skillPath?: unknown };
+/** skills CLI lock files: `skills-lock.json` in a project, `~/.agents/.skill-lock.json` for the user. */
+function readLock(file: string): Map<string, string> {
+  const byFolder = new Map<string, string>();
+  try {
+    const skills = (JSON.parse(readFileSync(file, 'utf8')) as { skills?: Record<string, LockEntry> }).skills ?? {};
+    for (const [folder, e] of Object.entries(skills)) {
+      if (typeof e.source !== 'string' || typeof e.skillPath !== 'string' || !/^[^/\s]+\/[^/\s]+$/.test(e.source)) continue;
+      if (e.sourceType !== undefined && e.sourceType !== 'github') continue; // gitlab etc. are not gh: rows
+      const dir = posix.dirname(e.skillPath.replace(/\\/g, '/'));
+      // index ids keep the repo part in lower case (indexer.ts), so an exact lookup finds "ECC" as "ecc"
+      byFolder.set(folder.toLowerCase(), `gh:${e.source.toLowerCase()}:${dir === '.' ? '' : dir}`);
+    }
+  } catch {
+    // no lock file, or not one we can read
+  }
+  return byFolder;
+}
+
+/**
+ * Installed skill folders of one scope, each matched to the index by, in order: the skills CLI lock file
+ * (source + path), the app's own install log (same name), or an identical SKILL.md (hash).
+ */
+export async function scanInstalledSkills(store: Store, scope: 'user' | 'project', projectPath: string | null): Promise<InstalledSkill[]> {
+  const root = scope === 'user' ? homedir() : projectPath!;
+  const dir = join(root, '.claude', 'skills');
+  const lock = readLock(scope === 'user' ? join(homedir(), '.agents', '.skill-lock.json') : join(root, 'skills-lock.json'));
+  const logged = new Map<string, { id: string; risk: string | null }>();
+  for (const l of store.listInstalledSkillLog()) {
+    if (l.scope !== scope || (scope === 'project' && l.project_path?.toLowerCase() !== root.toLowerCase())) continue;
+    const name = store.getSkill(l.skill_id)?.name.toLowerCase();
+    if (name && !logged.has(name)) logged.set(name, { id: l.skill_id, risk: l.risk_level });
+  }
+  let entries: string[] = [];
+  try {
+    entries = (await readdir(dir, { withFileTypes: true })).filter((e) => e.isDirectory() || e.isSymbolicLink()).map((e) => e.name);
+  } catch {
+    return [];
+  }
+  const out: InstalledSkill[] = [];
+  for (const folder of entries.sort()) {
+    const path = join(dir, folder);
+    let raw: string;
+    try {
+      raw = await readFile(join(path, 'SKILL.md'), 'utf8');
+    } catch {
+      continue; // not a skill folder
+    }
+    const meta = extractSkillMeta(raw, folder);
+    const hash = mdHash(raw);
+    const log = logged.get(meta.name.toLowerCase()) ?? logged.get(folder.toLowerCase());
+    const fromLock = lock.get(folder.toLowerCase());
+    const skillId = (fromLock && store.getSkill(fromLock)?.id) || (log && store.getSkill(log.id) ? log.id : null) || store.findSkillIdByMdSha(hash);
+    const indexed = skillId ? store.getSkill(skillId) : undefined;
+    const flags = skillRiskFlags({ files: await listFiles(path), allowedTools: meta.allowedTools, body: meta.body, hasHooks: meta.hasHooks, raw });
+    out.push({
+      scope,
+      path,
+      folder,
+      name: meta.name,
+      description: truncate(meta.description, 200),
+      removeCommand: `npx skills@${SKILLS_CLI_VERSION} remove ${/\s/.test(folder) ? `"${folder}"` : folder} -a claude-code -y${scope === 'user' ? ' -g' : ''}`,
+      skillId,
+      risk: { level: riskLevel(flags), flags },
+      installedRisk: (log?.id === skillId ? (log?.risk as RiskLevel | null) : null) ?? null,
+      change: !indexed?.skill_md_sha256 ? 'unknown' : indexed.skill_md_sha256 === hash ? 'same' : 'changed',
+    });
+  }
+  return out;
+}
+
+export type InstalledPlugin = {
+  id: string;
+  version: unknown;
+  scope: string;
+  projectPath: string | null;
+  installPath: unknown;
+  /** Claude Code's own `enabled` (for the folder it ran in). */
+  enabled: unknown;
+};
+
+/** `claude plugin list --json`, kept for a minute per folder; installs and uninstalls drop it (forgetPlugins). */
+const pluginCache = new Map<string, { at: number; value: Promise<{ plugins: InstalledPlugin[]; error: string | null }> }>();
+const PLUGIN_CACHE_MS = 60_000;
+
+export function forgetPlugins(): void {
+  pluginCache.clear();
+}
+
+/** `fresh`: ask Claude Code now (the installed page, where a change made in a terminal must show at once). */
+export function listInstalledPlugins(cwd: string = homedir(), fresh = false): Promise<{ plugins: InstalledPlugin[]; error: string | null }> {
+  const hit = pluginCache.get(cwd);
+  if (!fresh && hit && Date.now() - hit.at < PLUGIN_CACHE_MS) return hit.value;
+  const value = runClaude(['plugin', 'list', '--json'], { cwd, timeoutMs: 60_000 })
+    .then((list) => ({
+      plugins: (parseJsonArray(list.stdout) ?? []).map((p) => {
+        const o = p as Record<string, unknown>;
+        return {
+          id: String(o.id ?? ''),
+          version: o.version ?? null,
+          scope: typeof o.scope === 'string' ? o.scope : 'user',
+          projectPath: typeof o.projectPath === 'string' ? o.projectPath : null,
+          installPath: o.installPath ?? null,
+          enabled: o.enabled ?? null,
+        };
+      }),
+      error: list.exitCode !== 0 ? 'claude plugin list 실패' : null,
+    }))
+    .catch((err: unknown) => ({ plugins: [], error: String((err as Error).message ?? err) }));
+  pluginCache.set(cwd, { at: Date.now(), value });
+  // a failure is not kept: the next call asks again
+  void value.then((v) => v.error && pluginCache.delete(cwd));
+  return value;
+}
+
+/** The commit Claude Code installed each plugin from (`~/.claude/plugins/installed_plugins.json`), by id and scope. */
+export function installedPluginCommits(): Map<string, string> {
+  const out = new Map<string, string>();
+  try {
+    const file = join(homedir(), '.claude', 'plugins', 'installed_plugins.json');
+    const plugins = (JSON.parse(readFileSync(file, 'utf8')) as { plugins?: Record<string, Array<Record<string, unknown>>> }).plugins ?? {};
+    for (const [id, installs] of Object.entries(plugins)) {
+      for (const i of Array.isArray(installs) ? installs : []) {
+        if (typeof i.gitCommitSha === 'string') out.set(pluginCommitKey(id, String(i.scope), typeof i.projectPath === 'string' ? i.projectPath : null), i.gitCommitSha);
+      }
+    }
+  } catch {
+    // Claude Code keeps this file; without it the commit is unknown
+  }
+  return out;
+}
+
+/** Windows paths compared as Claude Code writes them: backslashes, no trailing one, any case. */
+const pathKey = (p: string) => p.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+export const pluginCommitKey = (id: string, scope: string, projectPath: string | null) => `${id}|${scope}|${scope === 'user' ? '' : pathKey(projectPath ?? '')}`;
+
+/** How a plugin install compares with the index: its skills' top risk and whether it came from the indexed commit. */
+export function pluginIndexInfo(store: Store, id: string, commit: string | undefined): { indexed: boolean; topRisk: RiskLevel | null; change: Change } {
+  const plugin = store.getPlugin(id);
+  if (!plugin) return { indexed: false, topRisk: null, change: 'unknown' };
+  const rank: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2 };
+  const topRisk = store.listSkillsByPlugin(id).reduce<RiskLevel>((top, s) => (rank[s.risk_level as RiskLevel] > rank[top] ? (s.risk_level as RiskLevel) : top), 'low');
+  const indexedAt = plugin.skills_indexed_sha;
+  return { indexed: true, topRisk, change: !commit || !indexedAt ? 'unknown' : commit === indexedAt ? 'same' : 'changed' };
+}

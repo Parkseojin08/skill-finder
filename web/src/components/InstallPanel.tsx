@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiGet, streamNdjson } from '../api.ts';
-import { METHOD, RISK_FLAGS, RISK_LEVEL, RISK_RANK, SCOPE } from '../labels.ts';
+import { forgetInstalled } from '../installed.ts';
+import { HELP, METHOD, RISK_FLAGS, RISK_LEVEL, RISK_RANK, SCOPE } from '../labels.ts';
+import { HelpTip } from './HelpTip.tsx';
 import type { InstallPlan, InstallPreview, InstallScope, RiskLevel, SkillDetail } from '../types.ts';
-import { RiskBadge, RiskFlags } from './Badges.tsx';
-import { FolderInput } from './FolderInput.tsx';
+import { RiskBadge, RiskFlags, RiskSummary } from './Badges.tsx';
+import { FolderInput, rememberProject } from './FolderInput.tsx';
 
 type LogLine = { line: string; stream: string };
 type PluginSkill = NonNullable<SkillDetail['plugin']>['skills'][number];
@@ -110,7 +112,11 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
     try {
       await streamNdjson<InstallEvent>('/install', { id: skill.id, scope, projectPath: scope === 'user' ? undefined : projectPath }, (e) => {
         if (e.type === 'log') setLog((l) => [...l, { line: e.line, stream: e.stream }]);
-        else setResult({ ok: e.ok, message: e.message });
+        else {
+          setResult({ ok: e.ok, message: e.message });
+          if (e.ok) forgetInstalled();
+          if (e.ok && scope !== 'user') rememberProject(projectPath);
+        }
       });
     } catch (e) {
       setResult({ ok: false, message: String((e as Error).message ?? e) });
@@ -136,7 +142,10 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
       )}
       <SiblingRiskNote skills={siblings} />
       <fieldset className="scopes" disabled={running}>
-        <legend>범위</legend>
+        <legend>
+          범위
+          <HelpTip label="범위" text={HELP.scope} />
+        </legend>
         {plan.scopes.map((s) => (
           <label key={s}>
             <input type="radio" name="scope" value={s} checked={scope === s} onChange={() => setScope(s)} />
@@ -166,6 +175,10 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
           {version && <div className="muted small">{version}</div>}
         </div>
       )}
+      {/* what is being installed, right above the button (UI debate 2-5) */}
+      <div className="badges">
+        <RiskSummary level={skill.riskLevel} flags={skill.riskFlags} />
+      </div>
       <button type="button" className="primary" disabled={!ready || running} onClick={() => setConfirming(true)}>
         {running ? '설치 중…' : '설치…'}
       </button>
@@ -208,6 +221,10 @@ function ConfirmDialog(props: {
   onConfirm: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  // High risk (this skill or one the plugin brings in) needs one deliberate tick (UI debate 2-9); about 1% of
+  // skills, so the extra step is rare.
+  const high = props.riskLevel === 'high' || props.siblings.some((s) => s.riskLevel === 'high');
+  const [checked, setChecked] = useState(false);
   useEffect(() => {
     const d = ref.current;
     if (d && !d.open) d.showModal();
@@ -234,12 +251,17 @@ function ConfirmDialog(props: {
         <RiskFlags flags={props.riskFlags} />
       </div>
       <SiblingRiskNote skills={props.siblings} />
+      {high && (
+        <label className="confirm-check">
+          <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />위 명령과 위험 신호를 확인했습니다
+        </label>
+      )}
       <div className="dialog-actions">
         {/* Cancel first, as in the delete dialog: Enter alone must not install (UI debate 1-2) */}
         <button type="button" className="ghost" onClick={props.onCancel} autoFocus>
           취소
         </button>
-        <button type="button" className="primary" onClick={props.onConfirm}>
+        <button type="button" className="primary" onClick={props.onConfirm} disabled={high && !checked}>
           설치
         </button>
       </div>

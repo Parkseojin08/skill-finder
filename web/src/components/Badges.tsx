@@ -1,9 +1,19 @@
 import { BREAKDOWN, QUALITY, RISK_FLAGS, RISK_LEVEL } from '../labels.ts';
+import { Icon } from './Icon.tsx';
 import type { Breakdown, RiskLevel, SourceRef } from '../types.ts';
 
+/** "위험 높음" also differs by shape, not only by its red, which "공식" shares (UI debate 2-8). */
 export function RiskBadge({ level }: { level: RiskLevel }) {
-  return <span className={`badge risk-${level}`}>{RISK_LEVEL[level]}</span>;
+  return (
+    <span className={`badge risk-${level}`}>
+      {level === 'high' && <Icon name="alert" size={12} />}
+      {RISK_LEVEL[level]}
+    </span>
+  );
 }
+
+/** `owner/repo` of a GitHub link, for the source badge's tooltip. */
+const repoOfUrl = (url: string) => url.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)/)?.[1] ?? null;
 
 /** Risk level badge followed by the signal names as visible text (meanings in the tooltip). */
 export function RiskSummary({ level, flags }: { level: RiskLevel; flags: string[] }) {
@@ -13,7 +23,7 @@ export function RiskSummary({ level, flags }: { level: RiskLevel; flags: string[
   const shown = ordered.slice(0, 3);
   return (
     <span className="risk-sum" title={tip}>
-      <span className={`badge risk-${level}`}>{RISK_LEVEL[level]}</span>
+      <RiskBadge level={level} />
       {shown.length > 0 && (
         <span className="signals">
           {shown.map((f) => RISK_FLAGS[f]?.label ?? f).join(' · ')}
@@ -66,8 +76,10 @@ export function SourceBadges({ sources }: { sources: SourceRef[] }) {
           href={s.url || undefined}
           target="_blank"
           rel="noopener noreferrer"
+          title={repoOfUrl(s.url) ?? undefined}
           onClick={(e) => e.stopPropagation()}
         >
+          {s.label === '공식' && <Icon name="check" size={12} />}
           {s.label}
         </a>
       ))}
@@ -75,10 +87,14 @@ export function SourceBadges({ sources }: { sources: SourceRef[] }) {
   );
 }
 
-export function ScoreBar({ score, breakdown, weights }: { score: number; breakdown: Breakdown; weights?: Breakdown }) {
-  const w = weights ?? { R: 0.55, P: 0.2, F: 0.1, T: 0.15 };
+/** The server's fixed weights (settings.ts; no longer a setting, UI debate D-1). */
+const WEIGHTS: Breakdown = { R: 0.55, P: 0.2, F: 0.1, T: 0.15 };
+const ORDER_NOTE = '결과 순서는 이름 일치 → 다운로드 → 스타 기준이라 이 점수 순서와 다를 수 있습니다';
+
+export function ScoreBar({ score, breakdown }: { score: number; breakdown: Breakdown }) {
+  const w = WEIGHTS;
   return (
-    <span className="score" tabIndex={0} aria-label={`점수 ${Math.round(score * 100)}`}>
+    <span className="score" tabIndex={0} aria-label={`점수 ${Math.round(score * 100)}. ${ORDER_NOTE}`}>
       <span className="score-bar">
         <span className="score-fill" style={{ width: `${Math.round(score * 100)}%` }} />
       </span>
@@ -96,13 +112,14 @@ export function ScoreBar({ score, breakdown, weights }: { score: number; breakdo
           </span>
         ))}
         <span className="tip-note">관련도는 키워드 일치와 검색 순위로 계산</span>
+        <span className="tip-note">{ORDER_NOTE}</span>
       </span>
     </span>
   );
 }
 
-export function BreakdownTable({ breakdown, weights }: { breakdown: Partial<Breakdown>; weights?: Breakdown }) {
-  const w = weights ?? { R: 0.55, P: 0.2, F: 0.1, T: 0.15 };
+export function BreakdownTable({ breakdown }: { breakdown: Partial<Breakdown> }) {
+  const w = WEIGHTS;
   return (
     <div className="breakdown">
       {(Object.keys(BREAKDOWN) as Array<keyof Breakdown>).map((k) => (

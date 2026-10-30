@@ -129,7 +129,9 @@ export function pluginRiskFlags(signals: PluginSignals | null | undefined, sourc
   return flags;
 }
 
-const INFO_ONLY = new Set<RiskFlag>(['rmRf']);
+// Shown, but they do not raise the level: rm -rf is common cleanup, and pluginRootDependency says how the skill must
+// be installed (as a plugin), not that it is dangerous (UI debate D-3).
+const INFO_ONLY = new Set<RiskFlag>(['rmRf', 'pluginRootDependency']);
 
 export function riskLevel(flags: readonly RiskFlag[]): RiskLevel {
   const has = (f: RiskFlag) => flags.includes(f);

@@ -3,11 +3,26 @@ import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } fr
 import { apiGet, streamNdjson } from '../api.ts';
 import { FacetPanel, facetCount, matchFacets, NO_FACETS, type Facets } from '../components/FacetPanel.tsx';
 import { RepoCard } from '../components/RepoCard.tsx';
-import { ResultCard } from '../components/ResultCard.tsx';
+import { ResultCard, skillHref } from '../components/ResultCard.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
-import { RISK_RANK, STAGES } from '../labels.ts';
+import { useInstalled } from '../installed.ts';
+import { STAGES } from '../labels.ts';
+import { byPopular, foldResults, nameMatches, navigationalWord, SORTS, type SortKey } from '../lib/resultOrder.ts';
 import type { Health, Job, OpenedFrom, ResultItem, RiskLevel, SearchEvent, SearchSource, SettingsResponse, SourceKind, SourceProgress } from '../types.ts';
 
+/** Results per page, remembered in this browser. */
+const PAGE_SIZE_KEY = 'skill-finder-page-size';
+function readPageSize(): number {
+  try {
+    const n = Number(localStorage.getItem(PAGE_SIZE_KEY));
+    return [5, 10, 20].includes(n) ? n : 5;
+  } catch {
+    return 5;
+  }
+}
+
+/** Below this many indexed skills the index is probably still being built (first run). */
+const FEW_SKILLS = 1000;
 const EXAMPLES = ['pull request review', 'extract tables from pdf', 'react performance', 'postgres migration review', 'commit message'];
 const SOURCE_LABEL: Record<SourceKind, string> = { marketplace: '마켓플레이스', skillssh: 'skills.sh', github: 'GitHub' };
 const PROGRESS_LABEL: Record<SearchSource, string> = { local: '내 PC 색인', skillssh: 'skills.sh', github: 'GitHub 코드', repos: '같은 이름 저장소' };
@@ -34,99 +49,46 @@ function SourceProgressLine({ progress, startedAt }: { progress: Partial<Record<
   );
 }
 
-type SortKey = 'popular' | 'stars' | 'recent' | 'name';
-// Default order (user decisions, same as the server): skills whose name has a query word and that match at
-// least half the words first (tier), then downloads, then stars, then relevance.
-const byPopular = (a: ResultItem, b: ResultItem) =>
-  (b.installs ?? -1) - (a.installs ?? -1) || (b.stars ?? -1) - (a.stars ?? -1) || b.breakdown.R - a.breakdown.R;
-const byTierThenPopular = (a: ResultItem, b: ResultItem) => (b.tier ?? 0) - (a.tier ?? 0) || byPopular(a, b);
-const SORTS: Array<{ key: SortKey; label: string; compare: (a: ResultItem, b: ResultItem) => number }> = [
-  { key: 'popular', label: '관련 → 다운로드 → 스타', compare: byTierThenPopular },
-  { key: 'stars', label: '스타 많은 순', compare: (a, b) => (b.stars ?? -1) - (a.stars ?? -1) || byPopular(a, b) },
-  {
-    key: 'recent',
-    label: '최근 업데이트 순',
-    compare: (a, b) => (b.lastCommitAt ? Date.parse(b.lastCommitAt) : 0) - (a.lastCommitAt ? Date.parse(a.lastCommitAt) : 0) || byPopular(a, b),
-  },
-  { key: 'name', label: '이름순', compare: (a, b) => a.name.localeCompare(b.name) },
-];
-
-/** Mirrors server/src/search/pipeline.ts: a one-word query as a name, and whether a result carries that name. */
-function navigationalWord(query: string): string | null {
-  const q = query.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
-  return /^[a-z0-9][a-z0-9._-]{1,99}$/.test(q) ? q : null;
-}
-function nameMatches(item: ResultItem, word: string): boolean {
-  const name = item.name.toLowerCase();
-  return name === word || name.startsWith(`${word}-`) || item.id.match(/^gh:[^/]+\/([^:]+):/)?.[1] === word;
-}
-
-/** Results shown per repository before the rest fold into "이 저장소에서 N개 더" (user decision D). */
-const PER_REPO = 2;
-const repoOf = (item: ResultItem) => item.id.match(/^gh:([^/]+\/[^:]+):/)?.[1] ?? null;
-
-/**
- * Keeps the sort order but shows only the first PER_REPO results of each repository; the rest fold behind a
- * button after the last one shown, and opening it lists them right there. The repo named like a one-word
- * query ("rea") never folds.
- */
-function foldByRepo(sorted: ResultItem[], open: Set<string>, word: string | null): Array<{ item: ResultItem; more?: { repo: string; count: number } }> {
-  const byRepo = new Map<string, ResultItem[]>();
-  for (const it of sorted) {
-    const r = repoOf(it);
-    if (r) byRepo.set(r, [...(byRepo.get(r) ?? []), it]);
-  }
-  const out: Array<{ item: ResultItem; more?: { repo: string; count: number } }> = [];
-  for (const it of sorted) {
-    const r = repoOf(it);
-    const all = r ? byRepo.get(r)! : [];
-    if (!r || all.length <= PER_REPO || (word && r.split('/')[1]?.toLowerCase() === word)) {
-      out.push({ item: it });
-      continue;
-    }
-    const n = all.indexOf(it);
-    if (n >= PER_REPO) continue; // folded, or already listed after the last one shown
-    if (n < PER_REPO - 1) out.push({ item: it });
-    else if (open.has(r)) out.push(...all.slice(PER_REPO - 1).map((x) => ({ item: x })));
-    else out.push({ item: it, more: { repo: r, count: all.length - PER_REPO } });
-  }
-  return out;
-}
-
-/** Name key for same-name folding, as the README recommendation groups copies ("PDF_Tools" = "pdf-tools"). */
-const nameKey = (item: ResultItem) => item.name.normalize('NFC').toLowerCase().replace(/[\s_]+/g, '-');
-type Row = { item: ResultItem; more?: { repo: string; count: number }; same?: { key: string; count: number; riskier: boolean } };
-
-/**
- * Same-name skills (U2, user decision) fold under the first one in the current order: the others follow it
- * only when its "같은 이름 N개 더" is opened. Downloads are not summed (they are different copies), and the
- * button says when a folded copy is riskier than the one shown. Repository folding then runs on what is left.
- */
-function foldResults(sorted: ResultItem[], openRepos: Set<string>, openNames: Set<string>, word: string | null): Row[] {
-  const copies = new Map<string, ResultItem[]>();
-  const firsts: ResultItem[] = [];
-  for (const it of sorted) {
-    const k = nameKey(it);
-    const g = copies.get(k);
-    if (g) g.push(it);
-    else {
-      copies.set(k, []);
-      firsts.push(it);
-    }
-  }
-  const out: Row[] = [];
-  for (const row of foldByRepo(firsts, openRepos, word)) {
-    const k = nameKey(row.item);
-    const rest = copies.get(k)!;
-    if (rest.length === 0) out.push(row);
-    // opened: the copies come right after the card, and its repository's "N개 더" button after the last copy
-    else if (openNames.has(k)) out.push({ item: row.item }, ...rest.map((x, i) => ({ item: x, ...(i === rest.length - 1 && row.more ? { more: row.more } : {}) })));
-    else out.push({ ...row, same: { key: k, count: rest.length, riskier: rest.some((x) => RISK_RANK[x.riskLevel] > RISK_RANK[row.item.riskLevel]) } });
-  }
-  return out;
-}
-
 type Status = 'idle' | 'running' | 'done' | 'error';
+
+/** The last finished search in this tab (sessionStorage), so a reload of `/?q=…` needs no new search. */
+const SNAPSHOT_KEY = 'skill-finder-last-search';
+
+const SEARCH_LOG_EVENT = 'skill-finder-search-log';
+/**
+ * The settings page saved the search-log switch. Off: the last query leaves this tab's storage and the address
+ * too, as a search made with the log off never puts it there.
+ */
+export function searchLogChanged(on: boolean): void {
+  if (!on) {
+    try {
+      sessionStorage.removeItem(SNAPSHOT_KEY);
+    } catch {
+      // nothing stored
+    }
+  }
+  window.dispatchEvent(new CustomEvent(SEARCH_LOG_EVENT, { detail: on }));
+}
+
+/** The search page's address with the last query, for the "검색" menu (so the query stays in the address). */
+export function searchUrl(): string {
+  try {
+    const q = (JSON.parse(sessionStorage.getItem(SNAPSHOT_KEY) ?? 'null') as { q?: string } | null)?.q;
+    return q ? `/?q=${encodeURIComponent(q)}` : '/';
+  } catch {
+    return '/';
+  }
+}
+type Snapshot = {
+  q: string;
+  risk: RiskLevel;
+  sources: SourceKind[];
+  items: ResultItem[];
+  final: Extract<SearchEvent, { type: 'results' }>;
+  doneInfo: { cached: boolean; elapsedMs: number } | null;
+  sid?: string;
+  liftedStars: number | null;
+};
 
 export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, from?: OpenedFrom) => void; onQuery: (q: string) => void }) {
   const [query, setQuery] = useState('');
@@ -150,14 +112,25 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   const [openNames, setOpenNames] = useState<Set<string>>(() => new Set());
   const [startedAt, setStartedAt] = useState(0);
   const [githubToken, setGithubToken] = useState<boolean | null>(null);
+  /** Whether the search log is on; when off the query is not put in the address either. */
+  const [logOn, setLogOn] = useState(true);
+  useEffect(() => {
+    const on = (e: Event) => setLogOn((e as CustomEvent<boolean>).detail);
+    window.addEventListener(SEARCH_LOG_EVENT, on);
+    return () => window.removeEventListener(SEARCH_LOG_EVENT, on);
+  }, []);
+  /** The conditions the shown results were searched with (the controls may change after), for the snapshot. */
+  const searchedWith = useRef<{ risk: RiskLevel; sources: SourceKind[] }>({ risk: 'medium', sources: [] });
   const [health, setHealth] = useState<Health | null>(null);
   const [syncJob, setSyncJob] = useState<Job | null>(null);
   const [lastQuery, setLastQuery] = useState('');
   const [sort, setSort] = useState<SortKey>('popular');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(5);
+  const [pageSize, setPageSize] = useState(readPageSize);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // Sidebar filters narrow the current results in the browser; they stay set across searches.
   const [facets, setFacets] = useState<Facets>(NO_FACETS);
+  const installedAs = useInstalled();
   const resultsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const noticesRef = useRef<HTMLDetailsElement>(null);
@@ -165,7 +138,10 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
 
   useEffect(() => {
     apiGet<SettingsResponse>('/settings')
-      .then((s) => setGithubToken(s.githubToken))
+      .then((s) => {
+        setGithubToken(s.githubToken);
+        setLogOn(s.settings.searchLog);
+      })
       .catch(() => {});
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -185,17 +161,31 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
     return () => clearTimeout(timer);
   }, []);
 
-  // "/" jumps to the search box (unless the user is already typing somewhere).
+  // "/" jumps to the search box, j / k move between result cards, "?" lists these (unless typing somewhere).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       const textInput = el instanceof HTMLInputElement && !['checkbox', 'radio', 'range', 'button', 'submit'].includes(el.type);
       const typing = el && (textInput || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
-      if (e.key !== '/' || typing || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
       if (inputRef.current?.offsetParent === null) return; // search page hidden
-      e.preventDefault();
-      inputRef.current?.focus();
-      inputRef.current?.select();
+      if (document.querySelector('dialog[open], [role="dialog"]')) return; // a dialog has the keyboard
+      if (e.key === '/') {
+        e.preventDefault();
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      } else if (e.key === 'j' || e.key === 'k') {
+        const links = [...(resultsRef.current?.parentElement?.querySelectorAll<HTMLElement>('.results a.card-link') ?? [])];
+        if (links.length === 0) return;
+        e.preventDefault();
+        const at = links.indexOf(document.activeElement as HTMLElement);
+        const next = at < 0 ? 0 : Math.min(links.length - 1, Math.max(0, at + (e.key === 'j' ? 1 : -1)));
+        links[next].focus();
+        links[next].scrollIntoView({ block: 'nearest' });
+      } else if (e.key === '?') {
+        e.preventDefault();
+        setShortcutsOpen((o) => !o);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -218,7 +208,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
 
   const run = useCallback(
     /** `liftStars`: search once without this star minimum (the setting itself stays). */
-    async (q: string, risk = maxRisk, liftStars: number | null = null) => {
+    async (q: string, risk = maxRisk, liftStars: number | null = null, useSources = sources) => {
       const text = q.trim();
       if (!text) return;
       abortRef.current?.abort();
@@ -241,10 +231,13 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       setProvisional(false);
       setLastQuery(text);
       onQuery(text);
+      searchedWith.current = { risk, sources: useSources };
+      // the query goes in the address (UI debate 2-3) without adding a history entry per search
+      if (window.location.pathname === '/') window.history.replaceState(null, '', logOn ? `/?q=${encodeURIComponent(text)}` : '/');
       try {
         await streamNdjson<SearchEvent>(
           '/search',
-          { query: text, filters: { sources, maxRisk: risk, ...(liftStars != null ? { minStars: 0 } : {}) } },
+          { query: text, filters: { sources: useSources, maxRisk: risk, ...(liftStars != null ? { minStars: 0 } : {}) } },
           (e) => {
             if (ac.signal.aborted) return;
             switch (e.type) {
@@ -285,8 +278,47 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
         setStatus('error');
       }
     },
-    [sources, maxRisk, onQuery],
+    [sources, maxRisk, onQuery, logOn],
   );
+
+  // A reload in this tab shows the last results again instead of searching (and logging) once more.
+  useEffect(() => {
+    if (status !== 'done' || !final || !logOn) return;
+    const snap: Snapshot = { q: lastQuery, ...searchedWith.current, items, final, doneInfo, sid, liftedStars };
+    try {
+      sessionStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snap));
+    } catch {
+      // storage full or blocked: a reload searches again
+    }
+  }, [status, final, items, doneInfo, sid, lastQuery, liftedStars, logOn]);
+
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('q')?.trim();
+    if (window.location.pathname !== '/' || !q) return;
+    let snap: Snapshot | null = null;
+    try {
+      snap = JSON.parse(sessionStorage.getItem(SNAPSHOT_KEY) ?? 'null') as Snapshot | null;
+    } catch {
+      snap = null;
+    }
+    setQuery(q);
+    if (snap?.q !== q) {
+      void run(q);
+      return;
+    }
+    setLastQuery(q);
+    onQuery(q);
+    setMaxRisk(snap.risk);
+    setSources(snap.sources);
+    searchedWith.current = { risk: snap.risk, sources: snap.sources };
+    setItems(snap.items);
+    setFinal(snap.final);
+    setDoneInfo(snap.doneInfo);
+    setSid(snap.sid);
+    setLiftedStars(snap.liftedStars);
+    setStatus('done');
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on load
+  }, []);
 
   const toggleSource = (s: SourceKind) => setSources((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
   const filtered = items.filter((it) => matchFacets(it, facets));
@@ -313,6 +345,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   const pageCount = Math.max(1, Math.ceil(shown.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const pageItems = shown.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const fromOf = (i: number): OpenedFrom => ({ sid, pos: (currentPage - 1) * pageSize + i + 1, page: currentPage, provisional });
   const goPage = (p: number) => {
     setPage(Math.min(Math.max(1, p), pageCount));
     resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -322,7 +355,9 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   // routine notes (no GitHub token, hidden description-less results) fold into the "알림" toggle.
   const isUrgent = (w: { source: string; message: string }) =>
     w.source === 'github' ? w.message.startsWith('GitHub 검색 실패') : ['query', 'server', 'client', 'skillssh', 'enrich', 'local'].includes(w.source);
-  const urgent = warnings.filter(isUrgent);
+  // the Korean-query warning and the English suggestion say one thing: one strip, the warning sentence kept
+  const koreanNote = suggest ? warnings.find((w) => w.source === 'query') : undefined;
+  const urgent = warnings.filter((w) => isUrgent(w) && w !== koreanNote);
   const minor: Array<{ key: string; node: ReactNode }> = [
     ...warnings.filter((w) => !isUrgent(w)).map((w, i) => ({ key: `w${i}`, node: w.message })),
     ...(final && final.hiddenNoDescription > 0 ? [{ key: 'nodesc', node: `설명이 없어 판단할 수 없는 결과 ${final.hiddenNoDescription}개는 숨겼습니다.` }] : []),
@@ -375,9 +410,14 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             </button>
           </span>
           <span className="muted small kbd-hint">
-            <kbd>/</kbd> 검색창으로 이동
+            <kbd>/</kbd> 검색창으로 이동 · <kbd>?</kbd> 단축키
           </span>
         </div>
+        {shortcutsOpen && (
+          <p className="shortcut-help muted small" role="note">
+            <kbd>/</kbd> 검색창 · <kbd>j</kbd> 다음 결과 · <kbd>k</kbd> 이전 결과 · <kbd>Enter</kbd> 열기 · <kbd>?</kbd> 이 안내 닫기
+          </p>
+        )}
         <div className="filters" role="group" aria-label="검색 조건">
           {(Object.keys(SOURCE_LABEL) as SourceKind[]).map((s) => (
             <label key={s} className="chip" title={s === 'github' && githubToken === false ? '설정에서 GitHub 토큰을 넣으면 사용됩니다' : undefined}>
@@ -435,6 +475,13 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             </p>
           )}
           {health && !health.claudeVersion && <p className="warn-text small">Claude Code를 찾지 못해 플러그인 설치가 되지 않습니다.</p>}
+          {githubToken === false && (
+            // before the first search only (UI debate D-4); in results it stays in the folded notices (D:48)
+            <p className="muted small">
+              GitHub 토큰 없음 · GitHub 코드 검색을 건너뛰고 스킬 목록도 느리게 모읍니다.{' '}
+              <a href="/settings">설정에서 넣기</a>
+            </p>
+          )}
           <TranslationNotice />
         </div>
       )}
@@ -449,8 +496,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                   // results are in; a few slow lookups (huge repos) are still being folded in
                   <span className="status-line">
                     <span>
-                      <b>{sorted.length}</b>
-                      {filtering && <span className="muted"> / {items.length}</span>}개 결과
+                      <b>{shown.length}</b>개 결과
                     </span>
                     <span className="muted small status-line">
                       <span className="spinner" aria-hidden="true" /> 나머지 후보 확인 중
@@ -463,10 +509,11 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 ) : status === 'error' ? (
                   <span className="warn-text">검색 실패</span>
                 ) : (
+                  // one count, the same as the pager's: cards shown; folded copies and filtered-out ones are noted
                   <span>
-                    <b>{sorted.length}</b>
-                    {filtering && <span className="muted"> / {items.length}</span>}개 결과
+                    <b>{shown.length}</b>개 결과
                     {sorted.length > shown.length && <span className="muted small"> · {sorted.length - shown.length}개 접힘</span>}
+                    {filtering && <span className="muted small"> · 필터로 {items.length - sorted.length}개 뺌</span>}
                     {doneInfo && <span className="muted small"> · {doneInfo.cached ? '저장된 결과' : `${(doneInfo.elapsedMs / 1000).toFixed(1)}초`}</span>}
                   </span>
                 )}
@@ -480,7 +527,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                       run(lastQuery, 'high', liftedStars);
                     }}
                   >
-                    위험 높음 {hiddenRisky}개 숨김 · 모두 보기
+                    위험 높음 {hiddenRisky}개 숨김 · 보기
                   </button>
                 )}
                 {status === 'done' && hiddenLowStars > 0 && (
@@ -490,7 +537,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                     title="이번 검색만 최소 스타 수 없이 다시 검색합니다 (설정은 그대로). 후보 중 일부는 다시 찾으면 검색어와 맞지 않아 빠질 수 있습니다."
                     onClick={() => run(lastQuery, maxRisk, final!.minStars!)}
                   >
-                    별 {final!.minStars!.toLocaleString()}개 미만 후보 {hiddenLowStars}개 숨김 · 보기
+                    별 {final!.minStars!.toLocaleString()} 미만 {hiddenLowStars}개 숨김 · 보기
                   </button>
                 )}
                 {status === 'done' && liftedStars != null && (
@@ -535,6 +582,11 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                       onChange={(e) => {
                         setPageSize(Number(e.target.value));
                         setPage(1);
+                        try {
+                          localStorage.setItem(PAGE_SIZE_KEY, e.target.value);
+                        } catch {
+                          // not remembered; nothing else changes
+                        }
                       }}
                       aria-label="페이지당 개수"
                     >
@@ -571,7 +623,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
               <div className="warn-strip">
                 <Icon name="info" size={15} />{' '}
                 <span>
-                  영어로 찾으면 결과가 더 많아요
+                  {koreanNote ? '스킬 설명이 대부분 영어라 한국어 검색어는 결과가 적거나 부정확합니다. ' : ''}영어로 찾으면 결과가 더 많아요
                   {suggest.dropped.length > 0 && <span className="muted"> (번역 못 한 단어: {suggest.dropped.join(', ')})</span>}.
                 </span>
                 <button
@@ -613,7 +665,9 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                   position={i}
                   provisional={provisional}
                   belowMinStars={liftedStars != null && (it.stars ?? 0) < liftedStars ? liftedStars : undefined}
-                  onSelect={() => onOpen(it, { sid, pos: (currentPage - 1) * pageSize + i + 1, page: currentPage, provisional })}
+                  href={skillHref(it.id, fromOf(i))}
+                  installed={installedAs(it)}
+                  onSelect={() => onOpen(it, fromOf(i))}
                 />
                 {same && (
                   <button type="button" className="linkish small fold-more" onClick={() => setOpenNames((s) => new Set(s).add(same.key))}>
@@ -628,7 +682,51 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 )}
               </Fragment>
             ))}
-            {status === 'done' && items.length === 0 && <p className="empty">결과가 없습니다. 다른 영어 표현으로 검색해 보세요.</p>}
+            {status === 'done' && items.length === 0 && (
+              <div className="empty">
+                <p>
+                  결과가 없습니다.
+                  {(health?.skills ?? 0) < FEW_SKILLS
+                    ? ' 아직 스킬 목록을 모으는 중이라 결과가 적을 수 있습니다. 잠시 뒤 다시 검색해 보세요.'
+                    : ' 다른 영어 표현으로 검색해 보세요.'}
+                </p>
+                {(sources.length < 3 || maxRisk !== 'high' || (final?.minStars ?? 0) > 0) && (
+                  <div className="examples">
+                    <span className="muted small">걸려 있는 조건:</span>
+                    {sources.length < 3 && (
+                      <button
+                        type="button"
+                        className="chip-btn"
+                        onClick={() => {
+                          const all: SourceKind[] = ['marketplace', 'skillssh', 'github'];
+                          setSources(all);
+                          run(lastQuery, maxRisk, liftedStars, all);
+                        }}
+                      >
+                        출처 {3 - sources.length}곳 꺼짐 · 모두 켜고 다시 찾기
+                      </button>
+                    )}
+                    {maxRisk !== 'high' && (
+                      <button
+                        type="button"
+                        className="chip-btn"
+                        onClick={() => {
+                          setMaxRisk('high');
+                          run(lastQuery, 'high', liftedStars);
+                        }}
+                      >
+                        위험 {maxRisk === 'low' ? '낮음만' : '주의까지'} · 모두 보고 다시 찾기
+                      </button>
+                    )}
+                    {(final?.minStars ?? 0) > 0 && (
+                      <button type="button" className="chip-btn" onClick={() => run(lastQuery, maxRisk, final!.minStars!)}>
+                        별 {final!.minStars!.toLocaleString()} 이상만 · 이번만 풀고 다시 찾기
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             {items.length > 0 && sorted.length === 0 && (
               <p className="empty">
                 선택한 필터에 맞는 결과가 없습니다.{' '}

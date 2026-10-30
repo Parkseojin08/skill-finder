@@ -1,4 +1,4 @@
-import { RISK_RULES_VERSION } from './analyze/risk.ts';
+import { RISK_RULES_VERSION, riskLevel, type RiskFlag } from './analyze/risk.ts';
 import type { AppContext } from './context.ts';
 import { skillMdPath } from './discovery/tree.ts';
 import { PluginUnavailableError, recheckRisk } from './indexer.ts';
@@ -131,7 +131,7 @@ export async function recheckRiskRules(ctx: AppContext, now = Date.now()): Promi
           // only onto the same SKILL.md: a row indexed again meanwhile (new commit) already has current flags
           if (!next || !ctx.store.setSkillRisk(row.id, row.skill_md_sha256!, next.risk_json, next.risk_level, RISK_RULES_VERSION)) return;
           checked++;
-          if (next.risk_json !== row.risk_json) changed++;
+          if (next.risk_json !== row.risk_json || next.risk_level !== row.risk_level) changed++;
         });
       });
     }
@@ -144,6 +144,27 @@ export async function recheckRiskRules(ctx: AppContext, now = Date.now()): Promi
   if (changed > 0) ctx.store.clearSearchCache();
   if (checked > 0) console.log(`[risk recheck] ${checked} skills checked, ${changed} changed`);
   return { checked, changed };
+}
+
+/**
+ * Derives every stored level from its stored flags again (at startup). A change to how flags add up to a level,
+ * such as a flag becoming information only (UI debate D-3), needs no download. Returns the rows that moved.
+ */
+export function relevelRisk(ctx: AppContext): number {
+  const moved = ctx.store.listSkillRiskLevels().flatMap((r) => {
+    const level = riskLevel(r.risk_json ? (JSON.parse(r.risk_json) as RiskFlag[]) : []);
+    return level === r.risk_level ? [] : [{ id: r.id, level }];
+  });
+  for (let i = 0; i < moved.length; i += 500) {
+    ctx.store.transaction(() => {
+      for (const m of moved.slice(i, i + 500)) ctx.store.setSkillRiskLevel(m.id, m.level);
+    });
+  }
+  if (moved.length > 0) {
+    ctx.store.clearSearchCache();
+    console.log(`[risk] ${moved.length} skills got a new level from their stored signals`);
+  }
+  return moved.length;
 }
 
 /** Deletes search-log entries older than 90 days (U5-2; at startup and daily). */

@@ -243,7 +243,7 @@ export async function runSearch(
   const sources = new Set<SourceKind>(filters.sources?.length ? filters.sources : ['marketplace', 'skillssh', 'github']);
   const maxRisk: RiskLevel = filters.maxRisk ?? 'medium';
   // `r` is the result-item shape; bump it when items gain fields so cached searches are rebuilt.
-  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: 14, k: RISK_RULES_VERSION });
+  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: 15, k: RISK_RULES_VERSION });
 
   // The English query for a Korean one goes out first, cached search or not: it comes from the query alone,
   // and the button helps most exactly when there is little else to show.
@@ -815,6 +815,7 @@ export async function runSearch(
               id: s.id,
               name: s.name,
               riskLevel: (s.risk_level as RiskLevel) ?? 'low',
+              riskFlags: s.risk_json ? (JSON.parse(s.risk_json) as string[]) : [],
               method: plan.method,
               installable: plan.method !== 'manual-only' && !plan.disabled,
               scopes: plan.scopes,

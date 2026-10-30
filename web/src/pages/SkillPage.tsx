@@ -3,13 +3,23 @@ import { useEffect, useState } from 'react';
 import { apiGet } from '../api.ts';
 import { BreakdownTable, QualityBadges, RiskBadge, RiskFlags, RiskSummary, SourceBadges } from '../components/Badges.tsx';
 import { InstallPanel, riskierSiblings, SiblingRiskNote } from '../components/InstallPanel.tsx';
+import { useInstalled } from '../installed.ts';
 import { Markdown, splitFrontmatter } from '../components/Markdown.tsx';
 import { Translated } from '../components/Translated.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
-import { formatAgo, formatBytes, formatCount, LOW_RISK_NOTE, METHOD, QUALITY, RISK_FLAGS, RISK_RANK } from '../labels.ts';
+import { HelpTip } from '../components/HelpTip.tsx';
+import { formatAgo, formatBytes, formatCount, HELP, LOW_RISK_NOTE, METHOD, QUALITY, RISK_FLAGS, RISK_RANK } from '../labels.ts';
 import type { Breakdown, OpenedFrom, ResultItem, SettingsResponse, SkillDetail } from '../types.ts';
 
 type Tab = 'overview' | 'install' | 'skill' | 'files';
+
+/** What the install button actually fetches (UI debate 2-5): the plugin and its marketplace, or the repo and commit. */
+function installTarget(d: SkillDetail): string | null {
+  const p = d.install;
+  if (p.method === 'plugin') return `${p.pluginId ?? p.pluginName}${p.marketplace ? ` (마켓플레이스 ${p.marketplace.repo})` : ''}`;
+  if (p.method === 'skills-cli') return `${p.repo}${p.pinnedRef ? ` @ ${p.pinnedRef.slice(0, 7)}` : ''}`;
+  return d.repo;
+}
 
 export function SkillPage({ id, item, query, from, onBack }: { id: string; item: ResultItem | null; query: string; from?: OpenedFrom; onBack: () => void }) {
   const [detail, setDetail] = useState<SkillDetail | null>(null);
@@ -45,7 +55,13 @@ export function SkillPage({ id, item, query, from, onBack }: { id: string; item:
   };
 
   const name = detail?.name ?? item?.name ?? '';
-  const sources = item?.sources ?? detail?.sources ?? [];
+  const installedAs = useInstalled();
+  useEffect(() => {
+    if (name) document.title = `${name} · Skill Finder`;
+  }, [name]);
+  // the skill's own sources once loaded: a result card's can include a merged copy's (another repo); skills.sh
+  // is known only from the search, so it comes from the card
+  const sources = detail ? [...detail.sources, ...(item?.sources ?? []).filter((s) => s.kind === 'skillssh')] : (item?.sources ?? []);
   const breakdown: Partial<Breakdown> = { ...(item?.breakdown ?? {}), ...(detail?.partialBreakdown ?? {}) };
   const flags = detail?.riskFlags ?? item?.riskFlags ?? [];
   const quality = detail?.qualityWarnings ?? item?.qualityWarnings ?? [];
@@ -72,6 +88,16 @@ export function SkillPage({ id, item, query, from, onBack }: { id: string; item:
           {detail?.plugin && (
             <p className="muted small">
               {detail.plugin.marketplace} 마켓플레이스 · {detail.plugin.name} 플러그인
+            </p>
+          )}
+          {detail && installedAs(detail) && (
+            <p className="state-on small">
+              <Icon name="check" size={13} /> 이 PC에 설치됨 · {installedAs(detail)}
+            </p>
+          )}
+          {detail && installTarget(detail) && (
+            <p className="muted small">
+              설치 대상: <span className="mono">{installTarget(detail)}</span>
             </p>
           )}
           <div className="badges">
@@ -141,43 +167,6 @@ export function SkillPage({ id, item, query, from, onBack }: { id: string; item:
             </div>
           </section>
 
-          <section>
-            <h2>점수</h2>
-            <BreakdownTable breakdown={breakdown} weights={settings?.settings.weights} />
-            <p className="muted small">
-              {item
-                ? '관련도는 키워드 일치와 검색 순위로, 인기는 이번 검색 결과 안에서 비교해 계산했습니다.'
-                : '관련도와 인기는 검색 결과에서 열었을 때만 표시됩니다.'}
-            </p>
-          </section>
-
-          <section>
-            <h2>위험·품질</h2>
-            <div className="badges">
-              {riskLevel && <RiskBadge level={riskLevel} />}
-              <RiskFlags flags={flags} />
-              <QualityBadges codes={quality} />
-            </div>
-            {flags.length + quality.length > 0 ? (
-              <ul className="explain">
-                {flags.map((f) => (
-                  <li key={f}>
-                    <b>{RISK_FLAGS[f]?.label ?? f}</b> — {RISK_FLAGS[f]?.meaning ?? ''}
-                  </li>
-                ))}
-                {quality.map((q) => (
-                  <li key={q} className="muted">
-                    <b>{QUALITY[q]?.label ?? q}</b> — {QUALITY[q]?.meaning ?? ''}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="muted small">발견된 위험 신호나 품질 경고가 없습니다.</p>
-            )}
-            {riskLevel === 'low' && <p className="muted small">{LOW_RISK_NOTE}</p>}
-            {detail.plugin?.strictConflict && <p className="warn-box">로드 실패 가능: strict:false 항목과 plugin.json이 모두 구성요소를 선언합니다.</p>}
-          </section>
-
           {detail.plugin && (
             <section>
               <h2>플러그인</h2>
@@ -208,6 +197,49 @@ export function SkillPage({ id, item, query, from, onBack }: { id: string; item:
               </ul>
             </section>
           )}
+
+          <section>
+            <h2>
+              위험·품질
+              <HelpTip label="위험 등급" text={HELP.risk} />
+            </h2>
+            <div className="badges">
+              {riskLevel && <RiskBadge level={riskLevel} />}
+              <RiskFlags flags={flags} />
+              <QualityBadges codes={quality} />
+            </div>
+            {flags.length + quality.length > 0 ? (
+              <ul className="explain">
+                {flags.map((f) => (
+                  <li key={f}>
+                    <b>{RISK_FLAGS[f]?.label ?? f}</b> — {RISK_FLAGS[f]?.meaning ?? ''}
+                  </li>
+                ))}
+                {quality.map((q) => (
+                  <li key={q} className="muted">
+                    <b>{QUALITY[q]?.label ?? q}</b> — {QUALITY[q]?.meaning ?? ''}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted small">발견된 위험 신호나 품질 경고가 없습니다.</p>
+            )}
+            {riskLevel === 'low' && <p className="muted small">{LOW_RISK_NOTE}</p>}
+            {detail.plugin?.strictConflict && <p className="warn-box">로드 실패 가능: strict:false 항목과 plugin.json이 모두 구성요소를 선언합니다.</p>}
+          </section>
+
+          <section>
+            <h2>
+              점수
+              <HelpTip label="점수" text={HELP.score} />
+            </h2>
+            <BreakdownTable breakdown={breakdown} />
+            <p className="muted small">
+              {item
+                ? '관련도는 키워드 일치와 검색 순위로, 인기는 이번 검색 결과 안에서 비교해 계산했습니다.'
+                : '관련도와 인기는 검색 결과에서 열었을 때만 표시됩니다.'}
+            </p>
+          </section>
         </div>
       )}
 

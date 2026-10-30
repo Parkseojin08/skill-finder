@@ -164,6 +164,8 @@ describe('§6.3 위험 신호', () => {
   it('등급', () => {
     assert.equal(riskLevel([]), 'low');
     assert.equal(riskLevel(['rmRf']), 'low');
+    assert.equal(riskLevel(['pluginRootDependency', 'rmRf']), 'low', '설치 방식 정보일 뿐 (D-3)');
+    assert.equal(riskLevel(['pluginRootDependency', 'scripts']), 'medium');
     assert.equal(riskLevel(['scripts']), 'medium');
     assert.equal(riskLevel(['shellInjection', 'preapprovedBash']), 'medium');
     assert.equal(riskLevel(['shellInjection', 'unscopedBash', 'preapprovedBash']), 'high');

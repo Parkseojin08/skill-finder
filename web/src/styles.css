@@ -361,8 +361,11 @@ button.linkish.current {
 .topbar nav {
   display: flex;
   gap: 4px;
+  max-width: 100%;
+  overflow-x: auto;
 }
 .topbar nav a {
+  white-space: nowrap;
   display: inline-flex;
   align-items: center;
   min-height: 36px;
@@ -955,7 +958,6 @@ button.status-chip.action:hover:not(:disabled) {
   border: 1px solid var(--line);
   border-radius: var(--corner);
   padding: 16px 18px 14px;
-  cursor: pointer;
   transition: border-color 0.18s var(--ease), background-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
 }
 .card:hover {
@@ -963,9 +965,37 @@ button.status-chip.action:hover:not(:disabled) {
   background: var(--surface-hover);
   box-shadow: inset 2px 0 0 var(--neon), 0 0 24px -12px var(--neon-glow);
 }
-.card:focus-visible {
+.card:focus-within:has(.card-link:focus-visible) {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+/* the title link covers the whole card; links and the score inside stay clickable above it */
+.card-link {
+  color: inherit;
+  text-decoration: none;
+}
+.card-link:focus-visible {
+  outline: none;
+}
+.card-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+/* above the cover: links, the score, and the bits whose tooltip says what they are */
+.card a.badge,
+.card .score,
+.card .risk-sum,
+.card .card-owner,
+.card .stat,
+.card .status-chip,
+.card .cat-tag {
+  position: relative;
+  z-index: 2;
+}
+.card-owner {
+  overflow-wrap: anywhere;
 }
 .card.provisional {
   opacity: 0.7;
@@ -1127,8 +1157,14 @@ a.badge:hover {
 .badge.risk-high {
   background: var(--danger-soft);
   color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  border: 2px solid color-mix(in srgb, var(--danger) 70%, transparent);
   font-weight: 700;
+}
+.badge.risk-high,
+.badge.source.official {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 .badge.flag {
   background: transparent;
@@ -1161,19 +1197,19 @@ a.badge:hover {
   border-radius: 1px;
   overflow: hidden;
 }
+/* secondary on purpose (UI debate D-2): results are ordered by name match, downloads and stars, not this score */
 .score-fill {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, var(--cyan), var(--neon));
-  box-shadow: 0 0 8px var(--neon-glow);
+  background: var(--text-muted);
 }
 .score-num {
   font-family: var(--font-mono);
-  font-weight: 700;
-  font-size: 0.95rem;
+  font-weight: 600;
+  font-size: 0.85rem;
   min-width: 2.2ch;
   text-align: right;
-  color: var(--text);
+  color: var(--text-muted);
 }
 .score-tip {
   display: none;
@@ -1721,6 +1757,17 @@ button.primary.danger-solid:hover:not(:disabled) {
   .kbd-hint {
     display: none;
   }
+  /* narrow windows: the toolbar takes less height so the first card shows (UI debate 2-4) */
+  .results-toolbar {
+    padding: 6px 0;
+    gap: 6px 10px;
+  }
+  .results-toolbar select {
+    font-size: 0.8rem;
+  }
+  .topbar nav a {
+    padding: 0 10px;
+  }
   /* Narrow screens: filters fold into a "필터" button above the results. */
   .results-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -2063,4 +2110,77 @@ kbd {
   }
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.confirm-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  font-weight: 600;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 14px;
+  margin: 8px 0 0;
+  font-size: 0.88rem;
+}
+.kv dt {
+  color: var(--text-muted);
+}
+.kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.help-tip {
+  display: inline-block;
+  margin-left: 8px;
+  vertical-align: middle;
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+.help-tip summary {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+  list-style: none;
+}
+.help-tip summary::-webkit-details-marker {
+  display: none;
+}
+.help-tip summary:focus-visible {
+  outline: 2px solid var(--focus);
+}
+.help-tip[open] .help-body {
+  margin: 6px 0 0;
+  max-width: 60ch;
+  padding: 8px 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-strong);
+  color: var(--text-soft);
+  line-height: 1.5;
+}
+.shortcut-help {
+  margin: 4px 0 0;
+}
+
 } /* @layer app */
+

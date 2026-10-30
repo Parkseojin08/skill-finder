@@ -47,7 +47,9 @@ export const COMMUNITY_MARKETPLACES = new Set(['claude-community']);
 
 export function getSettings(store: Store): Settings {
   const saved = store.getSetting<Partial<Settings>>('app') ?? {};
-  const merged = { ...DEFAULT_SETTINGS, ...saved, weights: { ...DEFAULT_SETTINGS.weights, ...(saved.weights ?? {}) } };
+  // Weights are no longer a setting (UI debate D-1): they never changed the order, only the card numbers and the
+  // cache. Saved ones from older versions are ignored.
+  const merged = { ...DEFAULT_SETTINGS, ...saved, weights: DEFAULT_SETTINGS.weights };
   const parsed = SettingsSchema.safeParse(merged);
   return parsed.success ? parsed.data : DEFAULT_SETTINGS;
 }
