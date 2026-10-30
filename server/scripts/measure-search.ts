@@ -1,5 +1,6 @@
-// Search quality and speed on a fixed set of queries, run against a copy of the real database (the app's own
-// data is only read). Network calls are real (skills.sh, GitHub with the .env token), so numbers vary a little.
+// Superseded by scripts/bench (record/replay, pinned clock, page-order scoring); kept for the numbers of the first
+// search debate. Search quality and speed on a fixed set of queries, run against a copy of the real database (the
+// app's own data is only read). Network calls are real (skills.sh, GitHub with the .env token), so numbers vary.
 //
 //   node --disable-warning=ExperimentalWarning scripts/measure-search.ts out.json
 //   node --disable-warning=ExperimentalWarning scripts/measure-search.ts --compare before.json after.json

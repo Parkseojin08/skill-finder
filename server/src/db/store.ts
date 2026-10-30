@@ -517,6 +517,12 @@ export class Store {
     return JSON.parse(row.payload_json);
   }
 
+  /** When `key` was stored, if within `maxAgeMs` (for verdicts that a later change can make stale). */
+  getCachedAt(key: string, maxAgeMs: number): string | undefined {
+    const row = this.get<{ created_at: string }>('SELECT created_at FROM search_cache WHERE key = ?', key);
+    return row && Date.now() - Date.parse(row.created_at) <= maxAgeMs ? row.created_at : undefined;
+  }
+
   putCached(key: string, payload: unknown): void {
     this.run(
       `INSERT INTO search_cache (key, created_at, payload_json) VALUES (?, ?, ?)

@@ -142,6 +142,46 @@ describe('§7 검색 파이프라인', () => {
     assert.ok(final.items.some((i) => i.name === 'late-hit'), final.items.map((i) => i.name).join(','));
   });
 
+  it('skills.sh가 답하면 GitHub를 기다리지 않고 임시 결과를 다시 보낸다 (성능 토론 1-5)', async () => {
+    const ctx = ctxWithSkills();
+    Object.defineProperty(ctx.github, 'hasToken', { get: () => true });
+    ctx.indexer.findByPath = async () => null;
+    ctx.github.searchSkillFiles = async () => {
+      await new Promise((r) => setTimeout(r, 120));
+      return [] as never;
+    };
+    const events: SearchEvent[] = [];
+    await runSearch(deps(ctx, { githubWaitMs: 400, skillsSh: async () => [] }), 'pdf tables', {}, (e) => events.push(e));
+    const githubDone = events.findIndex((e) => e.type === 'source' && e.source === 'github' && e.state === 'done');
+    const early = events.slice(0, githubDone).filter((e) => e.type === 'candidates').length;
+    assert.ok(early >= 2, `GitHub 전에 보낸 임시 결과 ${early}번 (로컬 + skills.sh)`);
+  });
+
+  it('"설치할 스킬 없음" 판정은 하루 기억하고, 그 뒤 push가 있으면 다시 본다 (성능 토론 1-2)', async () => {
+    const ctx = ctxWithSkills();
+    Object.defineProperty(ctx.github, 'hasToken', { get: () => true });
+    let reads = 0;
+    ctx.indexer.findByPath = async () => (reads++, null);
+    ctx.github.searchSkillFiles = async () => [{ repo: 'gone/repo', path: 'skills/x/SKILL.md', htmlUrl: 'https://github.com/gone/repo' }] as never;
+    const looked: string[] = [];
+    ctx.indexer.findInRepo = async (r) => (looked.push(r), null);
+    const ss = { id: 'ss/repo/pdf-x', source: 'ss/repo', skillId: 'pdf-x', name: 'pdf-x', installs: 10 };
+    const run = async () => {
+      ctx.store.clearSearchCache(); // results are cached separately; the verdicts must survive this (a restart)
+      await collect(deps(ctx, { skillsSh: async () => [ss] }), 'pdf widgets');
+    };
+    await run();
+    assert.equal(reads, 1);
+    assert.deepEqual(looked, ['ss/repo']);
+    await run();
+    assert.equal(reads, 1, '하루 안에는 다시 읽지 않음');
+    assert.deepEqual(looked, ['ss/repo']);
+    // the repo was pushed to after the verdict: look again
+    ctx.store.upsertRepo({ full_name: 'gone/repo', stars: null, pushed_at: new Date(Date.now() + 60_000).toISOString(), archived: 0, fork: 0, license: null, default_branch: 'main', etag: null, fetched_at: new Date().toISOString() });
+    await run();
+    assert.equal(reads, 2);
+  });
+
   it('GitHub 키워드는 불용어를 빼고 최대 3개', () => {
     assert.deepEqual(queryKeywords('extract the tables from pdf files'), ['extract', 'tables', 'pdf']);
   });

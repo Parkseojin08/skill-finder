@@ -2,9 +2,14 @@ import { join } from 'node:path';
 import type { AppConfig } from '../config.ts';
 import type { RepoRow, Store } from '../db/store.ts';
 import { fetchText, USER_AGENT } from '../util/http.ts';
+import { SizedCache } from '../util/sizedCache.ts';
 import { sanitizeLine } from '../util/sanitize.ts';
 import { RateLimitWait, Semaphore, sleep, TokenBucket } from '../util/limiter.ts';
 import { gitTree, lsRemote, type RemoteRef, type TreeEntry } from './gitTree.ts';
+
+/** Tree entries the tree cache may hold (perf debate 1-3); kubernetes, the largest seen, has about 42,000. */
+export const TREE_CACHE_ENTRIES = 50_000;
+const REF_TTL_MS = 10 * 60 * 1000;
 
 export type RepoTree = {
   repo: string;
@@ -61,7 +66,8 @@ export class GitHub {
   /** Last seen remaining/reset per rate-limit resource (core, search, code_search, graphql). */
   private readonly limits = new Map<string, { remaining: number; reset: number }>();
   private readonly searchInFlight = new Map<string, Promise<unknown>>();
-  private readonly treeCache = new Map<string, Promise<RepoTree>>();
+  /** Bounded by tree entries, not count (perf debate 1-3): ~175 bytes each, so about 9MB at most. */
+  private readonly treeCache = new SizedCache<RepoTree>({ maxSize: TREE_CACHE_ENTRIES, ttlMs: 30 * 60 * 1000, sizeOf: (t) => t.entries.length });
   private readonly refCache = new Map<string, { at: number; value: Promise<RemoteRef | null> }>();
   /** raw.githubusercontent.com answers bursts of hundreds of parallel downloads with 429s; keep it civil. */
   private readonly rawSlots = new Semaphore(24);
@@ -172,12 +178,14 @@ export class GitHub {
   resolveRef(repo: string, ref?: string | null): Promise<RemoteRef | null> {
     const key = `${repo.toLowerCase()}@${ref ?? 'HEAD'}`;
     const hit = this.refCache.get(key);
-    if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.value;
+    if (hit && Date.now() - hit.at < REF_TTL_MS) return hit.value;
     const value = this.shaViaApi(repo, ref ?? 'HEAD')
       .then((sha) => (sha ? { sha, defaultBranch: null } : lsRemote(repo, ref)))
       .catch(() => lsRemote(repo, ref))
       .catch(() => null);
     this.refCache.set(key, { at: Date.now(), value });
+    // expired commits are dropped, not only skipped (they used to stay for the life of the app)
+    if (this.refCache.size > 200) for (const [k, v] of this.refCache) if (Date.now() - v.at >= REF_TTL_MS) this.refCache.delete(k);
     return value;
   }
 
@@ -198,9 +206,7 @@ export class GitHub {
     let p = this.treeCache.get(key);
     if (!p) {
       p = this.loadTree(repo, sha);
-      p.catch(() => this.treeCache.delete(key));
       this.treeCache.set(key, p);
-      if (this.treeCache.size > 200) this.treeCache.delete(this.treeCache.keys().next().value!);
     }
     return p;
   }
@@ -215,7 +221,7 @@ export class GitHub {
       const [ref, entries] = await Promise.all([this.resolveRef(repo, null), this.treeViaApi(repo, 'HEAD').catch(() => null)]);
       if (!ref) throw new Error(`저장소를 찾을 수 없습니다: ${repo}`);
       const key = `${repo.toLowerCase()}@${ref.sha}`;
-      if (entries && !this.treeCache.has(key)) {
+      if (entries && !this.treeCache.get(key)) {
         this.treeCache.set(key, Promise.resolve({ repo, sha: ref.sha, entries, via: 'api', commitDate: this.store.getRepo(repo)?.pushed_at ?? null }));
       }
       return this.getTree(repo, ref.sha);
@@ -316,6 +322,13 @@ export class GitHub {
       }
       if (!res.ok) {
         await res.body?.cancel().catch(() => {});
+        // A deleted or private repo is stored as "stars unknown" for a day, as the GraphQL path does for
+        // NOT_FOUND, instead of being asked again in every search (perf debate 1-2).
+        if (res.status === 404 && cached?.stars == null) {
+          const row: RepoRow = { full_name: cached?.full_name ?? repo, stars: null, pushed_at: null, archived: null, fork: null, license: null, default_branch: null, etag: null, fetched_at: new Date().toISOString() };
+          this.store.upsertRepo(row);
+          return row;
+        }
         return cached ?? null;
       }
       const j = (await res.json()) as {

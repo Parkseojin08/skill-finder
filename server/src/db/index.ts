@@ -13,9 +13,28 @@ export class DataTooNewError extends Error {
   }
 }
 
+/**
+ * Reading the database through a memory map halves the local search's SQL time (14 → 7ms, same results) at
+ * +0–5MB of private memory, where a 64MB page cache costs +35–40MB (perf debate 1-4). This SQLite build has no
+ * Windows structured exception handling, so a disk read error while mapped ends the process instead of failing
+ * one query: off for a network share, and SKILL_FINDER_MMAP=0 turns it off.
+ */
+export const MMAP_BYTES = 256 * 1024 * 1024;
+
+export function mmapBytesFor(path: string, env: NodeJS.ProcessEnv = process.env): number {
+  if (env.SKILL_FINDER_MMAP === '0' || path === ':memory:' || /^(\\\\|\/\/)/.test(path)) return 0;
+  return MMAP_BYTES;
+}
+
 export function openDb(path: string): Db {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF; PRAGMA busy_timeout = 5000;');
+  const mmap = mmapBytesFor(path);
+  if (mmap > 0) {
+    db.exec(`PRAGMA mmap_size = ${mmap}`);
+    const got = (db.prepare('PRAGMA mmap_size').get() as { mmap_size: number } | undefined)?.mmap_size ?? 0;
+    if (got === 0) console.warn('[db] mmap을 쓸 수 없어 일반 읽기로 엽니다');
+  }
   migrate(db);
   return db;
 }

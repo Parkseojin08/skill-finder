@@ -10,6 +10,7 @@ import type { PluginRow, SkillRow, Store } from './db/store.ts';
 import { RAW_MAX_BYTES, type GitHub, type RepoTree } from './sources/github.ts';
 import { normalizeSource, resolveRelativeRoot } from './sources/pluginSource.ts';
 import { pool } from './util/limiter.ts';
+import { SizedCache } from './util/sizedCache.ts';
 
 export type StoredPluginEntry = { entry: MarketplaceEntry; pluginRoot: string | null };
 
@@ -150,7 +151,8 @@ type RepoLookup = { snap: RepoSnapshot; discovery: RepoDiscovery; generic: Gener
 export class Indexer {
   private readonly store: Store;
   private readonly github: GitHub;
-  private readonly discoveryCache = new Map<string, Promise<RepoLookup>>();
+  /** Bounded by tree entries (perf debate 1-3): a lookup holds its tree and the SKILL.md texts read, ~770B each. */
+  private readonly discoveryCache = new SizedCache<RepoLookup>({ maxSize: 60_000, ttlMs: 10 * 60 * 1000, sizeOf: (l) => l.snap.index.files.size });
 
   constructor(store: Store, github: GitHub) {
     this.store = store;
@@ -276,9 +278,7 @@ export class Indexer {
         const discovery = await discoverRepo(snap.index, snap.read, genericValidator, { genericSkills: false });
         return { snap, discovery, generic: genericAcceptor(snap.index, snap.read, genericValidator) };
       })();
-      p.catch(() => this.discoveryCache.delete(key));
       this.discoveryCache.set(key, p);
-      setTimeout(() => this.discoveryCache.delete(key), 10 * 60 * 1000).unref();
     }
     return p;
   }

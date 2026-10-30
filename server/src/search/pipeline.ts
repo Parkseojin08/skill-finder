@@ -363,8 +363,30 @@ export async function runSearch(
   const lookups: Promise<void>[] = [];
   const errors: string[] = [];
 
+  // "Nothing installable here" is remembered for a day (perf debate 1-2): after a restart the same search read
+  // whole trees again (kubernetes, 10MB) and asked deleted repos twice. A push to the repo since (its stored
+  // pushed_at) makes the verdict stale. Kept in search_cache, which a restart does not clear for these keys.
+  const knownMissing = (key: string, repo: string | null) => {
+    const at = store.getCachedAt(key, DAY_MS);
+    if (!at) return false;
+    const pushed = repo ? store.getRepo(repo)?.pushed_at : null;
+    return !(pushed && Date.parse(pushed) > Date.parse(at));
+  };
+
   const resolveCandidate = async (c: Candidate): Promise<Outcome> => {
     const p = c.pending!;
+    const ss = p.type === 'skillssh' ? classifySkillsShSource(p.hit.source) : null;
+    const [missKey, missRepo] =
+      p.type === 'github'
+        ? [`miss:v1:gh:${p.repo.toLowerCase()}:${p.path}`, p.repo]
+        : p.type === 'skillssh' && ss?.kind === 'github'
+          ? [`miss:v1:ss:${ss.repo.toLowerCase()}:${normalizeSkillName(p.hit.name)}:${p.hit.skillId ?? ''}`, ss.repo]
+          : [null, null];
+    if (missKey && knownMissing(missKey, missRepo)) return 'missing';
+    const missed = (): Outcome => {
+      if (missKey) store.putCached(missKey, 1);
+      return 'missing';
+    };
     // A repo never seen before: one metadata call (cached a day) is cheaper than reading its tree and SKILL.md.
     const repo = minStars > 0 ? candidateRepo(c) : null;
     if (repo && storedStarsOf(repo) == null) {
@@ -395,7 +417,7 @@ export async function runSearch(
     work.catch(() => {}); // a timed-out lookup keeps running and stores its row for the next search
     try {
       const skills = await withTimeout(work, Math.max(0, deadline - Date.now()), 'timeout');
-      if (skills.length === 0) return 'missing';
+      if (skills.length === 0) return missed();
       if (p.type === 'plugin') {
         const plugin = store.getPlugin(p.plugin.id) ?? p.plugin;
         for (const s of skills) late.push({ ...blank(s.id, s), sources: [marketplaceSource(s, plugin)], pos: { ...c.pos } });
@@ -407,7 +429,7 @@ export async function runSearch(
       const msg = String((err as Error)?.message ?? err);
       if (msg === 'timeout') return 'timeout';
       // A deleted or renamed repo is gone for good, not a hiccup.
-      if (err instanceof PluginUnavailableError || /저장소를 찾을 수 없습니다|tree 40[49]|tree 422/.test(msg)) return 'missing';
+      if (err instanceof PluginUnavailableError || /저장소를 찾을 수 없습니다|tree 40[49]|tree 422/.test(msg)) return missed();
       errors.push(msg.slice(0, 100));
       return 'error';
     }
@@ -462,8 +484,16 @@ export async function runSearch(
       }
     }
     // Found on GitHub but never indexed: read its skills now (a slow repo keeps indexing in the background).
-    const unindexed = [...repoInfo.keys()].slice(0, 3).filter((r) => store.findSkillsByRepo(r).length === 0);
-    await Promise.all(unindexed.map((r) => withTimeout(indexer.indexRepo(r), 8000, 'timeout').catch(() => 0)));
+    // One read that found no skills is remembered for a day like a missing lookup (perf debate 1-2).
+    const noSkillKey = (r: string) => `noskill:v1:${r.toLowerCase()}`;
+    const unindexed = [...repoInfo.keys()].slice(0, 3).filter((r) => store.findSkillsByRepo(r).length === 0 && !knownMissing(noSkillKey(r), r));
+    await Promise.all(
+      unindexed.map((r) => {
+        const job = indexer.indexRepo(r);
+        job.then((res) => (res.skills === 0 && !res.unchanged ? store.putCached(noSkillKey(r), 1) : undefined)).catch(() => {});
+        return withTimeout(job, 8000, 'timeout').catch(() => 0);
+      }),
+    );
     addLateIndexed(addRepoNameSkills());
     return { state: 'done', count: repoInfo.size };
   };
@@ -621,6 +651,12 @@ export async function runSearch(
   } finally {
     openLocalGate(); // whatever happens, or the network sources would wait forever
   }
+  // skills.sh carries the downloads, the first sort key: the early cards are sent again as soon as it answers,
+  // not only when GitHub is also in (perf debate 1-5; the top five settled 0.3–1s sooner where they changed).
+  let collected = false;
+  void skillsShDone.then(() => {
+    if (!collected) emitCandidates();
+  });
   // skills.sh and GitHub are waited for up to the same point (it took over 4s in ~1% of measured searches);
   // a later answer joins the results when it arrives, and that search is cached only briefly.
   const collectWait = sleep(Math.max(0, t0 + (deps.githubWaitMs ?? GITHUB_COLLECT_WAIT_MS) - Date.now())).then(() => false);
@@ -629,6 +665,7 @@ export async function runSearch(
     Promise.race([githubDone.then(() => true), collectWait]),
   ]);
   timings.collect = Date.now() - t0;
+  collected = true;
   emitCandidates();
 
   // 2. enrich: wait for the lookups (already running), plus any top candidate not started yet

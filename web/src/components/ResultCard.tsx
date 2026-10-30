@@ -3,10 +3,9 @@ import { Icon } from './Icon.tsx';
 import { CATEGORY, formatAgo, formatCount } from '../labels.ts';
 import { useKorean } from '../translate.ts';
 import type { OpenedFrom, ResultItem } from '../types.ts';
+import { repoOf } from '../lib/resultOrder.ts';
 import { RiskSummary, ScoreBar, SourceBadges } from './Badges.tsx';
 
-/** `owner/repo` of a GitHub-indexed result (ids are `gh:<owner>/<repo>:<dir>`). */
-export const repoOf = (item: ResultItem) => item.id.match(/^gh:([^/]+\/[^:]+):/)?.[1] ?? null;
 
 /** The skill page's address; `from` (where in a search it was) rides along so a new tab still logs the view. */
 export function skillHref(id: string, from?: OpenedFrom): string {

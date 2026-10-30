@@ -13,8 +13,16 @@ export type RunOptions = {
 
 export type RunResult = { exitCode: number; stdout: string; stderr: string; timedOut: boolean };
 
+/** Set only by the measurement tool (server/scripts/bench) to record or replay child processes (git). */
+type ProcHook = (file: string, args: string[], opts: RunOptions, real: typeof spawnRun) => Promise<RunResult>;
+
 /** Runs a process without a shell (unless explicitly requested), collecting sanitized output. */
 export function run(file: string, args: string[], opts: RunOptions = {}): Promise<RunResult> {
+  const hook = (globalThis as { __skillFinderProcHook?: ProcHook }).__skillFinderProcHook;
+  return hook ? hook(file, args, opts, spawnRun) : spawnRun(file, args, opts);
+}
+
+function spawnRun(file: string, args: string[], opts: RunOptions): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, {
       cwd: opts.cwd,

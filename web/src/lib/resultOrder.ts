@@ -1,7 +1,9 @@
 // Result order and folding for the search page (moved out of SearchPage.tsx, UI debate 2-1; no behaviour change).
-import { repoOf } from '../components/ResultCard.tsx';
 import { RISK_RANK } from '../labels.ts';
 import type { ResultItem } from '../types.ts';
+
+/** `owner/repo` of a GitHub-indexed result (ids are `gh:<owner>/<repo>:<dir>`). */
+export const repoOf = (item: Pick<ResultItem, 'id'>) => item.id.match(/^gh:([^/]+\/[^:]+):/)?.[1] ?? null;
 
 export type SortKey = 'popular' | 'stars' | 'recent' | 'name';
 // Default order (user decisions, same as the server): skills whose name has a query word and that match at

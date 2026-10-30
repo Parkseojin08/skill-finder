@@ -195,3 +195,19 @@ describe('새 버전 알림', () => {
     }
   });
 });
+
+describe('SQLite mmap (성능 토론 1-4)', () => {
+  it('파일 DB는 256MB로 매핑하고, 끄는 스위치·네트워크 경로·메모리 DB는 끈다', async () => {
+    const { MMAP_BYTES, mmapBytesFor, openDb } = await import('../src/db/index.ts');
+    assert.equal(mmapBytesFor(String.raw`C:\data\x.db`, {}), MMAP_BYTES);
+    assert.equal(mmapBytesFor(String.raw`C:\data\x.db`, { SKILL_FINDER_MMAP: '0' }), 0);
+    assert.equal(mmapBytesFor(String.raw`\\server\share\x.db`, {}), 0, '네트워크 공유');
+    assert.equal(mmapBytesFor('//server/share/x.db', {}), 0);
+    assert.equal(mmapBytesFor(':memory:', {}), 0);
+    const path = join(mkdtempSync(join(tmpdir(), 'sf-mmap-')), 'x.db');
+    const db = openDb(path);
+    const got = (db.prepare('PRAGMA mmap_size').get() as { mmap_size: number }).mmap_size;
+    db.close();
+    assert.ok(got > 0, String(got));
+  });
+});

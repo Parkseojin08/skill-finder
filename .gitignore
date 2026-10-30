@@ -9,3 +9,6 @@ CLAUDE.md
 AGENTS.md
 .codex/
 skills-lock.json
+
+# measurement recordings (server/scripts/bench, several MB each)
+server/scripts/bench/recordings/
