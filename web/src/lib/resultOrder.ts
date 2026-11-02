@@ -65,7 +65,13 @@ function foldByRepo(sorted: ResultItem[], open: Set<string>, word: string | null
 
 /** Name key for same-name folding, as the README recommendation groups copies ("PDF_Tools" = "pdf-tools"). */
 const nameKey = (item: ResultItem) => item.name.normalize('NFC').toLowerCase().replace(/[\s_]+/g, '-');
-export type Row = { item: ResultItem; more?: { repo: string; count: number }; same?: { key: string; count: number; riskier: boolean } };
+/** `copyOf`: an opened same-name copy shown under its first card; `last` gets the "접기" button. */
+export type Row = {
+  item: ResultItem;
+  more?: { repo: string; count: number };
+  same?: { key: string; count: number; riskier: boolean };
+  copyOf?: { key: string; last: boolean };
+};
 
 /**
  * Same-name skills (U2, user decision) fold under the first one in the current order: the others follow it
@@ -90,7 +96,8 @@ export function foldResults(sorted: ResultItem[], openRepos: Set<string>, openNa
     const rest = copies.get(k)!;
     if (rest.length === 0) out.push(row);
     // opened: the copies come right after the card, and its repository's "N개 더" button after the last copy
-    else if (openNames.has(k)) out.push({ item: row.item }, ...rest.map((x, i) => ({ item: x, ...(i === rest.length - 1 && row.more ? { more: row.more } : {}) })));
+    else if (openNames.has(k))
+      out.push({ item: row.item }, ...rest.map((x, i) => ({ item: x, copyOf: { key: k, last: i === rest.length - 1 }, ...(i === rest.length - 1 && row.more ? { more: row.more } : {}) })));
     else out.push({ ...row, same: { key: k, count: rest.length, riskier: rest.some((x) => RISK_RANK[x.riskLevel] > RISK_RANK[row.item.riskLevel]) } });
   }
   return out;

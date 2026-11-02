@@ -318,8 +318,13 @@ function ConfirmDialog(props: {
   const overwrite = needsOverwriteCheck(props.preview.existing);
   const [overwriteChecked, setOverwriteChecked] = useState(false);
   useEffect(() => {
+    // back to the "설치…" button when it goes (removed, not closed: the browser would drop the focus)
+    const opener = document.activeElement as HTMLElement | null;
     const d = ref.current;
     if (d && !d.open) d.showModal();
+    return () => {
+      if (opener?.isConnected) setTimeout(() => opener.focus(), 0);
+    };
   }, []);
   return (
     <dialog ref={ref} className="confirm" onCancel={props.onCancel} aria-labelledby="confirm-title">

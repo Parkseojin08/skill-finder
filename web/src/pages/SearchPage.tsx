@@ -176,19 +176,21 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
       if (inputRef.current?.offsetParent === null) return; // search page hidden
       if (document.querySelector('dialog[open], [role="dialog"]')) return; // a dialog has the keyboard
-      if (e.key === '/') {
+      // with the Korean layout on, j and k arrive as ㅓ and ㅏ: the key's place decides (review 2026-11-02)
+      const key = ['/', '?', 'j', 'k'].includes(e.key) ? e.key : ({ KeyJ: 'j', KeyK: 'k' } as Record<string, string>)[e.code] ?? e.key;
+      if (key === '/') {
         e.preventDefault();
         inputRef.current?.focus();
         inputRef.current?.select();
-      } else if (e.key === 'j' || e.key === 'k') {
+      } else if (key === 'j' || key === 'k') {
         const links = [...(resultsRef.current?.parentElement?.querySelectorAll<HTMLElement>('.results a.card-link') ?? [])];
         if (links.length === 0) return;
         e.preventDefault();
         const at = links.indexOf(document.activeElement as HTMLElement);
-        const next = at < 0 ? 0 : Math.min(links.length - 1, Math.max(0, at + (e.key === 'j' ? 1 : -1)));
+        const next = at < 0 ? 0 : Math.min(links.length - 1, Math.max(0, at + (key === 'j' ? 1 : -1)));
         links[next].focus();
         links[next].scrollIntoView({ block: 'nearest' });
-      } else if (e.key === '?') {
+      } else if (key === '?') {
         e.preventDefault();
         setShortcutsOpen((o) => !o);
       }
@@ -360,9 +362,20 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   const pageCount = Math.max(1, Math.ceil(shown.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const pageItems = shown.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  useEffect(() => {
+    if (focusAt.current == null) return;
+    const at = focusAt.current;
+    focusAt.current = null;
+    const links = resultsRef.current?.parentElement?.querySelectorAll<HTMLElement>('.results a.card-link');
+    if (links?.length) links[Math.min(at, links.length - 1)].focus({ preventScroll: at === 0 });
+  });
   const fromOf = (i: number): OpenedFrom => ({ sid, pos: (currentPage - 1) * pageSize + i + 1, page: currentPage, provisional });
+  /** A result card (by its place on the page) that gets the focus once the page has drawn: the first of a new
+   *  page, or the first card an "N개 더" opened (the button itself goes away; review 2026-11-02). */
+  const focusAt = useRef<number | null>(null);
   const goPage = (p: number) => {
     setPage(Math.min(Math.max(1, p), pageCount));
+    focusAt.current = 0;
     resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
@@ -409,6 +422,20 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             maxLength={300}
             aria-label="검색어"
             autoFocus
+            // Esc leaves the box so j / k work; ↓ goes to the first result (review 2026-11-02: after a search the
+            // focus stayed here and "j" was typed into the query)
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.currentTarget.blur();
+              } else if (e.key === 'ArrowDown') {
+                const first = resultsRef.current?.parentElement?.querySelector<HTMLElement>('.results a.card-link');
+                if (first) {
+                  e.preventDefault();
+                  first.focus();
+                  first.scrollIntoView({ block: 'nearest' });
+                }
+              }
+            }}
           />
           <button type="submit" className="primary" disabled={!query.trim() || sources.length === 0}>
             검색
@@ -659,25 +686,56 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
           )}
 
           <div className="results">
-            {pageItems.map(({ item: it, more, same }, i) => (
+            {pageItems.map(({ item: it, more, same, copyOf }, i) => (
               <Fragment key={it.id}>
-                <ResultCard
-                  item={it}
-                  position={i}
-                  provisional={provisional}
-                  belowMinStars={liftedStars != null && (it.stars ?? 0) < liftedStars ? liftedStars : undefined}
-                  href={skillHref(it.id, fromOf(i))}
-                  installed={installedAs(it)}
-                  onSelect={() => onOpen(it, fromOf(i))}
-                />
+                <div className={copyOf ? 'copy-row' : undefined}>
+                  <ResultCard
+                    item={it}
+                    position={i}
+                    provisional={provisional}
+                    belowMinStars={liftedStars != null && (it.stars ?? 0) < liftedStars ? liftedStars : undefined}
+                    href={skillHref(it.id, fromOf(i))}
+                    installed={installedAs(it)}
+                    onSelect={() => onOpen(it, fromOf(i))}
+                  />
+                </div>
+                {copyOf?.last && (
+                  <button
+                    type="button"
+                    className="linkish small fold-more"
+                    onClick={() =>
+                      setOpenNames((s) => {
+                        const next = new Set(s);
+                        next.delete(copyOf.key);
+                        return next;
+                      })
+                    }
+                  >
+                    같은 이름 <span className="mono">{it.name}</span> 접기
+                  </button>
+                )}
                 {same && (
-                  <button type="button" className="linkish small fold-more" onClick={() => setOpenNames((s) => new Set(s).add(same.key))}>
+                  <button
+                    type="button"
+                    className="linkish small fold-more"
+                    onClick={() => {
+                      focusAt.current = i + 1;
+                      setOpenNames((s) => new Set(s).add(same.key));
+                    }}
+                  >
                     같은 이름 <span className="mono">{it.name}</span> {same.count}개 더 보기
                     {same.riskier && <span className="warn-text"> · 위험 주의 포함</span>}
                   </button>
                 )}
                 {more && (
-                  <button type="button" className="linkish small fold-more" onClick={() => setOpenRepos((s) => new Set(s).add(more.repo))}>
+                  <button
+                    type="button"
+                    className="linkish small fold-more"
+                    onClick={() => {
+                      focusAt.current = i + 1;
+                      setOpenRepos((s) => new Set(s).add(more.repo));
+                    }}
+                  >
                     <span className="mono">{more.repo}</span>에서 {more.count}개 더 보기
                   </button>
                 )}

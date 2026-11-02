@@ -18,8 +18,14 @@ export function ConfirmDialog({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
+    // the control that opened it gets the focus back when it goes (it is removed, not closed, so the browser
+    // would leave the focus on the page; review 2026-11-02)
+    const opener = document.activeElement as HTMLElement | null;
     const d = ref.current;
     if (d && !d.open) d.showModal();
+    return () => {
+      if (opener?.isConnected) setTimeout(() => opener.focus(), 0);
+    };
   }, []);
   return (
     <dialog ref={ref} className="confirm" onCancel={onCancel} aria-labelledby="confirm-dialog-title">

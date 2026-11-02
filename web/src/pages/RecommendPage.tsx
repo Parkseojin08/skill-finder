@@ -65,6 +65,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
 
   // Turning a keyword off or adding one recalculates at once (project review 2026-11-02; local only, no AI).
   const toggleTerm = (t: string) => {
+    if (busy) return;
     const next = new Set(off);
     if (next.has(t)) next.delete(t);
     else next.add(t);
@@ -147,7 +148,8 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
                   aria-pressed={!off.has(t)}
                   title={off.has(t) ? '빼 둔 단어 · 눌러서 다시 넣기' : '눌러서 이 단어 빼기'}
                   onClick={() => toggleTerm(t)}
-                  disabled={busy}
+                  // not disabled while recalculating: that would drop the keyboard focus (review 2026-11-02)
+                  aria-busy={busy}
                 >
                   {t}
                 </button>

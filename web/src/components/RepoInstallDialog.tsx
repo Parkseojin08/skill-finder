@@ -143,6 +143,10 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
             {step === 'confirm' && '아래 명령을 이 순서대로 실행합니다. 스킬은 에이전트 권한으로 실행되니 내용을 확인한 출처만 설치하세요.'}
             {step === 'run' && (busy ? `설치 중… ${done + failedCount}/${chosen.length}` : `완료: 성공 ${done}개${failedCount ? `, 실패 ${failedCount}개` : ''}. 다음 Claude Code 세션부터 반영됩니다.`)}
           </DialogDescription>
+          {/* the description changes in place, which is not announced: the same progress in a live region */}
+          <p className="sr-only" role="status">
+            {step === 'run' ? (busy ? `설치 중 ${done + failedCount}/${chosen.length}` : `설치 완료: 성공 ${done}개${failedCount ? `, 실패 ${failedCount}개` : ''}`) : ''}
+          </p>
         </DialogHeader>
 
         {step === 'select' && (

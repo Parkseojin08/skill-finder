@@ -44,6 +44,8 @@ describe('검색 결과 순서·접기 (resultOrder.ts)', () => {
     assert.deepEqual(rows[0].same, { key: 'pdf', count: 1, riskier: true });
     const opened = foldResults([first, other, copy], new Set(), new Set(['pdf']), null);
     assert.deepEqual(opened.map((r) => r.item.name), ['pdf', 'PDF', 'docx']);
+    assert.deepEqual(opened[1].copyOf, { key: 'pdf', last: true }, '펼친 사본에는 접기 표시');
+    assert.equal(opened[0].copyOf, undefined);
   });
 
   it('한 저장소는 2개만 보이고 나머지는 "N개 더"로 접는다; 검색어와 같은 이름의 저장소는 접지 않는다', () => {

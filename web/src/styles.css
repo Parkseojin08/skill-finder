@@ -2313,3 +2313,12 @@ kbd {
     cursor: help;
   }
 }
+
+/* an opened same-name copy, under its first card (review 2026-11-02) */
+@layer app {
+  .copy-row {
+    margin-left: 18px;
+    padding-left: 10px;
+    border-left: 2px solid var(--line-strong);
+  }
+}

@@ -232,7 +232,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
                         {p.change === 'changed' && <div className="warn-text small">설치된 커밋이 색인한 커밋과 다름</div>}
                       </td>
                       <td className="actions">
-                        <button type="button" className="ghost danger" disabled={busy !== null} onClick={() => removePlugin(p)} aria-label={`${p.id} 삭제`}>
+                        <button type="button" className="ghost danger" disabled={busy !== null} onClick={() => removePlugin(p)} aria-label={busy === key ? `${p.id} 삭제 중` : `${p.id} 삭제`} aria-busy={busy === key}>
                           {busy === key ? '삭제 중…' : '삭제'}
                         </button>
                       </td>
@@ -302,7 +302,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
                         {CHANGE[s.change] && <div className="warn-text small">{CHANGE[s.change]}</div>}
                       </td>
                       <td className="actions">
-                        <button type="button" className="ghost danger" disabled={busy !== null} onClick={() => removeSkill(s)} aria-label={`${s.name} 삭제`}>
+                        <button type="button" className="ghost danger" disabled={busy !== null} onClick={() => removeSkill(s)} aria-label={busy === key ? `${s.name} 삭제 중` : `${s.name} 삭제`} aria-busy={busy === key}>
                           {busy === key ? '삭제 중…' : '삭제'}
                         </button>
                       </td>
