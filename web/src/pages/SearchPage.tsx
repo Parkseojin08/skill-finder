@@ -108,6 +108,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   const [progress, setProgress] = useState<Partial<Record<SearchSource, SourceProgress>>>({});
   /** The star minimum this search was run without ("보기"), for the badge on cards below it; null normally. */
   const [liftedStars, setLiftedStars] = useState<number | null>(null);
+  /** Results before "별 기준 없이 다시 찾기", to say how many the lifted search added (review 2026-11-02). */
+  const beforeLift = useRef<Set<string> | null>(null);
   /** English query offered for a Korean one (the server sends it first, before any results). */
   const [suggest, setSuggest] = useState<{ query: string; dropped: string[] } | null>(null);
   const [openRepos, setOpenRepos] = useState<Set<string>>(() => new Set());
@@ -523,12 +525,13 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                   <button
                     type="button"
                     className="status-chip action"
-                    title="이번 검색만 최소 스타 수 없이 다시 검색합니다 (설정은 그대로). 후보 중 일부는 다시 찾으면 검색어와 맞지 않아 빠질 수 있습니다."
-                    onClick={() => run(lastQuery, maxRisk, final!.minStars!)}
+                    title={`${[hiddenLowStars ? `별 ${final!.minStars!.toLocaleString()} 미만 ${hiddenLowStars}개` : '', hiddenUnknownStars ? `별 수 모름 ${hiddenUnknownStars}개` : ''].filter(Boolean).join(' · ')}를 숨겼습니다. 이번 검색만 별 기준 없이 다시 찾습니다(설정은 그대로). 같은 이름 사본은 접히고 결과는 50개까지라, 숨긴 수만큼 늘지는 않습니다.`}
+                    onClick={() => {
+                      beforeLift.current = new Set(shown.map((r) => r.item.id));
+                      run(lastQuery, maxRisk, final!.minStars!);
+                    }}
                   >
-                    {hiddenLowStars > 0 && `별 ${final!.minStars!.toLocaleString()} 미만 ${hiddenLowStars}개`}
-                    {hiddenLowStars > 0 && hiddenUnknownStars > 0 && ' · '}
-                    {hiddenUnknownStars > 0 && `별 수 모름 ${hiddenUnknownStars}개`} 숨김 · 보기
+                    별 기준 없이 다시 찾기 (숨긴 후보 {hiddenLowStars + hiddenUnknownStars}개)
                   </button>
                 )}
                 {conditionsChanged && (
@@ -538,7 +541,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 )}
                 {status === 'done' && liftedStars != null && (
                   <button type="button" className="status-chip action" title="설정한 최소 스타 수로 다시 검색합니다" onClick={() => run(lastQuery)}>
-                    별 제한 없이 보는 중 · 되돌리기
+                    별 제한 없이 보는 중
+                    {beforeLift.current && ` · 새로 보인 결과 ${shown.filter((r) => !beforeLift.current!.has(r.item.id)).length}개`} · 되돌리기
                   </button>
                 )}
                 {minor.length > 0 && (
@@ -688,6 +692,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 sourcesOff={3 - sources.length}
                 maxRisk={maxRisk}
                 minStars={final?.minStars ?? 0}
+                riskHidden={final?.hiddenHighRisk ?? 0}
+                starsHidden={hiddenLowStars + hiddenUnknownStars}
                 onAllSources={() => {
                   const all: SourceKind[] = ['marketplace', 'skillssh', 'github'];
                   setSources(all);

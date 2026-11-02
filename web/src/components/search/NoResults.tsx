@@ -13,11 +13,16 @@ export function NoResults(props: {
   sourcesOff: number;
   maxRisk: RiskLevel;
   minStars: number;
+  /** What the risk limit and the star minimum hid: a condition that hid nothing is not offered (review 2026-11-02). */
+  riskHidden: number;
+  starsHidden: number;
   onAllSources: () => void;
   onAllRisk: () => void;
   onLiftStars: () => void;
 }) {
-  const { hiddenUnknownStars, hiddenLowStars, gathering, sourcesOff, maxRisk, minStars } = props;
+  const { hiddenUnknownStars, hiddenLowStars, gathering, sourcesOff, maxRisk, minStars, riskHidden, starsHidden } = props;
+  const riskChip = maxRisk !== 'high' && riskHidden > 0;
+  const starsChip = minStars > 0 && starsHidden > 0;
   return (
     <div className="empty">
       <p>
@@ -28,22 +33,22 @@ export function NoResults(props: {
             ? ' 아직 스킬 목록을 모으는 중이라 결과가 적을 수 있습니다. 잠시 뒤 다시 검색해 보세요.'
             : ' 다른 영어 표현으로 검색해 보세요.'}
       </p>
-      {(sourcesOff > 0 || maxRisk !== 'high' || minStars > 0) && (
+      {(sourcesOff > 0 || riskChip || starsChip) && (
         <div className="examples">
-          <span className="muted small">걸려 있는 조건:</span>
+          <span className="muted small">다시 찾아볼 조건:</span>
           {sourcesOff > 0 && (
             <button type="button" className="chip-btn" onClick={props.onAllSources}>
               출처 {sourcesOff}곳 꺼짐 · 모두 켜고 다시 찾기
             </button>
           )}
-          {maxRisk !== 'high' && (
+          {riskChip && (
             <button type="button" className="chip-btn" onClick={props.onAllRisk}>
-              위험 {maxRisk === 'low' ? '낮음만' : '주의까지'} · 모두 보고 다시 찾기
+              위험 {maxRisk === 'low' ? '낮음만' : '주의까지'}으로 {riskHidden}개 숨김 · 모두 보고 다시 찾기
             </button>
           )}
-          {minStars > 0 && (
+          {starsChip && (
             <button type="button" className="chip-btn" onClick={props.onLiftStars}>
-              별 {minStars.toLocaleString()} 이상만 · 이번만 풀고 다시 찾기
+              별 {minStars.toLocaleString()} 기준으로 {starsHidden}개 숨김 · 이번만 풀고 다시 찾기
             </button>
           )}
         </div>

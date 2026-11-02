@@ -4,7 +4,7 @@ import { CATEGORY, formatAgo, formatCount } from '../labels.ts';
 import { useKorean } from '../translate.ts';
 import type { OpenedFrom, ResultItem } from '../types.ts';
 import { repoOf } from '../lib/resultOrder.ts';
-import { RiskSummary, ScoreBar, SourceBadges } from './Badges.tsx';
+import { CopiesBadge, RiskSummary, ScoreBar, SourceBadges } from './Badges.tsx';
 
 
 /** The skill page's address; `from` (where in a search it was) rides along so a new tab still logs the view. */
@@ -87,6 +87,7 @@ export function ResultCard({
       <div className="card-foot">
         <div className="meta">
           <SourceBadges sources={item.sources} />
+          <CopiesBadge copies={item.copies} />
           {item.installs != null && (
             <span className="stat" title="설치 수 (skills.sh)">
               <Icon name="download" size={14} /> <span className="sr-only">설치 수 </span>

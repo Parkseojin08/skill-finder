@@ -13,7 +13,7 @@ export function RiskBadge({ level }: { level: RiskLevel }) {
 }
 
 /** `owner/repo` of a GitHub link, for the source badge's tooltip. */
-const repoOfUrl = (url: string) => url.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)/)?.[1] ?? null;
+const repoOfUrl = (url: string) => url.match(/^https:\/\/(?:github\.com|skills\.sh)\/([^/]+\/[^/]+)/)?.[1] ?? null;
 
 /** Risk level badge followed by the signal names as visible text (meanings in the tooltip). */
 export function RiskSummary({ level, flags }: { level: RiskLevel; flags: string[] }) {
@@ -84,6 +84,20 @@ export function SourceBadges({ sources }: { sources: SourceRef[] }) {
         </a>
       ))}
     </>
+  );
+}
+
+/**
+ * "사본 N곳": the same SKILL.md in other repos, folded into this result (their downloads are added). Their repos are
+ * in the tooltip; the badges beside it are this skill's own pages (review 2026-11-02).
+ */
+export function CopiesBadge({ copies }: { copies?: SourceRef[] }) {
+  const repos = [...new Set((copies ?? []).map((s) => repoOfUrl(s.url)).filter(Boolean))];
+  if (!repos.length) return null;
+  return (
+    <span className="badge copies" title={`같은 SKILL.md가 있는 다른 저장소: ${repos.join(', ')}`}>
+      사본 {repos.length}곳
+    </span>
   );
 }
 

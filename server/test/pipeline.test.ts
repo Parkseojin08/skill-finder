@@ -665,12 +665,12 @@ describe('캐시에 남는 검색의 모양 (전체 점검 #12)', () => {
   // A cached search replays these objects as they were stored. A field added, removed or changed in meaning here
   // must bump RESULTS_VERSION (pipeline.ts) so older cached searches are not shown, then this list.
   const RESULT_FIELDS = ['type', 'items', 'hiddenHighRisk', 'hiddenNoDescription', 'hiddenLowStars', 'hiddenUnknownStars', 'minStars', 'hiddenNoMatch', 'suggestQuery', 'broadQuery', 'repos'];
-  const ITEM_FIELDS = ['id', 'name', 'description', 'sources', 'installs', 'stars', 'lastCommitAt', 'score', 'breakdown', 'riskLevel', 'riskFlags', 'qualityWarnings', 'install', 'plugin', 'trust', 'categories', 'tier'];
+  const ITEM_FIELDS = ['id', 'name', 'copies', 'description', 'sources', 'installs', 'stars', 'lastCommitAt', 'score', 'breakdown', 'riskLevel', 'riskFlags', 'qualityWarnings', 'install', 'plugin', 'trust', 'categories', 'tier'];
   const WARNING_FIELDS = ['type', 'source', 'message', 'severity'];
 
-  it('결과·항목·경고의 필드가 정해 둔 것뿐이고, 버전은 17이다', async () => {
+  it('결과·항목·경고의 필드가 정해 둔 것뿐이고, 버전은 18이다', async () => {
     const { RESULTS_VERSION } = await import('../src/search/pipeline.ts');
-    assert.equal(RESULTS_VERSION, 17, '버전을 올렸으면 이 테스트의 필드 목록도 맞추세요');
+    assert.equal(RESULTS_VERSION, 18, '버전을 올렸으면 이 테스트의 필드 목록도 맞추세요');
     const ctx = ctxWithSkills();
     for (const q of ['pdf tables', 'PDF에서 표 추출', 'pdf']) {
       const events = await collect(deps(ctx), q);
@@ -682,5 +682,19 @@ describe('캐시에 남는 검색의 모양 (전체 점검 #12)', () => {
         assert.ok(w.severity === 'urgent' || w.severity === 'note');
       }
     }
+  });
+});
+
+describe('사본 출처 (사용성 검토 2026-11-02)', () => {
+  it('다른 저장소의 GitHub·skills.sh 링크는 카드 배지가 아니라 사본으로 나눈다', async () => {
+    const { splitCopies, mergeSources } = await import('../src/search/result.ts');
+    const market = { kind: 'marketplace' as const, label: '공식', url: 'https://github.com/anthropics/claude-plugins-official' };
+    const own = { kind: 'github' as const, label: 'GitHub', url: 'https://github.com/anthropics/skills/tree/abc/skills/pdf' };
+    const copy = { kind: 'github' as const, label: 'GitHub', url: 'https://github.com/someone/leaks/tree/def/pdf' };
+    const copySs = { kind: 'skillssh' as const, label: 'skills.sh', url: 'https://skills.sh/someone/leaks/pdf' };
+    const merged = mergeSources([market, own], [copy, copySs, { ...own, url: 'https://github.com/anthropics/skills/blob/abc/skills/pdf/SKILL.md' }]);
+    assert.equal(merged.length, 4, '같은 저장소 링크는 하나, 다른 저장소는 따로');
+    assert.deepEqual(splitCopies(merged, 'anthropics/skills'), { own: [market, own], copies: [copy, copySs] });
+    assert.deepEqual(splitCopies([market, copy], 'Anthropics/Skills').own, [market], '대표에 GitHub 링크가 없어도 사본 것은 배지가 되지 않음');
   });
 });

@@ -2303,3 +2303,13 @@ kbd {
     width: 150px;
   }
 }
+
+/* copies of a result in other repos, apart from its own source badges (review 2026-11-02) */
+@layer app {
+  .badge.copies {
+    background: transparent;
+    border: 1px dashed var(--line-strong);
+    color: var(--text-muted);
+    cursor: help;
+  }
+}

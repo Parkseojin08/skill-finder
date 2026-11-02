@@ -11,6 +11,12 @@ export type SourceRef = { kind: SourceKind; label: string; url: string };
 export type ResultItem = {
   id: string;
   name: string;
+  /**
+   * GitHub and skills.sh pages of other copies (same SKILL.md, other repos) folded into this result. Kept apart
+   * from `sources`, whose badges are this skill's own: a "GitHub" badge on the official pdf led to a copy's repo
+   * (review 2026-11-02).
+   */
+  copies?: SourceRef[];
   /** SKILL.md description, trimmed. */
   description: string;
   sources: SourceRef[];
@@ -62,9 +68,30 @@ export function githubSource(skill: SkillRow): SourceRef | null {
   return { kind: 'github', label: 'GitHub', url: treeUrl(skill.repo, skill.ref, skill.dir_path) };
 }
 
+/** `owner/repo` a GitHub or skills.sh page is about; null for other links. */
+function repoOfSource(s: SourceRef): string | null {
+  const m = s.url.match(/^https:\/\/(?:github\.com|skills\.sh)\/([^/?#]+\/[^/?#]+)/i);
+  return m ? decodeURIComponent(m[1]).toLowerCase() : null;
+}
+
+/** Sources of this skill's own repo, and those of copies in other repos (merged in from duplicates). */
+export function splitCopies(sources: SourceRef[], repo: string | null): { own: SourceRef[]; copies: SourceRef[] } {
+  if (!repo) return { own: sources, copies: [] };
+  const own: SourceRef[] = [];
+  const copies: SourceRef[] = [];
+  for (const s of sources) {
+    const r = repoOfSource(s);
+    if (r && r !== repo.toLowerCase() && s.kind !== 'marketplace') copies.push(s);
+    else own.push(s);
+  }
+  return { own, copies };
+}
+
+/** One link per kind, label and repo: copies in other repos are kept (buildResultItem shows them apart). */
 export function mergeSources(a: SourceRef[], b: SourceRef[]): SourceRef[] {
   const out = [...a];
-  for (const s of b) if (!out.some((x) => x.kind === s.kind && x.label === s.label)) out.push(s);
+  const same = (x: SourceRef, s: SourceRef) => x.kind === s.kind && x.label === s.label && repoOfSource(x) === repoOfSource(s);
+  for (const s of b) if (!out.some((x) => same(x, s))) out.push(s);
   return out;
 }
 
@@ -117,11 +144,13 @@ export function buildResultItem(a: {
   const plugin = a.lookup.plugin(skill.plugin_id);
   const plan = planInstall(skill, plugin, a.lookup.marketplace(plugin?.marketplace));
   const desc = skill.description ?? '';
+  const { own, copies } = splitCopies(a.sources, skill.repo);
   return {
     id: skill.id,
     name: skill.name,
     description: truncate(desc, 300),
-    sources: a.sources,
+    sources: own,
+    ...(copies.length ? { copies } : {}),
     ...(a.installs != null ? { installs: a.installs } : {}),
     ...(a.stars != null ? { stars: a.stars } : {}),
     ...(skill.last_commit_at ? { lastCommitAt: skill.last_commit_at } : {}),

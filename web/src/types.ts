@@ -10,6 +10,8 @@ export type SourceRef = { kind: SourceKind; label: string; url: string };
 export type ResultItem = {
   id: string;
   name: string;
+  /** Pages of copies in other repos folded into this result (not this skill's own badges). */
+  copies?: SourceRef[];
   description: string;
   sources: SourceRef[];
   installs?: number;

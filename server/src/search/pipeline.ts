@@ -48,7 +48,7 @@ export type SourceState = 'running' | 'done' | 'failed' | 'timeout' | 'skipped';
  * Part of the search cache key: bump it whenever what a cached search replays changes shape (results fields,
  * warning fields) or meaning, so older cached searches are not shown. test/pipeline.test.ts pins the shape.
  */
-export const RESULTS_VERSION = 17;
+export const RESULTS_VERSION = 18;
 
 const SOURCE_NAME_KO: Record<SourceName, string> = { local: '내 PC 색인', skillssh: 'skills.sh', github: 'GitHub', repos: '같은 이름 저장소' };
 
