@@ -1,8 +1,8 @@
 # Skill Finder
 
-Claude Code 스킬을 한곳에서 찾아 점수·위험 신호와 함께 보고, 설치 전에 무엇이 함께 들어오는지 확인한 뒤 설치·삭제하는 로컬 웹 앱입니다. 화면은 한국어입니다.
+Claude Code 스킬을 한곳에서 찾아 점수·위험 신호와 함께 보고, 설치 전에 무엇이 함께 들어오는지 확인한 뒤 설치·삭제하는 로컬 웹 앱입니다. 화면은 한국어·영어·일본어입니다.
 
-> **English:** A local web app (127.0.0.1) that searches Claude Code skills across plugin marketplaces, skills.sh and GitHub, scores them, flags risky signals, and installs or removes them only after showing the exact command, the install location and the files that come along. No AI calls; the UI is in Korean.
+> **English:** A local web app (127.0.0.1) that searches Claude Code skills across plugin marketplaces, skills.sh and GitHub, scores them, flags risky signals, and installs or removes them only after showing the exact command, the install location and the files that come along. No AI calls; the UI is in Korean, English or Japanese (Settings). Run it with `npx skill-finder` on Windows, macOS or Linux.
 
 ## 무엇을 하나요
 
@@ -11,7 +11,9 @@ Claude Code 스킬을 한곳에서 찾아 점수·위험 신호와 함께 보고
 - **점수**: 관련도·인기(다운로드·별)·최신성·신뢰도(Anthropic 공식·파트너·커뮤니티). 결과는 이름 일치 → 다운로드 → 별 순서로 정렬합니다.
 - **README 추천**: 프로젝트 폴더의 README(없으면 package.json 같은 설명 파일과 CLAUDE.md·AGENTS.md)에서 단어를 뽑아 비슷한 스킬을 보여 줍니다.
 - **설치됨**: 설치된 플러그인·스킬, 매 턴·사용 시 컨텍스트 토큰 추정, 설치 기록, 삭제.
-- **공유·내보내기**: 설치 명령·Markdown 한 줄·공유용 글 복사, 검색 결과와 설치 목록을 JSON·Markdown으로 저장(브라우저 안에서만).
+- **공유·내보내기**: 설치 명령·Markdown 한 줄·공유용 글·공유 링크(앱 없이 열리는 페이지) 복사, 검색 결과와 설치 목록을 JSON·Markdown으로 저장(브라우저 안에서만).
+- **팀 프리셋·즐겨찾기**: 설치된 스킬을 파일로 내보내 팀원이 같은 스킬을 확인 창을 거쳐 설치하고, 이 PC의 계정으로 로그인해 즐겨찾기를 모읍니다.
+- **언어**: 한국어·English·日本語 (설정에서 고름).
 
 ## 설치
 
