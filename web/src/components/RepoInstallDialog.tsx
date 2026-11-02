@@ -111,7 +111,7 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
       setLog((l) => [...l, `── ${s.name}`]);
       let ok = false;
       try {
-        const body = { id: s.id, scope, projectPath: scope === 'user' ? undefined : projectPath, overwrite: !!previews[s.id]?.existing };
+        const body = { id: s.id, scope, projectPath: scope === 'user' ? undefined : projectPath, overwrite: previews[s.id]?.existing?.path };
         await streamNdjson<InstallEvent>('/install', body, (e) => {
           if (e.type === 'log') setLog((l) => [...l, e.line]);
           else {

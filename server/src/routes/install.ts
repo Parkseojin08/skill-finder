@@ -18,8 +18,11 @@ const Body = z.object({
   id: z.string().min(1).max(500),
   scope: z.enum(['user', 'project', 'local']),
   projectPath: z.string().max(1000).optional(),
-  /** The confirm dialog showed that a same-name folder from another (or an unknown) source will be replaced. */
-  overwrite: z.boolean().optional(),
+  /**
+   * The same-name folder the confirm dialog showed as replaced. Only that folder may be replaced without another
+   * check: a dialog opened on an earlier preview (another scope or folder) names another one (review 2026-11-02).
+   */
+  overwrite: z.string().max(2000).optional(),
 });
 
 const UninstallBody = z.object({
@@ -83,9 +86,9 @@ export function installRouter(ctx: AppContext): Router {
       res.status(400).json({ error: '프로젝트 경로는 존재하는 디렉터리의 절대경로여야 합니다' });
       return;
     }
-    if (plan.method === 'skills-cli' && scope !== 'local' && !parsed.data.overwrite) {
+    if (plan.method === 'skills-cli' && scope !== 'local') {
       const existing = await existingSkillFolder(store, skill.id, plan.skillName!, scope, projectPath);
-      if (existing && existing.same !== true) {
+      if (existing && existing.same !== true && parsed.data.overwrite !== existing.path) {
         res.status(409).json({ error: `${existing.path}에 같은 이름의 다른 스킬이 있습니다. 설치 확인 창에서 덮어쓰기를 확인한 뒤 다시 설치하세요.` });
         return;
       }

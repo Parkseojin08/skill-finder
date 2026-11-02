@@ -91,7 +91,9 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
   const plan = skill.install;
   const [scope, setScope] = useState<InstallScope>(plan.scopes.includes(defaultScope) ? defaultScope : (plan.scopes[0] ?? 'user'));
   const [projectPath, setProjectPath] = useState(defaultProjectPath);
-  const [preview, setPreview] = useState<InstallPreview | null>(null);
+  /** `key`: the scope and folder it was asked for; a preview for other input is not used (it may be on its way). */
+  const [preview, setPreview] = useState<(InstallPreview & { key: string }) | null>(null);
+  const inputKey = `${scope}|${scope === 'user' ? '' : projectPath}`;
   const [confirming, setConfirming] = useState(false);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<LogLine[]>([]);
@@ -117,10 +119,11 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
   useEffect(() => {
     if (plan.method === 'manual-only') return;
     let alive = true;
+    const key = `${scope}|${scope === 'user' ? '' : projectPath}`;
     const t = setTimeout(() => {
       apiGet<InstallPreview>('/install/preview', { id: skill.id, scope, projectPath: scope === 'user' ? undefined : projectPath })
-        .then((p) => alive && setPreview(p))
-        .catch((e) => alive && setPreview({ plan, steps: [], location: '', error: String(e.message ?? e) }));
+        .then((p) => alive && setPreview({ ...p, key }))
+        .catch((e) => alive && setPreview({ plan, steps: [], location: '', error: String(e.message ?? e), key }));
     }, 250);
     return () => {
       alive = false;
@@ -169,7 +172,8 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
     let answered = false;
     let failure: string | null = null;
     try {
-      const body = { id: skill.id, scope, projectPath: scope === 'user' ? undefined : projectPath, overwrite: !!preview?.existing };
+      // the folder the dialog showed as replaced; the server checks it is still the one there
+      const body = { id: skill.id, scope, projectPath: scope === 'user' ? undefined : projectPath, overwrite: current?.existing?.path };
       await streamNdjson<InstallEvent>('/install', body, (e) => {
         if (e.type === 'log') setLog((l) => [...l, { line: e.line, stream: e.stream }]);
         else {
@@ -195,7 +199,11 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
     setRunning(false);
   };
 
-  const ready = preview && !preview.error && preview.steps.length > 0;
+  // the preview for what is typed now, and the file check done (or failed): the dialog then shows what will happen
+  // (review 2026-11-02: it could open on the previous folder's preview, or before the check said "download and run")
+  const current = preview && preview.key === inputKey ? preview : null;
+  const ready = !!current && !current.error && current.steps.length > 0 && (scan !== null || scanError !== null);
+  const waiting = !running && (!current ? '확인 중…' : scan === null && scanError === null ? '파일 검사 중…' : null);
   const siblings = riskierSiblings(skill);
   const version = versionNote(plan);
 
@@ -229,21 +237,21 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
           <FolderInput value={projectPath} onChange={setProjectPath} disabled={running} />
         </div>
       )}
-      {preview?.error && <p className="warn-box">{preview.error}</p>}
-      {ready && (
+      {current?.error && <p className="warn-box">{current.error}</p>}
+      {current && !current.error && current.steps.length > 0 && (
         <div className="preview">
           <div className="muted small">실행할 명령</div>
-          {preview.steps.map((s, i) => (
+          {current.steps.map((s, i) => (
             <div key={i} className="cmd">
               <code>{s.display}</code>
             </div>
           ))}
           <div className="muted small">
-            설치 위치: {preview.location}
-            {preview.createsLockFile && <> · 프로젝트 루트에 <code>skills-lock.json</code>이 생깁니다</>}
+            설치 위치: {current.location}
+            {current.createsLockFile && <> · 프로젝트 루트에 <code>skills-lock.json</code>이 생깁니다</>}
           </div>
           {version && <div className="muted small">{version}</div>}
-          <OverwriteNote existing={preview.existing} />
+          <OverwriteNote existing={current.existing} />
         </div>
       )}
       <InstallScanView scan={scan} error={scanError} />
@@ -252,7 +260,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
         <RiskSummary level={skill.riskLevel} flags={skill.riskFlags} />
       </div>
       <button type="button" className="primary" disabled={!ready || running} onClick={() => setConfirming(true)}>
-        {running ? '설치 중…' : preview?.existing?.same ? '다시 설치…' : '설치…'}
+        {running ? '설치 중…' : (waiting ?? (current?.existing?.same ? '다시 설치…' : '설치…'))}
       </button>
       {(log.length > 0 || result) && (
         <div className="install-log">
@@ -263,19 +271,24 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
               </div>
             ))}
           </pre>
-          {result && <p className={result.ok ? 'ok-box' : 'warn-box'}>{result.message}</p>}
+          {result && (
+            <p className={result.ok ? 'ok-box' : 'warn-box'} role={result.ok ? 'status' : 'alert'}>
+              {result.message}
+            </p>
+          )}
           {result?.ok && <UsageNote plan={plan} skillName={skill.name} pluginName={skill.plugin?.name ?? null} scope={scope} projectPath={projectPath} />}
         </div>
       )}
-      {confirming && preview && (
+      {confirming && current && (
         <ConfirmDialog
           name={skill.name}
-          preview={preview}
+          preview={current}
           riskLevel={skill.riskLevel}
           riskFlags={skill.riskFlags}
           siblings={siblings}
           version={version}
           scan={scan}
+          scanFailed={scanError !== null}
           onCancel={() => setConfirming(false)}
           onConfirm={install}
         />
@@ -292,13 +305,15 @@ function ConfirmDialog(props: {
   siblings: PluginSkill[];
   version: string | null;
   scan: InstallScan | null;
+  /** The file check could not run: installing anyway needs the tick, as for high risk. */
+  scanFailed: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   // High risk (this skill or one the plugin brings in) needs one deliberate tick (UI debate 2-9); about 1% of
   // skills, so the extra step is rare.
-  const high = props.riskLevel === 'high' || props.siblings.some((s) => s.riskLevel === 'high') || scanIsHigh(props.scan);
+  const high = props.riskLevel === 'high' || props.siblings.some((s) => s.riskLevel === 'high') || scanIsHigh(props.scan) || props.scanFailed;
   const [checked, setChecked] = useState(false);
   const overwrite = needsOverwriteCheck(props.preview.existing);
   const [overwriteChecked, setOverwriteChecked] = useState(false);

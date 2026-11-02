@@ -126,6 +126,9 @@ describe('같은 이름 스킬 덮어쓰기 확인 (전체 점검 2026-11-02 #9)
       const r = await rawRequest({ port: srv.port, method: 'POST', path: '/api/install', headers, body: JSON.stringify({ id: row.id, scope: 'project', projectPath: project }) });
       assert.equal(r.status, 409, '확인 없이는 설치 명령을 실행하지 않음');
       assert.match(JSON.parse(r.body).error, /같은 이름의 다른 스킬/);
+      // a confirmation for another folder (a dialog opened on an earlier preview) does not count
+      const stale = await rawRequest({ port: srv.port, method: 'POST', path: '/api/install', headers, body: JSON.stringify({ id: row.id, scope: 'project', projectPath: project, overwrite: join(project, 'other') }) });
+      assert.equal(stale.status, 409, '확인한 폴더가 지금 폴더와 다르면 막음');
 
       writeFileSync(join(dir, 'SKILL.md'), raw);
       assert.equal((await preview()).existing.same, true, '같은 SKILL.md면 다시 설치');
