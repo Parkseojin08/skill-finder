@@ -75,3 +75,25 @@ describe('서버와 웹이 같은 규칙을 쓴다 (전체 점검 #12)', () => {
     }
   });
 });
+
+describe('SKILL.md 링크와 내보내기 (사용성 검토 2026-11-02)', () => {
+  it('스킬 폴더 안을 가리키는 링크만 파일 경로로 본다', async () => {
+    const { relativeTarget } = await import('../src/lib/links.ts');
+    assert.equal(relativeTarget('./reference.md'), 'reference.md');
+    assert.equal(relativeTarget('docs/a%20b.md#part'), 'docs/a b.md');
+    for (const other of ['https://x.com', 'mailto:a@b.c', '#top', '/abs', '../outside.md', 'a/../../b', '%E0%A4%A', undefined]) {
+      assert.equal(relativeTarget(other), null, String(other));
+    }
+  });
+
+  it('결과를 JSON·Markdown으로 만든다 (표 구분자는 이스케이프)', async () => {
+    const { resultsJson, resultsMarkdown } = await import('../src/lib/exportList.ts');
+    const it1 = item('a|b', 'o/r', { installs: 5, sources: [{ kind: 'github', label: 'GitHub', url: 'https://github.com/o/r' }] });
+    const json = JSON.parse(resultsJson('pdf', [it1]));
+    assert.equal(json.query, 'pdf');
+    assert.deepEqual(Object.keys(json.results[0]), ['id', 'name', 'repo', 'url', 'description', 'installs', 'stars', 'riskLevel', 'riskFlags', 'installCommand']);
+    assert.equal(json.results[0].repo, 'o/r');
+    const md = resultsMarkdown('pdf', [it1]);
+    assert.match(md, /\| \[a\\|b\]\(https:\/\/github\.com\/o\/r\) \| o\/r \| 5 \|/);
+  });
+});

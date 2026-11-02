@@ -1,5 +1,7 @@
+import { useMemo } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { relativeTarget } from '../lib/links.ts';
 
 // Raw HTML is never rendered (no rehype-raw). Remote images are not loaded: they become links.
 const components: Components = {
@@ -18,10 +20,41 @@ const components: Components = {
     ),
 };
 
-export function Markdown({ text }: { text: string }) {
+/**
+ * `onRelativeLink`: a link into the skill's own folder opens there (the files tab) instead of a new tab on this
+ * app's address, which only showed the start page (review 2026-11-02).
+ */
+export function Markdown({ text, onRelativeLink }: { text: string; onRelativeLink?: (path: string) => void }) {
+  const parts = useMemo<Components>(
+    () =>
+      onRelativeLink
+        ? {
+            ...components,
+            a: ({ href, children }) => {
+              const path = relativeTarget(href);
+              return path ? (
+                <a
+                  href={href}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onRelativeLink(path);
+                  }}
+                >
+                  {children}
+                </a>
+              ) : (
+                <a href={href} target="_blank" rel="noopener noreferrer">
+                  {children}
+                </a>
+              );
+            },
+          }
+        : components,
+    [onRelativeLink],
+  );
   return (
     <div className="markdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} skipHtml>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={parts} skipHtml>
         {text}
       </ReactMarkdown>
     </div>

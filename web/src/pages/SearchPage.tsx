@@ -9,6 +9,7 @@ import { ResultCard, skillHref } from '../components/ResultCard.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { useInstalled } from '../installed.ts';
 import { jobLine, RISK_RANK, STAGES } from '../labels.ts';
+import { fileStem, resultsJson, resultsMarkdown, saveFile } from '../lib/exportList.ts';
 import { byPopular, foldResults, nameMatches, navigationalWord, SORTS, type SortKey } from '../lib/resultOrder.ts';
 import type { Health, Job, OpenedFrom, ResultItem, RiskLevel, SearchEvent, SearchSource, SettingsResponse, SourceKind, SourceProgress } from '../types.ts';
 
@@ -619,6 +620,20 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
               </div>
               <div className="toolbar-right">
                 <TranslationNotice compact />
+                {status === 'done' && shown.length > 0 && (
+                  // the results as shown (order, filters), all pages, saved in the browser only
+                  <details className="export-menu">
+                    <summary className="status-chip action">내보내기</summary>
+                    <div className="export-items">
+                      <button type="button" className="ghost" onClick={() => saveFile(`skill-finder-${fileStem(lastQuery)}.json`, resultsJson(lastQuery, shown.map((r) => r.item)), 'application/json')}>
+                        JSON으로 저장
+                      </button>
+                      <button type="button" className="ghost" onClick={() => saveFile(`skill-finder-${fileStem(lastQuery)}.md`, resultsMarkdown(lastQuery, shown.map((r) => r.item)), 'text/markdown')}>
+                        Markdown으로 저장
+                      </button>
+                    </div>
+                  </details>
+                )}
                 {items.length > 0 && (
                   <>
                     <select

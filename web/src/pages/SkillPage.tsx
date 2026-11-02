@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { apiGet } from '../api.ts';
 import { BreakdownTable, QualityBadges, RiskBadge, RiskFlags, RiskSummary, SourceBadges } from '../components/Badges.tsx';
 import { InstallPanel, riskierSiblings, SiblingRiskNote } from '../components/InstallPanel.tsx';
+import { CopyButton } from '../components/CopyButton.tsx';
 import { ShareMenu } from '../components/ShareMenu.tsx';
 import { useInstalled } from '../installed.ts';
 import { Markdown, splitFrontmatter } from '../components/Markdown.tsx';
@@ -303,7 +304,19 @@ export function SkillPage({
                 <pre>{md.frontmatter}</pre>
               </details>
             )}
-            {md && <Markdown text={md.body} />}
+            {md && (
+              <Markdown
+                text={md.body}
+                onRelativeLink={(path) => {
+                  if (detail.files.some((f) => f.path === path && f.isText)) {
+                    setTab('files');
+                    openFile(path);
+                  } else if (detail.url) {
+                    window.open(`${detail.url}/${path}`, '_blank', 'noopener,noreferrer');
+                  }
+                }}
+              />
+            )}
           </section>
         </div>
       )}
@@ -333,7 +346,10 @@ export function SkillPage({
             {!file && <p className="muted">왼쪽에서 파일을 고르면 원문을 보여 줍니다 (텍스트 파일, 256KB 이하).</p>}
             {file && (
               <>
-                <div className="muted small">{file.path}</div>
+                <div className="muted small file-head">
+                  {file.path}
+                  {file.content != null && <CopyButton text={file.content} label="원문 복사" className="linkish small" />}
+                </div>
                 {file.error ? <p className="warn-box">{file.error}</p> : file.content == null ? <p className="muted">불러오는 중…</p> : <pre>{file.content}</pre>}
               </>
             )}

@@ -2357,3 +2357,27 @@ kbd {
     white-space: nowrap;
   }
 }
+
+/* 내보내기 menu in the results toolbar (review 2026-11-02) */
+@layer app {
+  .export-menu {
+    position: relative;
+  }
+  .export-menu > summary {
+    list-style: none;
+    cursor: pointer;
+  }
+  .export-items {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 5;
+    display: grid;
+    gap: 6px;
+    padding: 8px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--corner);
+    white-space: nowrap;
+  }
+}
