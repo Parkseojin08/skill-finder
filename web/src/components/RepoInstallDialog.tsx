@@ -1,5 +1,5 @@
 import { CheckCircleIcon, CircleNotchIcon, DownloadSimpleIcon, XCircleIcon } from '@phosphor-icons/react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -24,7 +24,20 @@ type InstallEvent = { type: 'log'; line: string; stream: string } | { type: 'res
  * review the exact command for each, then install them one by one (the server runs one install at a time).
  * Each install goes through the same /install endpoint and checks as a single skill.
  */
-export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResult; open: boolean; onOpenChange: (open: boolean) => void }) {
+export function RepoInstallDialog({
+  repo,
+  open,
+  onOpenChange,
+  title,
+  note,
+}: {
+  repo: RepoResult;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Another title than "<repo> 설치" (a team preset), and a note above the list (what it could not find). */
+  title?: string;
+  note?: ReactNode;
+}) {
   const installable = repo.skills.filter((s) => s.installable);
   const [step, setStep] = useState<Step>('select');
   const [selected, setSelected] = useState<Set<string>>(() => new Set(installable.map((s) => s.id)));
@@ -154,7 +167,7 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
       <DialogContent className="repo-install sm:max-w-xl" showCloseButton={!busy}>
         <DialogHeader>
-          <DialogTitle>{repo.repo} 설치</DialogTitle>
+          <DialogTitle>{title ?? `${repo.repo} 설치`}</DialogTitle>
           <DialogDescription>
             {step === 'select' && '설치할 스킬과 범위를 고르세요. 스킬마다 따로 설치되며, 다음 단계에서 실행할 명령을 확인합니다.'}
             {step === 'confirm' && '아래 명령을 이 순서대로 실행합니다. 스킬은 에이전트 권한으로 실행되니 내용을 확인한 출처만 설치하세요.'}
@@ -168,6 +181,7 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
 
         {step === 'select' && (
           <div className="flex flex-col gap-4">
+            {note}
             <fieldset className="flex flex-col gap-2">
               <legend className="muted small">스킬 ({chosen.length}/{installable.length})</legend>
               {repo.skills.map((s) => (

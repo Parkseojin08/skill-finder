@@ -4,7 +4,7 @@ import type { AppContext } from '../context.ts';
 import type { PluginRow, SkillRow } from '../db/store.ts';
 import { basename } from '../discovery/tree.ts';
 import { normalizeSkillName, PluginUnavailableError, skillId } from '../indexer.ts';
-import { planInstall } from '../install/plan.ts';
+import { installSummary } from '../install/summary.ts';
 import { getSettings } from '../settings.ts';
 import { classifySkillsShSource, type SkillsShHit } from '../sources/skillsSh.ts';
 import { pool, Semaphore, sleep, withTimeout } from '../util/limiter.ts';
@@ -868,19 +868,7 @@ export async function runSearch(
           .findSkillsByRepo(repo)
           .filter((s) => s.description && s.origin !== 'wellknown' && !tooRisky(s))
           .slice(0, 30)
-          .map((s) => {
-            const plugin = lookup.plugin(s.plugin_id);
-            const plan = planInstall(s, plugin, lookup.marketplace(plugin?.marketplace));
-            return {
-              id: s.id,
-              name: s.name,
-              riskLevel: (s.risk_level as RiskLevel) ?? 'low',
-              riskFlags: s.risk_json ? (JSON.parse(s.risk_json) as string[]) : [],
-              method: plan.method,
-              installable: plan.method !== 'manual-only' && !plan.disabled,
-              scopes: plan.scopes,
-            };
-          }),
+          .map((s) => installSummary(s, lookup)),
       }))
       // a skill finder: a same-named repo without skills (facebook/react for "react") is not a result
       .filter((r) => r.skills.length > 0);

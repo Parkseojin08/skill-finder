@@ -128,3 +128,22 @@ describe('공유 링크 (소개 사이트 /s/)', () => {
     assert.equal(readShareLink(shareLink({ n: 'x', u: 'https://evil.example/x' }))!.u, undefined, 'GitHub·skills.sh 주소만');
   });
 });
+
+describe('팀 프리셋 파일', () => {
+  it('색인에 있는 설치 스킬과 플러그인만 담고, 같은 형식만 다시 읽는다', async () => {
+    const { parsePreset, presetFrom } = await import('../src/lib/preset.ts');
+    const data = {
+      plugins: [{ id: 'tools@mk', indexed: true }, { id: 'local@mk', indexed: false }],
+      skills: [{ skillId: 'gh:a/b:skills/x', name: 'x' }, { skillId: null, name: 'mine' }, { skillId: 'gh:a/b:skills/x', name: 'x' }],
+    } as never;
+    const p = presetFrom(data, 'team');
+    assert.deepEqual(p.items, [{ plugin: 'tools@mk', name: 'tools' }, { id: 'gh:a/b:skills/x', name: 'x' }]);
+    const back = parsePreset(JSON.stringify(p));
+    assert.equal(back.name, 'team');
+    assert.equal(back.items.length, 2);
+    assert.throws(() => parsePreset('{"format":"other","version":1,"items":[]}'), /프리셋 파일이 아닙니다/);
+    assert.throws(() => parsePreset('not json'), /JSON/);
+    const many = parsePreset(JSON.stringify({ ...p, items: Array.from({ length: 500 }, (_, i) => ({ id: `gh:a/b:s${i}` })) }));
+    assert.equal(many.items.length, 200, '200개까지만');
+  });
+});
