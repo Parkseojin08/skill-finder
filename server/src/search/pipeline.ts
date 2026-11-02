@@ -60,6 +60,11 @@ export type SearchEvent =
       hiddenHighRisk: number;
       hiddenNoDescription: number;
       hiddenLowStars?: number;
+      /**
+       * Hidden because the repo's star count is not known yet (a first run, no token): told apart from "below the
+       * minimum" so the page can say why (project review 2026-11-02).
+       */
+      hiddenUnknownStars?: number;
       minStars?: number;
       /** Results without a single query word in their name or description (user decision A). */
       hiddenNoMatch?: number;
@@ -243,7 +248,7 @@ export async function runSearch(
   const sources = new Set<SourceKind>(filters.sources?.length ? filters.sources : ['marketplace', 'skillssh', 'github']);
   const maxRisk: RiskLevel = filters.maxRisk ?? 'medium';
   // `r` is the result-item shape; bump it when items gain fields so cached searches are rebuilt.
-  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: 15, k: RISK_RULES_VERSION });
+  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: 16, k: RISK_RULES_VERSION });
 
   // The English query for a Korean one goes out first, cached search or not: it comes from the query alone,
   // and the button helps most exactly when there is little else to show.
@@ -788,10 +793,14 @@ export async function runSearch(
       return st != null && st >= minStars;
     };
     let hiddenLowStars = 0;
+    let hiddenUnknownStars = 0;
     const finalists = deduped
       .filter((c) => {
         if (starsPass(c)) return true;
-        if (c.skill!.description) hiddenLowStars++;
+        if (c.skill!.description) {
+          if (starsOf(c) == null) hiddenUnknownStars++;
+          else hiddenLowStars++;
+        }
         return false;
       })
       .slice(0, MAX_ENRICH);
@@ -867,6 +876,7 @@ export async function runSearch(
       hiddenHighRisk,
       hiddenNoDescription,
       hiddenLowStars,
+      hiddenUnknownStars,
       minStars,
       hiddenNoMatch,
       ...(isBroadQuery(query) ? { broadQuery: true } : {}),

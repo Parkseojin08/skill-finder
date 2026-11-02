@@ -169,3 +169,38 @@ describe('설치 항목 삭제', () => {
     for (const bad of ['--yes', 'a', 'a@b@c', 'a b@c', 'x;y@z']) assert.ok(!PLUGIN_ID_RE.test(bad), bad);
   });
 });
+
+describe('마켓플레이스 등록 확인 (전체 점검 2026-11-02)', async () => {
+  const { claudeBinary } = await import('../src/claude/cli.ts');
+  const { executeInstall } = await import('../src/install/run.ts');
+  const plan = { method: 'plugin' as const, scopes: ['user' as const], command: '', pluginId: 'p@m', pluginName: 'p', marketplace: { name: 'm', repo: 'own/market' } };
+  const withMarketplaces = async (registered: Array<{ name: string; repo: string }>) => {
+    const calls: string[][] = [];
+    const g = globalThis as { __skillFinderProcHook?: unknown };
+    g.__skillFinderProcHook = async (_file: string, args: string[]) => {
+      const a = args.map((x) => x.replace(/^"|"$/g, ''));
+      calls.push(a);
+      if (a.includes('list')) return { exitCode: 0, stdout: JSON.stringify(registered), stderr: '', timedOut: false };
+      return { exitCode: 0, stdout: '{"outcome":"installed","message":"ok"}', stderr: '', timedOut: false };
+    };
+    try {
+      return { result: await executeInstall(plan, buildSteps(plan, 'user', null), () => {}, process.env), calls };
+    } finally {
+      delete g.__skillFinderProcHook;
+    }
+  };
+
+  it('같은 이름이 다른 저장소로 등록돼 있으면 설치하지 않는다', { skip: !claudeBinary() }, async () => {
+    const { result, calls } = await withMarketplaces([{ name: 'm', repo: 'someone/else' }]);
+    assert.equal(result.ok, false);
+    assert.match(result.message, /다른 저장소\(someone\/else\)/);
+    assert.ok(!calls.some((a) => a.includes('install')), '설치 명령을 부르지 않음');
+  });
+
+  it('같은 저장소면(대소문자 무시) 등록을 건너뛰고 설치한다', { skip: !claudeBinary() }, async () => {
+    const { result, calls } = await withMarketplaces([{ name: 'm', repo: 'Own/Market' }]);
+    assert.equal(result.ok, true);
+    assert.ok(calls.some((a) => a.includes('install')));
+    assert.ok(!calls.some((a) => a.includes('add')), '마켓플레이스를 다시 등록하지 않음');
+  });
+});

@@ -23,6 +23,8 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
   const [error, setError] = useState<{ message: string; hint?: string } | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
+  /** High-risk skills are hidden like in search (project review 2026-11-02: a curl|sh skill ranked 10th). */
+  const [showRisky, setShowRisky] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -38,6 +40,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
     try {
       setResult(await apiSend<RecommendResult>('POST', '/readme-skills', { projectPath: path.trim() }));
       setPage(1);
+      setShowRisky(false);
     } catch (e) {
       setResult(null);
       const status = e instanceof ApiError ? e.status : 0;
@@ -47,7 +50,9 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
     }
   };
 
-  const skills = result?.skills ?? [];
+  const all = result?.skills ?? [];
+  const hiddenRisky = showRisky ? 0 : all.filter((m) => m.item.riskLevel === 'high').length;
+  const skills = showRisky ? all : all.filter((m) => m.item.riskLevel !== 'high');
   const pageCount = Math.max(1, Math.ceil(skills.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const pageItems = skills.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -112,7 +117,18 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
           </section>
 
           {skills.length === 0 ? (
-            <p className="empty">비슷한 스킬을 찾지 못했습니다. README의 단어와 겹치는 스킬이 색인에 없습니다.</p>
+            <p className="empty">
+              {hiddenRisky > 0 ? (
+                <>
+                  위험 높음으로 숨긴 {hiddenRisky}개만 있습니다.{' '}
+                  <button type="button" className="linkish" onClick={() => setShowRisky(true)}>
+                    보기
+                  </button>
+                </>
+              ) : (
+                '비슷한 스킬을 찾지 못했습니다. README의 단어와 겹치는 스킬이 색인에 없습니다.'
+              )}
+            </p>
           ) : (
             <>
               <div className="results-toolbar" ref={listRef}>
@@ -120,6 +136,19 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
                   <span>
                     비슷한 스킬 <b>{skills.length}</b>개 <span className="muted small">· 다운로드 → 스타 순</span>
                   </span>
+                  {hiddenRisky > 0 && (
+                    <button
+                      type="button"
+                      className="status-chip action"
+                      title="외부 스크립트 실행·비밀값 접근처럼 위험이 큰 스킬입니다. 상세 화면에서 이유를 확인한 뒤 설치하세요."
+                      onClick={() => {
+                        setShowRisky(true);
+                        setPage(1);
+                      }}
+                    >
+                      위험 높음 {hiddenRisky}개 숨김 · 보기
+                    </button>
+                  )}
                 </div>
                 <div className="toolbar-right">
                   <TranslationNotice compact />

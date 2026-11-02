@@ -57,8 +57,16 @@ export async function executeInstall(
     if (step.kind === 'ensure-marketplace') {
       const list = await runClaude(['plugin', 'marketplace', 'list', '--json'], { env, timeoutMs: 60_000 });
       const entries = (parseJsonArray(list.stdout) ?? []) as Array<{ name?: string; repo?: string }>;
-      const name = plan.marketplace!.name;
-      if (entries.some((e) => e.name === name)) {
+      const { name, repo } = plan.marketplace!;
+      const same = entries.find((e) => e.name === name);
+      if (same) {
+        // The name alone is not enough: another repo registered under it would serve "plugin@name" from a source
+        // this app never checked (project review 2026-11-02). Stop instead of installing from it.
+        if (typeof same.repo !== 'string' || same.repo.toLowerCase() !== repo.toLowerCase()) {
+          const message = `마켓플레이스 이름 ${name}이(가) 이미 다른 저장소(${same.repo ?? '알 수 없음'})로 등록되어 있어 설치하지 않았습니다. 검사한 저장소는 ${repo}입니다. Claude Code에서 그 마켓플레이스를 확인하세요.`;
+          log(message, 'stderr');
+          return { ok: false, exitCode: -1, message, argv, output };
+        }
         log(`마켓플레이스 ${name}은(는) 이미 등록되어 있습니다`, 'info');
         continue;
       }

@@ -229,18 +229,28 @@ export class Indexer {
         });
       });
       const rows = results.flatMap((r) => (r?.ok && r.value ? [r.value] : []));
+      // A SKILL.md that could not be downloaded (busy GitHub) is not a removed skill: its old row stays, and no
+      // commit is recorded so the next sync reads the plugin again. Dropping it hid a high-risk sibling from the
+      // plugin-wide warning until the plugin changed (project review 2026-11-02), as indexRepo already avoids.
+      const failed = results.filter((r) => !r?.ok).length;
       const text = pluginFtsText(plugin);
       this.store.transaction(() => {
         const keep = new Set(rows.map((r) => r.id));
-        for (const old of this.store.listSkillsByPlugin(pluginId)) if (!keep.has(old.id)) this.store.deleteSkill(old.id);
+        if (!failed) for (const old of this.store.listSkillsByPlugin(pluginId)) if (!keep.has(old.id)) this.store.deleteSkill(old.id);
         for (const row of rows) this.store.upsertSkill(row, text);
-        this.store.markPluginIndexed(pluginId, plugin.sha ?? sha, { ...d.signals, strictConflict: d.strictConflict }, null);
+        this.store.markPluginIndexed(
+          pluginId,
+          failed ? null : (plugin.sha ?? sha),
+          { ...d.signals, strictConflict: d.strictConflict },
+          failed ? `SKILL.md ${failed}개를 읽지 못해 다음 동기화 때 다시 읽습니다` : null,
+        );
       });
       return rows.length;
     } catch (err) {
       const reason = await this.unavailableReason(plugin.repo, err);
       if (reason) {
-        // Indexed "as of" the marketplace's pinned commit, so it is skipped until the entry changes.
+        // Indexed "as of" the marketplace's pinned commit, so it is skipped until the entry changes (an unpinned
+        // entry is read again every sync, like a working one).
         this.store.markPluginIndexed(pluginId, plugin.sha, null, `설치 불가: ${reason}`);
         throw new PluginUnavailableError(reason);
       }

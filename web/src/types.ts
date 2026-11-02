@@ -65,6 +65,8 @@ export type SearchEvent =
       hiddenHighRisk: number;
       hiddenNoDescription: number;
       hiddenLowStars?: number;
+      /** Hidden because the repo's star count is not known yet (first run, no token). */
+      hiddenUnknownStars?: number;
       minStars?: number;
       /** Results without a single query word in their name or description. */
       hiddenNoMatch?: number;

@@ -17,11 +17,31 @@ describe('§12 보안', () => {
     const r = await rawRequest({ port: srv.port, path: '/api/health', headers: api });
     assert.equal(r.status, 200);
     assert.equal(JSON.parse(r.body).ok, true);
+    // the launcher tells Skill Finder from other dev servers by this fixed value
+    assert.equal(JSON.parse(r.body).app, 'skill-finder');
   });
 
   it('localhost Host도 허용한다', async () => {
     const r = await rawRequest({ port: srv.port, host: `localhost:${srv.port}`, path: '/api/health', headers: api });
     assert.equal(r.status, 200);
+  });
+
+  it('대문자 경로(/API)로 헤더·출처 검사를 건너뛸 수 없다', async () => {
+    for (const path of ['/API/health', '/aPi/health', '/API/HEALTH']) {
+      const r = await rawRequest({ port: srv.port, path });
+      assert.equal(r.status, 403, `${path} 헤더 없이`);
+      const withHeader = await rawRequest({ port: srv.port, path, headers: api });
+      assert.notEqual(withHeader.status, 200, `${path}는 API로 가지 않음`);
+    }
+    const post = await rawRequest({ port: srv.port, method: 'POST', path: '/API/sync', headers: { ...api, Origin: 'http://evil.example' } });
+    assert.equal(post.status, 403);
+  });
+
+  it('다른 사이트에서 온 요청(Sec-Fetch-Site: cross-site)은 403', async () => {
+    const r = await rawRequest({ port: srv.port, path: '/api/health', headers: { ...api, 'Sec-Fetch-Site': 'cross-site' } });
+    assert.equal(r.status, 403);
+    const same = await rawRequest({ port: srv.port, path: '/api/health', headers: { ...api, 'Sec-Fetch-Site': 'same-origin' } });
+    assert.equal(same.status, 200);
   });
 
   it('Host가 evil.example이면 403', async () => {

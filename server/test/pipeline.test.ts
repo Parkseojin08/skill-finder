@@ -270,7 +270,9 @@ describe('최소 GitHub 스타', () => {
     assert.ok(!names.includes('pr-review'), '4,999개는 숨김');
     assert.ok(!names.includes('pdf-magic'), '스타 수를 모르면 숨김');
     assert.equal(results.minStars, 5000);
-    assert.ok((results.hiddenLowStars ?? 0) >= 2);
+    // "별 수 모름" is counted apart from "5,000 미만" (project review 2026-11-02)
+    assert.ok((results.hiddenLowStars ?? 0) >= 1, 'pr-review');
+    assert.ok((results.hiddenUnknownStars ?? 0) >= 1, 'pdf-magic');
   });
 
   it('GitHub 저장소에서 바로 색인한 스킬도 로컬 검색 결과에 나온다', async () => {

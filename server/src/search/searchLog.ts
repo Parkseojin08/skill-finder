@@ -32,6 +32,8 @@ export function searchLogger(store: Store, query: string, filters: SearchFilters
       sid,
       n: results?.items.length ?? 0,
       hidLow: results?.hiddenLowStars ?? 0,
+      // since 2026-11-02 hidLow counts only known star counts below the minimum; unknown ones are here
+      hidUnknown: results?.hiddenUnknownStars ?? 0,
       hidNoMatch: results?.hiddenNoMatch ?? 0,
       hidRisk: results?.hiddenHighRisk ?? 0,
       firstMs,

@@ -20,6 +20,8 @@ export function healthRouter(ctx: AppContext): Router {
   r.get('/health', async (_req, res) => {
     res.json({
       ok: true,
+      /** Fixed: the launcher tells this server from any other dev server answering /api/health on the port. */
+      app: 'skill-finder',
       appVersion: APP_VERSION,
       /** A newer version on the download page (installed app only); the launcher installs it at the next start. */
       update: updateInfo(APP_VERSION),

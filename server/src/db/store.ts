@@ -198,11 +198,15 @@ export class Store {
     return this.get<{ n: number }>('SELECT COUNT(*) AS n FROM plugins')!.n;
   }
 
-  /** Plugins whose skills were never indexed or whose pinned commit changed since indexing. */
+  /**
+   * Plugins whose skills were never indexed, whose last read failed (no indexed commit), or whose pinned commit
+   * changed since indexing. Unpinned entries (sha null) are read every sync; a failure on one used to leave
+   * `NULL IS NOT NULL` and drop it for good (project review 2026-11-02).
+   */
   listPluginsNeedingIndex(marketplace: string): PluginRow[] {
     return this.all<PluginRow>(
       `SELECT * FROM plugins WHERE marketplace = ? AND repo IS NOT NULL
-       AND (skills_indexed_at IS NULL OR skills_indexed_sha IS NOT sha) ORDER BY name`,
+       AND (skills_indexed_at IS NULL OR skills_indexed_sha IS NULL OR skills_indexed_sha IS NOT sha) ORDER BY name`,
       marketplace,
     );
   }

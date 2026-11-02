@@ -16,6 +16,8 @@ export function createApp(ctx: AppContext, opts: { searchDeps?: SearchDeps } = {
   const app = express();
   app.disable('x-powered-by');
   app.set('etag', false);
+  // /API/... must not reach the /api routes past a check written for /api (project review 2026-11-02)
+  app.set('case sensitive routing', true);
   app.use(securityMiddleware(ctx.config));
   app.use('/api', express.json({ limit: '64kb' }));
 
@@ -26,7 +28,9 @@ export function createApp(ctx: AppContext, opts: { searchDeps?: SearchDeps } = {
   app.use('/api', recommendRouter(ctx));
   app.use('/api', adminRouter(ctx));
 
-  app.use('/api', (_req, res) => {
+  // any other /api path, in any case (/API/... is not an API route and not a page either)
+  app.use((req, res, next) => {
+    if (!req.path.toLowerCase().startsWith('/api')) return next();
     res.status(404).json({ error: '없는 API 주소입니다' });
   });
 
@@ -37,7 +41,7 @@ export function createApp(ctx: AppContext, opts: { searchDeps?: SearchDeps } = {
     });
     // index.html must never be cached (it names the current hashed bundles); it is served by the fallback below.
     app.use(express.static(WEB_DIST_DIR, { index: false, maxAge: '1h' }));
-    app.get(/^\/(?!api\/).*/, (_req, res) => {
+    app.get(/^\/(?!api\/).*/i, (_req, res) => {
       res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(join(WEB_DIST_DIR, 'index.html'));
     });

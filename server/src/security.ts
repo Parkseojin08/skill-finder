@@ -39,8 +39,12 @@ export function securityMiddleware(opts: SecurityOptions): RequestHandler {
     const host = (req.headers.host ?? '').toLowerCase();
     if (!hosts.has(host)) return deny(res, 'host not allowed');
 
-    if (req.path.startsWith('/api')) {
+    // Any case: routes match /API as /api unless routing is case-sensitive (it is, in createApp), and the check
+    // must not depend on that (project review 2026-11-02: /API/... skipped every check below).
+    if (req.path.toLowerCase().startsWith('/api')) {
       if (req.method === 'OPTIONS') return deny(res, 'cors not allowed');
+      // a page on another site; browsers send this on every request they make
+      if (req.get('sec-fetch-site') === 'cross-site') return deny(res, 'cross-site request');
       if (req.get('x-skill-finder') !== '1') return deny(res, 'missing X-Skill-Finder header');
       if (!SAFE_METHODS.has(req.method)) {
         const origin = req.get('origin');

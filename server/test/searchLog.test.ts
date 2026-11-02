@@ -23,7 +23,7 @@ describe('검색 기록 (U5-2)', () => {
     const log = searchLogger(srv.ctx.store, 'pdf tables', { minStars: 0 }, started);
     log({ type: 'source', source: 'github', state: 'timeout' });
     log({ type: 'candidates', items: [] });
-    log({ type: 'results', items: [], hiddenHighRisk: 2, hiddenNoDescription: 0, hiddenLowStars: 3, hiddenNoMatch: 1, minStars: 0 });
+    log({ type: 'results', items: [], hiddenHighRisk: 2, hiddenNoDescription: 0, hiddenLowStars: 3, hiddenUnknownStars: 4, hiddenNoMatch: 1, minStars: 0 });
     const done = log({ type: 'done', cached: false, elapsedMs: 1234 });
     log({ type: 'done', cached: false, elapsedMs: 1300 }); // a second done (error path) is not logged twice
     const [row] = rows('search');
@@ -36,6 +36,7 @@ describe('검색 기록 (U5-2)', () => {
       firstMs: undefined,
       n: 0,
       hidLow: 3,
+      hidUnknown: 4,
       hidNoMatch: 1,
       hidRisk: 2,
       finalMs: 1234,

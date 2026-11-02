@@ -6,7 +6,7 @@ import { RepoCard } from '../components/RepoCard.tsx';
 import { ResultCard, skillHref } from '../components/ResultCard.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { useInstalled } from '../installed.ts';
-import { STAGES } from '../labels.ts';
+import { RISK_RANK, STAGES } from '../labels.ts';
 import { byPopular, foldResults, nameMatches, navigationalWord, SORTS, type SortKey } from '../lib/resultOrder.ts';
 import type { Health, Job, OpenedFrom, ResultItem, RiskLevel, SearchEvent, SearchSource, SettingsResponse, SourceKind, SourceProgress } from '../types.ts';
 
@@ -121,6 +121,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   }, []);
   /** The conditions the shown results were searched with (the controls may change after), for the snapshot. */
   const searchedWith = useRef<{ risk: RiskLevel; sources: SourceKind[] }>({ risk: 'medium', sources: [] });
+  /** The same, for rendering: the controls above can differ from what the results on screen were searched with. */
+  const [searched, setSearched] = useState<{ risk: RiskLevel; sources: SourceKind[] }>({ risk: 'medium', sources: [] });
   const [health, setHealth] = useState<Health | null>(null);
   const [syncJob, setSyncJob] = useState<Job | null>(null);
   const [lastQuery, setLastQuery] = useState('');
@@ -232,6 +234,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       setLastQuery(text);
       onQuery(text);
       searchedWith.current = { risk, sources: useSources };
+      setSearched({ risk, sources: useSources });
       // the query goes in the address (UI debate 2-3) without adding a history entry per search
       if (window.location.pathname === '/') window.history.replaceState(null, '', logOn ? `/?q=${encodeURIComponent(text)}` : '/');
       try {
@@ -311,6 +314,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
     setMaxRisk(snap.risk);
     setSources(snap.sources);
     searchedWith.current = { risk: snap.risk, sources: snap.sources };
+    setSearched({ risk: snap.risk, sources: snap.sources });
     setItems(snap.items);
     setFinal(snap.final);
     setDoneInfo(snap.doneInfo);
@@ -321,7 +325,14 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   }, []);
 
   const toggleSource = (s: SourceKind) => setSources((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
-  const filtered = items.filter((it) => matchFacets(it, facets));
+  // The risk limit above narrows what is on screen at once (project review 2026-11-02: "낮음만" still showed
+  // "주의" cards until the next search); a wider limit or other sources need a new search, offered below.
+  const riskOk = (it: ResultItem) => RISK_RANK[it.riskLevel] <= RISK_RANK[maxRisk];
+  const riskHiddenNow = items.filter((it) => !riskOk(it)).length;
+  const filtered = items.filter((it) => riskOk(it) && matchFacets(it, facets));
+  const conditionsChanged =
+    status === 'done' &&
+    (RISK_RANK[maxRisk] > RISK_RANK[searched.risk] || sources.length !== searched.sources.length || sources.some((s) => !searched.sources.includes(s)));
   const compare = SORTS.find((s) => s.key === sort)!.compare;
   const word = navigationalWord(lastQuery);
   // Same rule as the server: an exact skill/repo name ("rea") is a lookup, so its skills come first by default.
@@ -365,9 +376,13 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       ? [{ key: 'nomatch', node: `검색어 단어가 이름·설명에 하나도 없는 결과 ${final.hiddenNoMatch}개는 숨겼습니다.` }]
       : []),
   ];
-  const hiddenRisky = final && maxRisk !== 'high' ? final.hiddenHighRisk : 0;
+  // what the server left out under the limit the results were searched with (not the one picked since)
+  const hiddenRisky = final && searched.risk !== 'high' ? final.hiddenHighRisk : 0;
   // "별 N개 미만 M개 숨김 · 보기" (user decision B): searches once without the minimum; the setting stays
   const hiddenLowStars = final && (final.minStars ?? 0) > 0 ? (final.hiddenLowStars ?? 0) : 0;
+  const hiddenUnknownStars = final && (final.minStars ?? 0) > 0 ? (final.hiddenUnknownStars ?? 0) : 0;
+  // the index or the repo star counts are still being gathered (first run): results are partial
+  const gathering = !!syncJob || (health?.skills ?? 0) < FEW_SKILLS;
 
   return (
     <div className="page search-page">
@@ -492,7 +507,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       )}
 
       <div className={showFacets ? 'results-layout' : undefined}>
-        {showFacets && <FacetPanel items={items} value={facets} onChange={changeFacets} />}
+        {showFacets && <FacetPanel items={items.filter(riskOk)} value={facets} onChange={changeFacets} />}
         <div className="results-main">
           {status !== 'idle' && (
             <div className="results-toolbar" ref={resultsRef}>
@@ -518,7 +533,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                   <span>
                     <b>{shown.length}</b>개 결과
                     {sorted.length > shown.length && <span className="muted small"> · {sorted.length - shown.length}개 접힘</span>}
-                    {filtering && <span className="muted small"> · 필터로 {items.length - sorted.length}개 뺌</span>}
+                    {filtering && <span className="muted small"> · 필터로 {items.length - riskHiddenNow - sorted.length}개 뺌</span>}
+                    {riskHiddenNow > 0 && <span className="muted small"> · 위험 조건으로 {riskHiddenNow}개 뺌</span>}
                     {doneInfo && <span className="muted small"> · {doneInfo.cached ? '저장된 결과' : `${(doneInfo.elapsedMs / 1000).toFixed(1)}초`}</span>}
                   </span>
                 )}
@@ -535,14 +551,21 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                     위험 높음 {hiddenRisky}개 숨김 · 보기
                   </button>
                 )}
-                {status === 'done' && hiddenLowStars > 0 && (
+                {status === 'done' && hiddenLowStars + hiddenUnknownStars > 0 && (
                   <button
                     type="button"
                     className="status-chip action"
                     title="이번 검색만 최소 스타 수 없이 다시 검색합니다 (설정은 그대로). 후보 중 일부는 다시 찾으면 검색어와 맞지 않아 빠질 수 있습니다."
                     onClick={() => run(lastQuery, maxRisk, final!.minStars!)}
                   >
-                    별 {final!.minStars!.toLocaleString()} 미만 {hiddenLowStars}개 숨김 · 보기
+                    {hiddenLowStars > 0 && `별 ${final!.minStars!.toLocaleString()} 미만 ${hiddenLowStars}개`}
+                    {hiddenLowStars > 0 && hiddenUnknownStars > 0 && ' · '}
+                    {hiddenUnknownStars > 0 && `별 수 모름 ${hiddenUnknownStars}개`} 숨김 · 보기
+                  </button>
+                )}
+                {conditionsChanged && (
+                  <button type="button" className="status-chip action" title="위쪽 조건이 이 결과를 찾을 때와 다릅니다" onClick={() => run(lastQuery, maxRisk, liftedStars)}>
+                    조건이 바뀌었습니다 · 다시 검색
                   </button>
                 )}
                 {status === 'done' && liftedStars != null && (
@@ -652,7 +675,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
               {final!.repos!.map((r) => (
                 <RepoCard
                   key={r.repo}
-                  repo={r}
+                  // the risk limit above applies to a repo's skills (and what its 설치 button installs) too
+                  repo={{ ...r, skills: r.skills.filter((s) => RISK_RANK[s.riskLevel] <= RISK_RANK[maxRisk]) }}
                   onOpenSkill={(id) => {
                     const item = items.find((x) => x.id === id);
                     if (item) onOpen(item);
@@ -691,9 +715,11 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
               <div className="empty">
                 <p>
                   결과가 없습니다.
-                  {(health?.skills ?? 0) < FEW_SKILLS
-                    ? ' 아직 스킬 목록을 모으는 중이라 결과가 적을 수 있습니다. 잠시 뒤 다시 검색해 보세요.'
-                    : ' 다른 영어 표현으로 검색해 보세요.'}
+                  {hiddenUnknownStars > 0 && hiddenUnknownStars >= hiddenLowStars
+                    ? ` 저장소 별 수를 아직 몰라서 ${hiddenUnknownStars}개를 숨겼습니다${gathering ? ' (처음 실행이라 정보를 모으는 중입니다)' : ''}. 아래에서 이번만 풀고 보세요.${health?.githubToken ? '' : ' 설정에서 GitHub 토큰을 넣으면 별 수가 빨리 채워집니다.'}`
+                    : gathering
+                      ? ' 아직 스킬 목록을 모으는 중이라 결과가 적을 수 있습니다. 잠시 뒤 다시 검색해 보세요.'
+                      : ' 다른 영어 표현으로 검색해 보세요.'}
                 </p>
                 {(sources.length < 3 || maxRisk !== 'high' || (final?.minStars ?? 0) > 0) && (
                   <div className="examples">
@@ -734,10 +760,18 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             )}
             {items.length > 0 && sorted.length === 0 && (
               <p className="empty">
-                선택한 필터에 맞는 결과가 없습니다.{' '}
-                <button type="button" className="linkish" onClick={() => changeFacets(NO_FACETS)}>
-                  필터 초기화
-                </button>
+                {riskHiddenNow > 0 ? '지금 위험 조건과 필터에 맞는 결과가 없습니다.' : '선택한 필터에 맞는 결과가 없습니다.'}{' '}
+                {riskHiddenNow > 0 && (
+                  <button type="button" className="linkish" onClick={() => setMaxRisk(searched.risk)}>
+                    위험 조건 되돌리기
+                  </button>
+                )}
+                {riskHiddenNow > 0 && filtering && ' · '}
+                {(filtering || riskHiddenNow === 0) && (
+                  <button type="button" className="linkish" onClick={() => changeFacets(NO_FACETS)}>
+                    필터 초기화
+                  </button>
+                )}
               </p>
             )}
           </div>
