@@ -1,5 +1,5 @@
 import { Icon } from '../components/Icon.tsx';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiGet } from '../api.ts';
 import { BreakdownTable, QualityBadges, RiskBadge, RiskFlags, RiskSummary, SourceBadges } from '../components/Badges.tsx';
 import { InstallPanel, riskierSiblings, SiblingRiskNote } from '../components/InstallPanel.tsx';
@@ -45,8 +45,22 @@ export function SkillPage({
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
-  const [tab, setTab] = useState<Tab>('overview');
+  // the tab is in the address (?tab=install), so a reload or a copied address opens the same one (review 2026-11-02)
+  const [tab, setTabState] = useState<Tab>(() => {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    return t === 'install' || t === 'skill' || t === 'files' ? t : 'overview';
+  });
+  const setTab = (t: Tab) => {
+    setTabState(t);
+    const p = new URLSearchParams(window.location.search);
+    if (t === 'overview') p.delete('tab');
+    else p.set('tab', t);
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}?${p}`);
+  };
   const [file, setFile] = useState<{ path: string; content: string | null; error?: string } | null>(null);
+  /** The file asked for last: an earlier, slower answer must not replace it. */
+  const fileAsked = useRef<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -65,13 +79,14 @@ export function SkillPage({
     return () => {
       alive = false;
     };
-  }, [id, query]);
+  }, [id, query, attempt]);
 
   const openFile = (path: string) => {
+    fileAsked.current = path;
     setFile({ path, content: null });
     apiGet<{ path: string; content: string }>(`/skills/${encodeURIComponent(id)}/file`, { path })
-      .then((r) => setFile({ path, content: r.content }))
-      .catch((e) => setFile({ path, content: null, error: String(e.message ?? e) }));
+      .then((r) => fileAsked.current === path && setFile({ path, content: r.content }))
+      .catch((e) => fileAsked.current === path && setFile({ path, content: null, error: String(e.message ?? e) }));
   };
 
   const name = detail?.name ?? item?.name ?? '';
@@ -159,7 +174,26 @@ export function SkillPage({
         ))}
       </div>
 
-      {error && <p className="warn-box">{error}</p>}
+      {error && (
+        <div className="warn-box" role="alert">
+          <p>{error}</p>
+          <div className="row">
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                setError(null);
+                setAttempt((a) => a + 1);
+              }}
+            >
+              다시 시도
+            </button>
+            <button type="button" className="ghost" onClick={onBack}>
+              {backLabel}
+            </button>
+          </div>
+        </div>
+      )}
       {!detail && !error && <p className="muted">불러오는 중…</p>}
 
       {detail && tab === 'overview' && (

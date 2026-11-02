@@ -73,8 +73,23 @@ export function searchLogChanged(on: boolean): void {
   window.dispatchEvent(new CustomEvent(SEARCH_LOG_EVENT, { detail: on }));
 }
 
+/** The address the search page last wrote (query, sort, page, filters), for coming back through the menu. */
+let lastSearchAddress: string | null = null;
+
+/** Side filters as an address value ("trust.official,category.pdf") and back. */
+const facetParam = (f: Facets) => (Object.keys(f) as Array<keyof Facets>).flatMap((g) => f[g].map((k) => `${g}.${k}`)).join(',');
+function parseFacets(v: string): Facets {
+  const out: Facets = { trust: [], category: [], method: [] };
+  for (const part of v.split(',')) {
+    const [g, k] = part.split('.');
+    if (k && (g === 'trust' || g === 'category' || g === 'method') && !out[g].includes(k)) out[g].push(k);
+  }
+  return out;
+}
+
 /** The search page's address with the last query, for the "검색" menu (so the query stays in the address). */
 export function searchUrl(): string {
+  if (lastSearchAddress) return lastSearchAddress;
   try {
     const q = (JSON.parse(sessionStorage.getItem(SNAPSHOT_KEY) ?? 'null') as { q?: string } | null)?.q;
     return q ? `/?q=${encodeURIComponent(q)}` : '/';
@@ -200,7 +215,9 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       if (document.querySelector('dialog[open], [role="dialog"]')) return; // a dialog has the keyboard
       // with the Korean layout on, j and k arrive as ㅓ and ㅏ: the key's place decides (review 2026-11-02)
       const key = ['/', '?', 'j', 'k'].includes(e.key) ? e.key : ({ KeyJ: 'j', KeyK: 'k' } as Record<string, string>)[e.code] ?? e.key;
-      if (key === '/') {
+      if (e.key === 'Escape') {
+        stopRef.current();
+      } else if (key === '/') {
         e.preventDefault();
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -333,10 +350,15 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       snap = null;
     }
     setQuery(q);
+    const params = new URLSearchParams(window.location.search);
+    const sortParam = params.get('sort');
+    if (SORTS.some((s) => s.key === sortParam)) setSort(sortParam as SortKey);
+    if (params.get('f')) setFacets(parseFacets(params.get('f')!));
     if (snap?.q !== q) {
       void run(q);
       return;
     }
+    if (Number(params.get('page')) > 1) setPage(Number(params.get('page')));
     setLastQuery(q);
     onQuery(q);
     setMaxRisk(snap.risk);
@@ -351,6 +373,16 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
     setStatus('done');
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on load
   }, []);
+
+  /** Stops a running search: what came so far stays on screen (the server still finishes and caches it). */
+  const stopRef = useRef<() => void>(() => {});
+  stopRef.current = () => {
+    if (status !== 'running') return;
+    abortRef.current?.abort();
+    setProvisional(false);
+    setStatus('done');
+    setWarnings((w) => [...w, { source: 'client', message: '검색을 중지했습니다. 지금까지 찾은 결과만 보입니다.', severity: 'note' }]);
+  };
 
   const toggleSource = (s: SourceKind) => setSources((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
   // The risk limit above narrows what is on screen at once (project review 2026-11-02: "낮음만" still showed
@@ -383,6 +415,19 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   const shown = foldResults(sorted, openRepos, openNames, word);
   const pageCount = Math.max(1, Math.ceil(shown.length / pageSize));
   const currentPage = Math.min(page, pageCount);
+  // Sort, page and side filters ride along with the query in the address (only when the query does: the search
+  // log on), so a reload or a copied address shows the same screen (review 2026-11-02).
+  useEffect(() => {
+    if (window.location.pathname !== '/' || !logOn || !lastQuery || status === 'running') return;
+    const p = new URLSearchParams({ q: lastQuery });
+    if (sort !== 'popular') p.set('sort', sort);
+    if (currentPage > 1) p.set('page', String(currentPage));
+    const f = facetParam(facets);
+    if (f) p.set('f', f);
+    const next = `/?${p}`;
+    lastSearchAddress = next;
+    if (window.location.pathname + window.location.search !== next) window.history.replaceState(window.history.state, '', next);
+  }, [lastQuery, sort, currentPage, facets, logOn, status]);
   const pageItems = shown.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   useEffect(() => {
     if (focusAt.current == null) return;
@@ -448,6 +493,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             // focus stayed here and "j" was typed into the query)
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
+                stopRef.current();
                 e.currentTarget.blur();
               } else if (e.key === 'ArrowDown') {
                 const first = resultsRef.current?.parentElement?.querySelector<HTMLElement>('.results a.card-link');
@@ -550,13 +596,24 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                     <span className="muted small status-line">
                       <span className="spinner" aria-hidden="true" /> 나머지 후보 확인 중
                     </span>
+                    <button type="button" className="linkish small" onClick={() => stopRef.current()} title="Esc">
+                      중지
+                    </button>
                   </span>
                 ) : status === 'running' ? (
                   <span className="status-line">
-                    <span className="spinner" aria-hidden="true" /> {stage ? STAGES[stage] : '검색'} 중…
+                    <span className="spinner" aria-hidden="true" /> {stage ? STAGES[stage] : '검색'} 중…{' '}
+                    <button type="button" className="linkish small" onClick={() => stopRef.current()} title="Esc">
+                      중지
+                    </button>
                   </span>
                 ) : status === 'error' ? (
-                  <span className="warn-text">검색 실패</span>
+                  <span className="warn-text">
+                    검색 실패{' '}
+                    <button type="button" className="linkish small" onClick={() => run(lastQuery, maxRisk, liftedStars)}>
+                      다시 시도
+                    </button>
+                  </span>
                 ) : (
                   // one count, the same as the pager's: cards shown; folded copies and filtered-out ones are noted
                   <span>
