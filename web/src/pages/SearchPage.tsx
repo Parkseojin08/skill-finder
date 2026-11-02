@@ -12,7 +12,7 @@ import { CATEGORY, jobLine, METHOD, RISK_RANK, STAGES, TRUST } from '../labels.t
 import { fileStem, resultsJson, resultsMarkdown, saveFile } from '../lib/exportList.ts';
 import { goInApp } from '../lib/links.ts';
 import { readPageSize, savePageSize } from '../lib/prefs.ts';
-import { byPopular, foldResults, nameMatches, navigationalWord, SORTS, type SortKey } from '../lib/resultOrder.ts';
+import { byPopular, foldResults, nameMatches, navigationalWord, repoMainSkill, SORTS, type SortKey } from '../lib/resultOrder.ts';
 import type { Health, Job, OpenedFrom, ResultItem, RiskLevel, SearchEvent, SearchSource, SettingsResponse, SourceKind, SourceProgress } from '../types.ts';
 
 
@@ -396,13 +396,15 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
     (RISK_RANK[maxRisk] > RISK_RANK[searched.risk] || sources.length !== searched.sources.length || sources.some((s) => !searched.sources.includes(s)));
   const compare = SORTS.find((s) => s.key === sort)!.compare;
   const word = navigationalWord(lastQuery);
-  // Same rule as the server: an exact skill/repo name ("rea") is a lookup, so its skills come first by default.
+  // Same rule as the server: an exact skill/repo name ("rea") is a lookup, so the skills of that name and that
+  // repo's main skill (from all the results, not only the filtered ones) come first by default.
   // Among those name matches popularity alone decides, as on the server (no relevance tier).
+  const main = word ? repoMainSkill(items, word) : null;
   const sorted = filtered.sort(
     sort === 'popular' && word
       ? (a, b) => {
-          const na = nameMatches(a, word);
-          const nb = nameMatches(b, word);
+          const na = nameMatches(a, word, main);
+          const nb = nameMatches(b, word, main);
           return Number(nb) - Number(na) || (na ? byPopular(a, b) : compare(a, b));
         }
       : compare,
@@ -413,7 +415,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
     setFacets(f);
     setPage(1);
   };
-  const shown = foldResults(sorted, openRepos, openNames, word);
+  const shown = foldResults(sorted, openRepos, openNames, word, main);
   const pageCount = Math.max(1, Math.ceil(shown.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   // Sort, page and side filters ride along with the query in the address (only when the query does: the search

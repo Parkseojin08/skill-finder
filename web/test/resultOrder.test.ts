@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import * as server from '../../server/src/search/pipeline.ts';
-import { foldResults, nameMatches, navigationalWord, SORTS } from '../src/lib/resultOrder.ts';
+import { foldResults, nameMatches, navigationalWord, repoMainSkill, SORTS } from '../src/lib/resultOrder.ts';
 import type { ResultItem } from '../src/types.ts';
 
 let n = 0;
@@ -48,13 +48,17 @@ describe('검색 결과 순서·접기 (resultOrder.ts)', () => {
     assert.equal(opened[0].copyOf, undefined);
   });
 
-  it('한 저장소는 2개만 보이고 나머지는 "N개 더"로 접는다; 검색어와 같은 이름의 저장소는 접지 않는다', () => {
+  it('한 저장소는 2개만 보이고 나머지는 "N개 더"로 접는다; 검색어와 같은 이름의 저장소는 이름 찾기 결과만 접지 않는다', () => {
     const many = ['a', 'b', 'c', 'd'].map((x) => item(x, 'big/rea'));
     const rows = foldResults(many, new Set(), new Set(), null);
     assert.deepEqual(rows.map((r) => r.item.name), ['a', 'b']);
     assert.deepEqual(rows[1].more, { repo: 'big/rea', count: 2 });
     assert.equal(foldResults(many, new Set(['big/rea']), new Set(), null).length, 4);
-    assert.equal(foldResults(many, new Set(), new Set(), 'rea').length, 4);
+    // named like the query or downloaded: the lookup's results stay; the repo's other skills fold as anywhere else
+    const lookup = [item('rea-a', 'big/rea'), item('main', 'big/rea', { installs: 11216 }), item('rea-b', 'big/rea'), ...['x', 'y', 'z'].map((x) => item(x, 'big/rea'))];
+    const kept = foldResults(lookup, new Set(), new Set(), 'rea', repoMainSkill(lookup, 'rea'));
+    assert.deepEqual(kept.map((r) => r.item.name), ['rea-a', 'main', 'rea-b', 'x', 'y']);
+    assert.deepEqual(kept.at(-1)?.more, { repo: 'big/rea', count: 1 });
   });
 });
 
@@ -68,10 +72,21 @@ describe('서버와 웹이 같은 규칙을 쓴다 (전체 점검 #12)', () => {
       ['rea-tools', 'gh:o/r:skills/x', 'rea'],
       ['area', 'gh:o/r:skills/x', 'rea'],
       ['pdf', 'gh:o/r:skills/pdf', 'pdf'],
+      ['flow', 'gh:react/react:.claude/skills/flow', 'react'],
     ];
     for (const [name, id, word] of cases) {
       const it = { ...item(name, 'o/r'), id };
-      assert.equal(nameMatches(it, word), server.nameMatches({ name, id } as never, word), `${name} ${id} ${word}`);
+      assert.equal(nameMatches(it, word), server.nameMatches({ name, id }, word), `${name} ${id} ${word}`);
+    }
+    // the same-name repo's main skill: one that stands out, none when the counts are even
+    const sets: Array<[string, Array<[string, number | undefined]>]> = [
+      ['rea', [['gh:morluto/rea:.agents/skills/r', 11216], ['gh:morluto/rea:.agents/skills/t', undefined]]],
+      ['mastra', [['gh:mastra-ai/mastra:.claude/skills/a', 2633], ['gh:mastra-ai/mastra:.claude/skills/b', 2498]]],
+      ['react', [['gh:react/react:.claude/skills/flow', undefined], ['gh:o/a:skills/react-x', 900]]],
+    ];
+    for (const [word, list] of sets) {
+      const items = list.map(([id, installs]) => ({ ...item('x', 'o/r', { installs }), id }));
+      assert.equal(repoMainSkill(items, word), server.repoMainSkill(items, word), word);
     }
   });
 });

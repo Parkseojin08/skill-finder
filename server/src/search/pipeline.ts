@@ -49,7 +49,7 @@ export type SourceState = 'running' | 'done' | 'failed' | 'timeout' | 'skipped';
  * Part of the search cache key: bump it whenever what a cached search replays changes shape (results fields,
  * warning fields) or meaning, so older cached searches are not shown. test/pipeline.test.ts pins the shape.
  */
-export const RESULTS_VERSION = 20;
+export const RESULTS_VERSION = 21;
 
 const SOURCE_NAME_KO: Record<SourceName, string> = { local: '내 PC 색인', skillssh: 'skills.sh', github: 'GitHub', repos: '같은 이름 저장소' };
 
@@ -853,7 +853,7 @@ export async function runSearch(
       };
       items.push({ ...toItem(c, lookup, breakdown, settings.weights, st), tier: relevanceTier(m) });
     }
-    items.sort(byNameThenPopularity(query));
+    items.sort(byNameThenPopularity(query, items));
     const repoCards: RepoResult[] = [...repoInfo]
       .filter(([, i]) => minStars <= 0 || (i.stars ?? 0) >= minStars)
       .sort((a, b) => (b[1].stars ?? 0) - (a[1].stars ?? 0))
@@ -915,13 +915,28 @@ export function navigationalWord(query: string): string | null {
 }
 
 /**
- * Typing a skill's or repo's exact name is a lookup: skills named `q` or `q-…`, or from a repo named `q`, come
- * first (most popular first among them). Everything else keeps the popularity order. Ids are `gh:owner/repo:dir`.
+ * The main skill of the repo named like a one-word query: its most downloaded one, when that has at least twice
+ * the downloads of the next (morluto/rea's reverse-engineer-anything: 11,216, the rest none). The repo's other
+ * skills are mostly its contributors' own tooling (react/react's `.claude/skills`), and installing a whole repo
+ * counts each of its skills, so they often have about the same count (mastra-ai/mastra 2,400-2,800 each): no
+ * main skill there (user decision 2026-11-02). Ids are `gh:owner/repo:dir`.
  */
-export function nameMatches(item: Pick<ResultItem, 'id' | 'name'>, word: string): boolean {
+export function repoMainSkill(items: ReadonlyArray<Pick<ResultItem, 'id' | 'installs'>>, word: string): string | null {
+  const [first, second] = items
+    .filter((i) => i.id.match(/^gh:[^/]+\/([^:]+):/)?.[1]?.toLowerCase() === word)
+    .map((i) => ({ id: i.id, n: i.installs ?? 0 }))
+    .sort((a, b) => b.n - a.n);
+  return first && first.n > 0 && first.n >= 2 * (second?.n ?? 0) ? first.id : null;
+}
+
+/**
+ * Typing a skill's or repo's exact name is a lookup: skills named `q` or `q-…` come first (most popular first
+ * among them), and so does the main skill of a repo named `q` (repoMainSkill). Everything else, the repo's other
+ * skills included, keeps the popularity order.
+ */
+export function nameMatches(item: Pick<ResultItem, 'id' | 'name'>, word: string, main: string | null = null): boolean {
   const name = item.name.toLowerCase();
-  const repo = item.id.match(/^gh:[^/]+\/([^:]+):/)?.[1];
-  return name === word || name.startsWith(`${word}-`) || repo === word;
+  return name === word || name.startsWith(`${word}-`) || item.id === main;
 }
 
 /** Relevance tier first (user decision C, see relevanceTier), then popularity. */
@@ -929,18 +944,19 @@ export function byTierThenPopularity(a: ResultItem, b: ResultItem): number {
   return (b.tier ?? 0) - (a.tier ?? 0) || byPopularity(a, b);
 }
 
-export function byNameThenPopularity(query: string): (a: ResultItem, b: ResultItem) => number {
+/** `items`: the results being sorted, to find the same-name repo's main skill. */
+export function byNameThenPopularity(query: string, items: ReadonlyArray<ResultItem> = []): (a: ResultItem, b: ResultItem) => number {
   const word = navigationalWord(query);
   if (!word) return byTierThenPopularity;
+  const main = repoMainSkill(items, word);
   // Among the skills a name lookup found, popularity alone decides (morluto/rea's main skill has no "rea" in its name).
   return (a, b) => {
-    const na = nameMatches(a, word);
-    const nb = nameMatches(b, word);
+    const na = nameMatches(a, word, main);
+    const nb = nameMatches(b, word, main);
     return Number(nb) - Number(na) || (na ? byPopularity(a, b) : byTierThenPopularity(a, b));
   };
 }
 
-/** The GitHub repo a candidate's skill lives in, known before its lookup (null for well-known sites). */
 /** The trust tier of a candidate not read yet, from what its source says (the repo, the plugin's marketplace). */
 function pendingTier(c: Candidate): TrustTier | null {
   const p = c.pending;
@@ -949,6 +965,7 @@ function pendingTier(c: Candidate): TrustTier | null {
   return repo ? trustTier({ repo, dir_path: p?.type === 'github' ? p.path : null }, null) : null;
 }
 
+/** The GitHub repo a candidate's skill lives in, known before its lookup (null for well-known sites). */
 function candidateRepo(c: Candidate): string | null {
   if (c.skill) return c.skill.repo;
   const p = c.pending;

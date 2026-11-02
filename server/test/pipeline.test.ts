@@ -7,7 +7,7 @@ import { createContext } from '../src/bootstrap.ts';
 import type { AppContext } from '../src/context.ts';
 import { TreeIndex } from '../src/discovery/tree.ts';
 import { buildSkillRow, pluginFtsText } from '../src/indexer.ts';
-import { byNameThenPopularity, ftsAllQuery, ftsQuery, nameMatches, navigationalWord, queryKeywords, runSearch, type SearchDeps, type SearchEvent } from '../src/search/pipeline.ts';
+import { byNameThenPopularity, ftsAllQuery, ftsQuery, nameMatches, navigationalWord, queryKeywords, repoMainSkill, runSearch, type SearchDeps, type SearchEvent } from '../src/search/pipeline.ts';
 
 /** A plugin skill (the plugin and its marketplace entry too). */
 function addPluginSkill(ctx: AppContext, plugin: string, mp: string, repo: string, dir: string, name: string, description: string, extra = ''): string {
@@ -409,8 +409,8 @@ describe('최소 GitHub 스타', () => {
 describe('이름으로 찾기 (한 단어 검색)', () => {
   it('정확한 스킬·저장소 이름은 다운로드 순보다 먼저 온다', () => {
     const item = (id: string, name: string, installs: number | undefined) => ({ id, name, installs, stars: 1, breakdown: { R: 0.5, P: 0, F: 0, T: 0 } }) as never;
-    const items = [item('gh:vercel/agent-skills:react', 'react-best', 900000), item('gh:morluto/rea:x', 'reverse-engineer-anything', undefined), item('gh:a/b:rea', 'rea-tool', undefined)];
-    const sorted = [...items].sort(byNameThenPopularity('REA'));
+    const items = [item('gh:vercel/agent-skills:react', 'react-best', 900000), item('gh:morluto/rea:x', 'reverse-engineer-anything', 11216), item('gh:a/b:rea', 'rea-tool', undefined)];
+    const sorted = [...items].sort(byNameThenPopularity('REA', items));
     assert.deepEqual(sorted.map((i: { name: string }) => i.name).slice(0, 2).sort(), ['rea-tool', 'reverse-engineer-anything']);
     assert.equal(navigationalWord('extract tables'), null, '여러 단어는 이름 검색이 아님');
     assert.ok(!nameMatches({ id: 'gh:x/react:y', name: 'react' }, 'rea'), '앞부분만 같은 단어는 아님');
@@ -418,7 +418,25 @@ describe('이름으로 찾기 (한 단어 검색)', () => {
     const rea = (id: string, name: string, installs: number | undefined, tier: number) => ({ id, name, installs, stars: 1, tier, breakdown: { R: 0.5, P: 0, F: 0, T: 0 } }) as never;
     const main = rea('gh:morluto/rea:a', 'reverse-engineer-anything', 11216, 0);
     const side = rea('gh:morluto/rea:b', 'rea-tool-design', undefined, 1);
-    assert.equal(([side, main].sort(byNameThenPopularity('rea'))[0] as { name: string }).name, 'reverse-engineer-anything');
+    assert.equal(([side, main].sort(byNameThenPopularity('rea', [side, main]))[0] as { name: string }).name, 'reverse-engineer-anything');
+  });
+
+  it('같은 이름 저장소에서는 대표 스킬만 앞에 두고, 기여자용 도구는 다른 결과처럼 정렬한다', () => {
+    const item = (id: string, name: string, installs: number | undefined, tier: number) => ({ id, name, installs, stars: 250000, tier, breakdown: { R: 0.5, P: 0, F: 0, T: 0 } }) as never;
+    // react/react's `.claude/skills` (feature-flags, flow, …): none on skills.sh
+    const internal = item('gh:react/react:.claude/skills/flow', 'flow', undefined, 0);
+    const named = item('gh:o/a:skills/react-patterns', 'react-patterns', undefined, 1);
+    const popular = item('gh:vercel-labs/agent-skills:skills/react-best-practices', 'vercel-react-best-practices', 860000, 1);
+    const all = [internal, popular, named];
+    assert.equal(repoMainSkill(all, 'react'), null);
+    assert.deepEqual(([...all].sort(byNameThenPopularity('react', all)) as Array<{ name: string }>).map((i) => i.name), ['react-patterns', 'vercel-react-best-practices', 'flow']);
+    // a whole repo installed at once gives each of its skills about the same count: no main skill
+    const even = [item('gh:mastra-ai/mastra:.claude/skills/a', 'ralph-plan', 2633, 0), item('gh:mastra-ai/mastra:.claude/skills/b', 'smoke-test', 2498, 0)];
+    assert.equal(repoMainSkill(even, 'mastra'), null);
+    // one that stands out is the repo's main skill
+    const rea = [item('gh:morluto/rea:.agents/skills/r', 'reverse-engineer-anything', 11216, 0), item('gh:morluto/rea:.agents/skills/t', 'rea-tool-design', undefined, 1)];
+    assert.equal(repoMainSkill(rea, 'rea'), 'gh:morluto/rea:.agents/skills/r');
+    assert.ok(nameMatches(rea[0], 'rea', repoMainSkill(rea, 'rea')));
   });
 
   it('저장소 이름과 같은 한 단어면 그 저장소를 결과 카드로 보여 주고 스킬을 모두 후보로 넣는다', async () => {
@@ -691,7 +709,7 @@ describe('캐시에 남는 검색의 모양 (전체 점검 #12)', () => {
 
   it('결과·항목·경고의 필드가 정해 둔 것뿐이고, 버전은 18이다', async () => {
     const { RESULTS_VERSION } = await import('../src/search/pipeline.ts');
-    assert.equal(RESULTS_VERSION, 20, '버전을 올렸으면 이 테스트의 필드 목록도 맞추세요');
+    assert.equal(RESULTS_VERSION, 21, '버전을 올렸으면 이 테스트의 필드 목록도 맞추세요');
     const ctx = ctxWithSkills();
     for (const q of ['pdf tables', 'PDF에서 표 추출', 'pdf']) {
       const events = await collect(deps(ctx), q);

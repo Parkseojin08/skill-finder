@@ -27,9 +27,17 @@ export function navigationalWord(query: string): string | null {
   const q = query.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
   return /^[a-z0-9][a-z0-9._-]{1,99}$/.test(q) ? q : null;
 }
-export function nameMatches(item: ResultItem, word: string): boolean {
+/** The same-name repo's main skill: its most downloaded, with at least twice the next one's downloads. */
+export function repoMainSkill(items: ResultItem[], word: string): string | null {
+  const [first, second] = items
+    .filter((i) => i.id.match(/^gh:[^/]+\/([^:]+):/)?.[1]?.toLowerCase() === word)
+    .map((i) => ({ id: i.id, n: i.installs ?? 0 }))
+    .sort((a, b) => b.n - a.n);
+  return first && first.n > 0 && first.n >= 2 * (second?.n ?? 0) ? first.id : null;
+}
+export function nameMatches(item: ResultItem, word: string, main: string | null = null): boolean {
   const name = item.name.toLowerCase();
-  return name === word || name.startsWith(`${word}-`) || item.id.match(/^gh:[^/]+\/([^:]+):/)?.[1] === word;
+  return name === word || name.startsWith(`${word}-`) || item.id === main;
 }
 
 /** Results shown per repository before the rest fold into "이 저장소에서 N개 더" (user decision D). */
@@ -37,20 +45,21 @@ const PER_REPO = 2;
 
 /**
  * Keeps the sort order but shows only the first PER_REPO results of each repository; the rest fold behind a
- * button after the last one shown, and opening it lists them right there. The repo named like a one-word
- * query ("rea") never folds.
+ * button after the last one shown, and opening it lists them right there. In the repo named like a one-word
+ * query ("rea"), what the lookup puts first (nameMatches) never folds; its other skills fold as anywhere else.
  */
-function foldByRepo(sorted: ResultItem[], open: Set<string>, word: string | null): Array<{ item: ResultItem; more?: { repo: string; count: number } }> {
+function foldByRepo(sorted: ResultItem[], open: Set<string>, word: string | null, main: string | null): Array<{ item: ResultItem; more?: { repo: string; count: number } }> {
+  const pinned = (it: ResultItem, r: string) => word != null && r.split('/')[1]?.toLowerCase() === word && nameMatches(it, word, main);
   const byRepo = new Map<string, ResultItem[]>();
   for (const it of sorted) {
     const r = repoOf(it);
-    if (r) byRepo.set(r, [...(byRepo.get(r) ?? []), it]);
+    if (r && !pinned(it, r)) byRepo.set(r, [...(byRepo.get(r) ?? []), it]);
   }
   const out: Array<{ item: ResultItem; more?: { repo: string; count: number } }> = [];
   for (const it of sorted) {
     const r = repoOf(it);
-    const all = r ? byRepo.get(r)! : [];
-    if (!r || all.length <= PER_REPO || (word && r.split('/')[1]?.toLowerCase() === word)) {
+    const all = r ? (byRepo.get(r) ?? []) : [];
+    if (!r || pinned(it, r) || all.length <= PER_REPO) {
       out.push({ item: it });
       continue;
     }
@@ -78,7 +87,7 @@ export type Row = {
  * only when its "같은 이름 N개 더" is opened. Downloads are not summed (they are different copies), and the
  * button says when a folded copy is riskier than the one shown. Repository folding then runs on what is left.
  */
-export function foldResults(sorted: ResultItem[], openRepos: Set<string>, openNames: Set<string>, word: string | null): Row[] {
+export function foldResults(sorted: ResultItem[], openRepos: Set<string>, openNames: Set<string>, word: string | null, main: string | null = null): Row[] {
   const copies = new Map<string, ResultItem[]>();
   const firsts: ResultItem[] = [];
   for (const it of sorted) {
@@ -91,7 +100,7 @@ export function foldResults(sorted: ResultItem[], openRepos: Set<string>, openNa
     }
   }
   const out: Row[] = [];
-  for (const row of foldByRepo(firsts, openRepos, word)) {
+  for (const row of foldByRepo(firsts, openRepos, word, main)) {
     const k = nameKey(row.item);
     const rest = copies.get(k)!;
     if (rest.length === 0) out.push(row);
