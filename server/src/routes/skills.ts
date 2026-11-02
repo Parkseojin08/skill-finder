@@ -60,7 +60,12 @@ export function skillsRouter(ctx: AppContext): Router {
 
     const signals = plugin?.signals_json ? JSON.parse(plugin.signals_json) : null;
     const repoMeta = skill.repo ? (store.getRepo(skill.repo) ?? null) : null;
-    const sources = [plugin ? marketplaceSource(skill, plugin) : null, githubSource(skill)].filter(Boolean);
+    // skills.sh lists it (it has a download count from there): its page also shows Gen·Socket·Snyk audits
+    const skillsSh =
+      skill.installs != null && skill.repo
+        ? { kind: 'skillssh' as const, label: 'skills.sh', url: `https://skills.sh/${[...skill.repo.split('/'), skill.name].map(encodeURIComponent).join('/')}` }
+        : null;
+    const sources = [plugin ? marketplaceSource(skill, plugin) : null, githubSource(skill), skillsSh].filter(Boolean);
     res.json({
       id: skill.id,
       name: skill.name,

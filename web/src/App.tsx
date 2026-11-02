@@ -183,6 +183,7 @@ export function App() {
             query={lastQuery}
             from={openedFrom.get(route.skillId)}
             backLabel={BACK_LABEL[listPath] ?? '뒤로'}
+            onOpenSkill={(sid) => go('/skill', sid)}
             onBack={() => (window.history.length > 1 ? window.history.back() : go(listPath))}
           />
         )}

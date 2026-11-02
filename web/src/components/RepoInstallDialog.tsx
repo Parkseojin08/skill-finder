@@ -12,6 +12,7 @@ import type { InstallPreview, InstallScan, RepoResult, SettingsResponse } from '
 import { RiskBadge, RiskSummary } from './Badges.tsx';
 import { FolderInput } from './FolderInput.tsx';
 import { needsOverwriteCheck, OverwriteNote } from './InstallPanel.tsx';
+import { CopyButton } from './CopyButton.tsx';
 import { InstallScanView, scanIsHigh } from './InstallScan.tsx';
 
 type Step = 'select' | 'confirm' | 'run';
@@ -189,7 +190,9 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
                 {previews[s.id]?.steps.map((st, i) => (
                   <div key={i} className="cmd cmd-stacked">
                     <code>{st.display}</code>
-                    <span className="muted small">작업 폴더: {st.cwd}</span>
+                    <span className="muted small">
+                      작업 폴더: {st.cwd} <CopyButton text={st.display} className="linkish small" />
+                    </span>
                   </div>
                 ))}
                 <InstallScanView scan={scans[s.id]?.scan ?? null} error={scans[s.id]?.error} compact />
@@ -205,6 +208,14 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
           </Label>
         )}
 
+        {step === 'confirm' && (
+          <CopyButton
+            text={chosen.flatMap((s) => (previews[s.id]?.steps ?? []).map((st) => st.display)).join('\n')}
+            label={`명령 ${chosen.length}개 모두 복사`}
+            className="linkish small"
+            title="터미널에서 직접 실행하거나 다른 사람에게 보낼 수 있게 명령만 복사합니다"
+          />
+        )}
         {step === 'confirm' && toOverwrite.length > 0 && (
           <Label className="flex items-center gap-2">
             <Checkbox checked={overwriteChecked} onCheckedChange={(on) => setOverwriteChecked(on === true)} />

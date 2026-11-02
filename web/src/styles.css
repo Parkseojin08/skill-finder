@@ -2322,3 +2322,38 @@ kbd {
     border-left: 2px solid var(--line-strong);
   }
 }
+
+/* 공유 menu on the skill page (review 2026-11-02) */
+@layer app {
+  .share-menu {
+    position: relative;
+  }
+  .share-menu > summary {
+    cursor: pointer;
+    list-style: none;
+  }
+  .share-items {
+    position: absolute;
+    z-index: 5;
+    right: 0;
+    top: calc(100% + 6px);
+    width: min(440px, calc(100vw - 32px));
+    background: var(--bg-elev);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--corner);
+    padding: 10px;
+    display: grid;
+    gap: 8px;
+  }
+  .share-item {
+    display: grid;
+    grid-template-columns: 90px 1fr auto;
+    gap: 8px;
+    align-items: center;
+  }
+  .share-item code {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

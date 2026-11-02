@@ -4,6 +4,7 @@ import { forgetInstalled } from '../installed.ts';
 import { HELP, METHOD, RISK_FLAGS, RISK_LEVEL, RISK_RANK, SCOPE } from '../labels.ts';
 import { HelpTip } from './HelpTip.tsx';
 import type { ExistingSkill, InstallPlan, InstallPreview, InstallScan, InstallScope, RiskLevel, SkillDetail } from '../types.ts';
+import { CopyButton } from './CopyButton.tsx';
 import { InstallScanView, scanIsHigh } from './InstallScan.tsx';
 import { RiskBadge, RiskFlags, RiskSummary } from './Badges.tsx';
 import { FolderInput, rememberProject } from './FolderInput.tsx';
@@ -250,8 +251,10 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
           {current.steps.map((s, i) => (
             <div key={i} className="cmd">
               <code>{s.display}</code>
+              <CopyButton text={s.display} />
             </div>
           ))}
+          {current.steps.length > 1 && <CopyButton text={current.steps.map((s) => s.display).join('\n')} label="명령 모두 복사" className="linkish small" />}
           <div className="muted small">
             설치 위치: {current.location}
             {current.createsLockFile && <> · 프로젝트 루트에 <code>skills-lock.json</code>이 생깁니다</>}

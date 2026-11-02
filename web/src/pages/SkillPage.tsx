@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { apiGet } from '../api.ts';
 import { BreakdownTable, QualityBadges, RiskBadge, RiskFlags, RiskSummary, SourceBadges } from '../components/Badges.tsx';
 import { InstallPanel, riskierSiblings, SiblingRiskNote } from '../components/InstallPanel.tsx';
+import { ShareMenu } from '../components/ShareMenu.tsx';
 import { useInstalled } from '../installed.ts';
 import { Markdown, splitFrontmatter } from '../components/Markdown.tsx';
 import { Translated } from '../components/Translated.tsx';
@@ -28,6 +29,7 @@ export function SkillPage({
   from,
   backLabel,
   onBack,
+  onOpenSkill,
 }: {
   id: string;
   item: ResultItem | null;
@@ -36,6 +38,8 @@ export function SkillPage({
   /** Names the screen it was opened from ("검색 결과로", "설치됨으로"). */
   backLabel: string;
   onBack: () => void;
+  /** Another skill (one in the same plugin). */
+  onOpenSkill: (id: string) => void;
 }) {
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +88,7 @@ export function SkillPage({
   const md = detail?.skillMd ? splitFrontmatter(detail.skillMd) : null;
   const method = detail?.install.method ?? item?.install.method;
 
+  const skillsSh = detail?.sources.find((s) => s.kind === 'skillssh');
   const tabs: Array<{ key: Tab; label: string }> = [
     { key: 'overview', label: '개요' },
     { key: 'install', label: '설치' },
@@ -179,6 +184,13 @@ export function SkillPage({
                   GitHub에서 보기 <Icon name="external" size={13} />
                 </a>
               )}
+              {skillsSh && (
+                // its page shows Gen·Socket·Snyk audits; the app sends nothing there (review 2026-11-02)
+                <a className="stat" href={skillsSh.url} target="_blank" rel="noopener noreferrer" title="skills.sh 페이지의 보안 감사(Gen·Socket·Snyk) 결과를 엽니다. 외부 사이트입니다.">
+                  skills.sh 보안 감사 <Icon name="external" size={13} />
+                </a>
+              )}
+              <ShareMenu detail={detail} />
             </div>
           </section>
 
@@ -200,7 +212,13 @@ export function SkillPage({
               <ul className="plugin-skills">
                 {detail.plugin.skills.map((s) => (
                   <li key={s.id} className={s.id === id ? 'current' : ''}>
-                    {s.name}
+                    {s.id === id ? (
+                      s.name
+                    ) : (
+                      <button type="button" className="linkish" onClick={() => onOpenSkill(s.id)}>
+                        {s.name}
+                      </button>
+                    )}
                     {RISK_RANK[s.riskLevel] > RISK_RANK[detail.riskLevel] && (
                       <>
                         {' '}
