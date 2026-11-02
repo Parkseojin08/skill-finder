@@ -124,7 +124,7 @@ export function ResultCard({
         <div className="card-tags">
           {installed && (
             <span className="status-chip ok" title={t('이 PC에 설치되어 있습니다')}>
-              <Icon name="check" size={13} />{t(' 설치됨 · ')}{installed}
+              <Icon name="check" size={13} />{' '}{t('설치됨 · {0}', installed)}
             </span>
           )}
           <RiskSummary level={item.riskLevel} flags={item.riskFlags} />

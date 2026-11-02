@@ -6,6 +6,7 @@ import { DiagnosticsButton } from '../components/Diagnostics.tsx';
 import { FolderInput } from '../components/FolderInput.tsx';
 import type { Settings, SettingsResponse } from '../types.ts';
 import { LANG, LANGS, setLang, t, type Lang } from '../i18n.ts';
+import { tj } from '../i18nNodes.tsx';
 
 export function SettingsPage() {
   const [data, setData] = useState<SettingsResponse | null>(null);
@@ -104,7 +105,7 @@ export function SettingsPage() {
       <section>
         <h2>{t('GitHub 토큰')}</h2>
         <p>
-          {t('상태: ')}<b>{data.githubToken ? t('설정됨') : t('없음')}</b>
+          {tj('상태: {0}', <b>{data.githubToken ? t('설정됨') : t('없음')}</b>)}
         </p>
         <p className="muted small">{t('공개 저장소 검색에는 권한 없는 fine-grained PAT면 충분합니다. 토큰이 없으면 GitHub 코드 검색을 건너뛰고, 저장소 파일 목록은 git으로 조회합니다.')}</p>
         <form
@@ -188,7 +189,7 @@ export function SettingsPage() {
           {t('검색어, 결과·숨긴 결과 수, 걸린 시간, 열어 본 결과의 순위를 이 PC에만 저장합니다(밖으로 보내지 않음). 검색 품질을 확인하는 데 쓰고, 90일이 지나면 지웁니다.')}
         </p>
         <div className="row">
-          <span className="muted small">{t('저장된 기록 ')}{data.searchLogCount.toLocaleString()}{t('개')}</span>
+          <span className="muted small">{t('저장된 기록 {0}개', data.searchLogCount.toLocaleString())}</span>
           <button
             type="button"
             className="ghost"
@@ -214,7 +215,7 @@ export function SettingsPage() {
                 .catch((e) => setMsg({ ok: false, text: String(e.message ?? e) }));
             }}
           >
-            {t('저장된 검색 기록 ')}{data.searchLogCount.toLocaleString()}{t('개를 모두 지웁니다. 되돌릴 수 없습니다.')}
+            {t('저장된 검색 기록 {0}개를 모두 지웁니다. 되돌릴 수 없습니다.', data.searchLogCount.toLocaleString())}
           </ConfirmDialog>
         )}
       </section>

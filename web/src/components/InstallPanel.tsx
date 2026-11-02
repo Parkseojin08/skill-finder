@@ -9,6 +9,7 @@ import { InstallScanView, scanIsHigh } from './InstallScan.tsx';
 import { RiskBadge, RiskFlags, RiskSummary } from './Badges.tsx';
 import { FolderInput, rememberProject } from './FolderInput.tsx';
 import { serverText, t } from '../i18n.ts';
+import { tj } from '../i18nNodes.tsx';
 
 type LogLine = { line: string; stream: string };
 type PluginSkill = NonNullable<SkillDetail['plugin']>['skills'][number];
@@ -37,14 +38,13 @@ export function OverwriteNote({ existing }: { existing: ExistingSkill | null | u
   if (existing.same) {
     return (
       <p className="note">
-        {t('이미 설치되어 있습니다')}{existing.change === 'changed' ? t('(색인의 내용과 다름)') : ''}{t('. 다시 설치하면 ')}<code>{existing.path}</code>{t('를 새 파일로 바꿉니다. 그 폴더에서 고친 내용은 사라집니다.')}
+        {tj('이미 설치되어 있습니다{0}. 다시 설치하면 {1}를 새 파일로 바꿉니다. 그 폴더에서 고친 내용은 사라집니다.', existing.change === 'changed' ? t('(색인의 내용과 다름)') : '', <code>{existing.path}</code>)}
       </p>
     );
   }
   return (
     <p className="warn-box">
-      {t('같은 이름의 ')}{existing.same === false ? t('다른 스킬') : t('출처를 알 수 없는 스킬')}
-      {existing.name ? `(${existing.name})` : ''}{t('이 이미 ')}<code>{existing.path}</code>{t('에 있습니다. 설치하면 그 폴더를 덮어씁니다.')}
+      {tj('같은 이름의 {0}{1}이 이미 {2}에 있습니다. 설치하면 그 폴더를 덮어씁니다.', existing.same === false ? t('다른 스킬') : t('출처를 알 수 없는 스킬'), existing.name ? `(${existing.name})` : '', <code>{existing.path}</code>)}
     </p>
   );
 }
@@ -58,7 +58,7 @@ function UsageNote({ plan, skillName, pluginName, scope, projectPath }: { plan: 
   const where = scope === 'user' ? t('모든 프로젝트') : scope === 'project' ? t('{0} 폴더에서 연 Claude Code', projectPath) : t('{0} 폴더에서 연 Claude Code(나만)', projectPath);
   return (
     <div className="note small usage-note">
-      <b>{t('사용법')}</b>{t(' · 다음 Claude Code 세션부터 ')}{where}{t('에서 쓸 수 있습니다. 설명과 맞는 일을 시키면 Claude가 알아서 쓰고, 직접 부르려면 ')}<code>{command}</code>{t('를 입력하세요. 지우려면 설치됨 화면에서 삭제합니다.')}
+      {tj('{0} · 다음 Claude Code 세션부터 {1}에서 쓸 수 있습니다. 설명과 맞는 일을 시키면 Claude가 알아서 쓰고, 직접 부르려면 {2}를 입력하세요. 지우려면 설치됨 화면에서 삭제합니다.', <b>{t('사용법')}</b>, where, <code>{command}</code>)}
     </div>
   );
 }
@@ -73,7 +73,7 @@ export function SiblingRiskNote({ skills, here = false }: { skills: PluginSkill[
   });
   return (
     <p className={top === 'high' ? 'warn-box' : 'note'}>
-      {t('같은 플러그인에 이 스킬보다 위험한 스킬 ')}{skills.length}{t('개가 함께 설치됩니다: ')}{named.join(', ')}
+      {t('같은 플러그인에 이 스킬보다 위험한 스킬 {0}개가 함께 설치됩니다: {1}', skills.length, named.join(', '))}
       {skills.length > named.length && t(' 외 {0}개', skills.length - named.length)}.{!here && t(' 개요 탭의 플러그인 목록에서 확인하세요.')}
     </p>
   );
@@ -221,13 +221,11 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
   return (
     <section className="install">
       <h3>
-        {t('설치 ')}<span className="muted small">· {METHOD[plan.method]}</span>
+        {tj('설치 {0}', <span className="muted small">· {METHOD[plan.method]}</span>)}
       </h3>
       {plan.method === 'plugin' && (
         <p className="note">
-          {t('스킬 하나가 아니라 ')}<b>{plan.pluginId}</b>{t(' 플러그인 전체가 설치됩니다')}
-          {skill.plugin ? t(' (스킬 {0}개{1}{2}{3} 포함)', skill.plugin.skills.length, skill.plugin.hooks ? t(', 훅') : '', skill.plugin.mcp ? t(', MCP 서버') : '', skill.plugin.bin ? t(', 실행 파일') : '') : ''}.
-        </p>
+          {tj('스킬 하나가 아니라 {0} 플러그인 전체가 설치됩니다{1}.', <b>{plan.pluginId}</b>, skill.plugin ? t(' (스킬 {0}개{1}{2}{3} 포함)', skill.plugin.skills.length, skill.plugin.hooks ? t(', 훅') : '', skill.plugin.mcp ? t(', MCP 서버') : '', skill.plugin.bin ? t(', 실행 파일') : '') : '')}{' '}</p>
       )}
       <SiblingRiskNote skills={siblings} />
       <fieldset className="scopes" disabled={running}>
@@ -260,8 +258,8 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
           ))}
           {current.steps.length > 1 && <CopyButton text={current.steps.map((s) => s.display).join('\n')} label={t('명령 모두 복사')} className="linkish small" />}
           <div className="muted small">
-            {t('설치 위치: ')}{serverText(current.location)}
-            {current.createsLockFile && <>{t(' · 프로젝트 루트에 ')}<code>skills-lock.json</code>{t('이 생깁니다')}</>}
+            {t('설치 위치: {0}', serverText(current.location))}
+            {current.createsLockFile && <>{' '}{tj('· 프로젝트 루트에 {0}이 생깁니다', <code>skills-lock.json</code>)}</>}
           </div>
           {version && <div className="muted small">{version}</div>}
           <OverwriteNote existing={current.existing} />
@@ -341,7 +339,7 @@ function ConfirmDialog(props: {
   }, []);
   return (
     <dialog ref={ref} className="confirm" onCancel={props.onCancel} aria-labelledby="confirm-title">
-      <h3 id="confirm-title">{props.name}{t(' 설치')}</h3>
+      <h3 id="confirm-title">{t('{0} 설치', props.name)}</h3>
       <p className="warn-box">
         {t('스킬은 에이전트 권한으로 실행됩니다. 스크립트와 명령이 내 컴퓨터에서 Claude Code와 같은 권한으로 돌아갈 수 있으니, 내용을 확인한 출처만 설치하세요.')}
       </p>
@@ -349,7 +347,7 @@ function ConfirmDialog(props: {
       {props.preview.steps.map((s, i) => (
         <div key={i} className="cmd cmd-stacked">
           <code>{s.display}</code>
-          <span className="muted small">{t('작업 폴더: ')}{s.cwd}</span>
+          <span className="muted small">{t('작업 폴더: {0}', s.cwd)}</span>
         </div>
       ))}
       <div className="muted small">{t('설치 위치')}</div>

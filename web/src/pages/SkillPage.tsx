@@ -14,6 +14,7 @@ import { FavoriteButton } from '../components/FavoriteButton.tsx';
 import { formatAgo, formatBytes, formatCount, HELP, LOW_RISK_NOTE, METHOD, QUALITY, RISK_FLAGS, RISK_RANK } from '../labels.ts';
 import type { Breakdown, OpenedFrom, ResultItem, SettingsResponse, SkillDetail } from '../types.ts';
 import { t } from '../i18n.ts';
+import { tj } from '../i18nNodes.tsx';
 
 type Tab = 'overview' | 'install' | 'skill' | 'files';
 
@@ -126,17 +127,17 @@ export function SkillPage({
           <h1>{name || t('스킬')}</h1>
           {detail?.plugin && (
             <p className="muted small">
-              {detail.plugin.marketplace}{t(' 마켓플레이스 · ')}{detail.plugin.name}{t(' 플러그인')}
+              {t('{0} 마켓플레이스 · {1} 플러그인', detail.plugin.marketplace, detail.plugin.name)}
             </p>
           )}
           {detail && installedAs(detail) && (
             <p className="state-on small">
-              <Icon name="check" size={13} />{t(' 이 PC에 설치됨 · ')}{installedAs(detail)}
+              <Icon name="check" size={13} />{' '}{t('이 PC에 설치됨 · {0}', installedAs(detail))}
             </p>
           )}
           {detail && installTarget(detail) && (
             <p className="muted small">
-              {t('설치 대상: ')}<span className="mono">{installTarget(detail)}</span>
+              {tj('설치 대상: {0}', <span className="mono">{installTarget(detail)}</span>)}
             </p>
           )}
           <div className="badges">
@@ -236,7 +237,7 @@ export function SkillPage({
               </>
             )}
             <div className="meta">
-              <span className="stat"><Icon name="download" size={14} />{t(' 설치 ')}{formatCount(item?.installs ?? detail.installs)}</span>
+              <span className="stat"><Icon name="download" size={14} />{' '}{t('설치 수 {0}', formatCount(item?.installs ?? detail.installs))}</span>
               <span className="stat"><Icon name="star" size={14} /> {formatCount(item?.stars ?? detail.stars)}</span>
               <span className="stat"><Icon name="clock" size={14} /> {formatAgo(detail.lastCommitAt)}</span>
               {detail.license && <span className="stat">{detail.license}</span>}
@@ -244,8 +245,9 @@ export function SkillPage({
                 className="stat"
                 title={t('설치하면 이름과 설명이 매 요청마다 Claude의 컨텍스트에 들어가고, 쓸 때는 SKILL.md 전체를 읽습니다. 글자 수로 센 추정치입니다.')}
               >
-                {t('컨텍스트 매 턴 약 ')}{detail.tokens.perTurn.toLocaleString()}
-                {detail.tokens.onUse != null && t(' · 쓸 때 약 {0}', detail.tokens.onUse.toLocaleString())}{t(' 토큰')}
+                {detail.tokens.onUse != null
+                  ? t('컨텍스트 매 턴 약 {0} · 쓸 때 약 {1} 토큰', detail.tokens.perTurn.toLocaleString(), detail.tokens.onUse.toLocaleString())
+                  : t('컨텍스트 매 턴 약 {0} 토큰', detail.tokens.perTurn.toLocaleString())}
               </span>
               {detail.archived && <span className="badge risk-medium">{t('보관된 저장소')}</span>}
               {detail.url && (
@@ -277,7 +279,7 @@ export function SkillPage({
                 {detail.plugin.bin && <span className="badge flag">{t('실행 파일(bin)')}</span>}
                 {detail.plugin.monitors && <span className="badge flag">{t('모니터')}</span>}
               </div>
-              <p className="muted small">{t('이 스킬을 설치하면 아래 스킬 ')}{detail.plugin.skills.length}{t('개가 들어 있는 플러그인 전체가 설치됩니다.')}</p>
+              <p className="muted small">{t('이 스킬을 설치하면 아래 스킬 {0}개가 들어 있는 플러그인 전체가 설치됩니다.', detail.plugin.skills.length)}</p>
               <SiblingRiskNote skills={riskierSiblings(detail)} here />
               <ul className="plugin-skills">
                 {detail.plugin.skills.map((s) => (
@@ -401,7 +403,7 @@ export function SkillPage({
                   <span className="muted small"> {formatBytes(f.size)}</span>
                 </li>
               ))}
-              {detail.filesTotal > detail.files.length && <li className="muted small">{t('… 외 ')}{detail.filesTotal - detail.files.length}{t('개')}</li>}
+              {detail.filesTotal > detail.files.length && <li className="muted small">{t('… 외 {0}개', detail.filesTotal - detail.files.length)}</li>}
             </ul>
           </section>
           <section className="file-view">

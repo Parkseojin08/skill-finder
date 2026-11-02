@@ -9,6 +9,7 @@ import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { readPageSize, savePageSize } from '../lib/prefs.ts';
 import type { RecommendResult, ResultItem, SettingsResponse } from '../types.ts';
 import { t } from '../i18n.ts';
+import { tj } from '../i18nNodes.tsx';
 
 /** What to do next, per error status of POST /readme-skills. */
 const ERROR_HINT: Record<number, string> = {
@@ -211,7 +212,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
             <p className="empty">
               {hiddenRisky > 0 ? (
                 <>
-                  {t('위험 높음으로 숨긴 ')}{hiddenRisky}{t('개만 있습니다.')}{' '}
+                  {t('위험 높음으로 숨긴 {0}개만 있습니다.', hiddenRisky)}{' '}
                   <button type="button" className="linkish" onClick={() => setShowRisky(true)}>
                     {t('보기')}
                   </button>
@@ -225,7 +226,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
               <div className="results-toolbar" ref={listRef}>
                 <div className="toolbar-left">
                   <span>
-                    {t('비슷한 스킬 ')}<b>{skills.length}</b>{t('개 ')}<span className="muted small">{t('· 다운로드 → 스타 순')}</span>
+                    {tj('비슷한 스킬 {0}개 {1}', <b>{skills.length}</b>, <span className="muted small">{t('· 다운로드 → 스타 순')}</span>)}
                   </span>
                   {hiddenRisky > 0 && (
                     <button
@@ -237,7 +238,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
                         setPage(1);
                       }}
                     >
-                      {t('위험 높음 ')}{hiddenRisky}{t('개 숨김 · 보기')}
+                      {t('위험 높음 {0}개 숨김 · 보기', hiddenRisky)}
                     </button>
                   )}
                 </div>
@@ -254,7 +255,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
                   >
                     {[5, 10, 20].map((n) => (
                       <option key={n} value={n}>
-                        {n}{t('개씩')}
+                        {t('{0}개씩', n)}
                       </option>
                     ))}
                   </select>
@@ -264,7 +265,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
                 {pageItems.map((m, i) => (
                   <div key={m.item.id}>
                     <ResultCard item={m.item} position={i} href={skillHref(m.item.id)} installed={installedAs(m.item)} onSelect={() => onOpen(m.item)} />
-                    <p className="muted small matched-terms">{t('겹친 단어: ')}{m.matchedTerms.join(', ')}</p>
+                    <p className="muted small matched-terms">{t('겹친 단어: {0}', m.matchedTerms.join(', '))}</p>
                   </div>
                 ))}
               </div>
@@ -288,7 +289,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
                     <Icon name="back" size={15} className="flip" />
                   </button>
                   <span className="muted small pager-info">
-                    {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, skills.length)} / {skills.length}{t('개')}
+                    {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, skills.length)} / {t('{0}개', skills.length)}
                   </span>
                 </nav>
               )}

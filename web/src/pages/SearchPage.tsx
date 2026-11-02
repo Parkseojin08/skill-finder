@@ -15,6 +15,7 @@ import { readPageSize, savePageSize } from '../lib/prefs.ts';
 import { byPopular, foldResults, nameMatches, navigationalWord, repoMainSkill, SORTS, type SortKey } from '../lib/resultOrder.ts';
 import type { Health, Job, OpenedFrom, ResultItem, RiskLevel, SearchEvent, SearchSource, SettingsResponse, SourceKind, SourceProgress } from '../types.ts';
 import { serverText, t } from '../i18n.ts';
+import { tj } from '../i18nNodes.tsx';
 
 
 /** Below this many indexed skills the index is probably still being built (first run). */
@@ -35,7 +36,7 @@ function SourceProgressLine({ progress, startedAt }: { progress: Partial<Record<
     p.state === 'running' ? t('확인 중') : p.state === 'done' ? t('{0}개 · {1}초', p.count ?? 0, ((p.ms ?? 0) / 1000).toFixed(1)) : p.state === 'timeout' ? t('시간 초과') : t('실패');
   return (
     <p className="source-progress muted small" aria-live="off">
-      <span className="mono">{((now - startedAt) / 1000).toFixed(1)}{t('초')}</span>
+      <span className="mono">{t('{0}초', ((now - startedAt) / 1000).toFixed(1))}</span>
       {shown.map((s) => (
         <span key={s} className={progress[s]!.state === 'running' ? 'pending' : progress[s]!.state === 'done' ? undefined : 'warn-text'}>
           {PROGRESS_LABEL[s]} {text(progress[s]!)}
@@ -532,12 +533,12 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             </button>
           </span>
           <span className="muted small kbd-hint">
-            <kbd>/</kbd>{t(' 검색창으로 이동 · ')}<kbd>?</kbd>{t(' 단축키')}
+            {tj('{0} 검색창으로 이동 · {1} 단축키', <kbd>/</kbd>, <kbd>?</kbd>)}
           </span>
         </div>
         {shortcutsOpen && (
           <p className="shortcut-help muted small" role="note">
-            <kbd>/</kbd>{t(' 검색창 · ')}<kbd>j</kbd>{t(' 다음 결과 · ')}<kbd>k</kbd>{t(' 이전 결과 · ')}<kbd>Enter</kbd>{t(' 열기 · ')}<kbd>?</kbd>{t(' 이 안내 닫기')}
+            {tj('{0} 검색창 · {1} 다음 결과 · {2} 이전 결과 · {3} 열기 · {4} 이 안내 닫기', <kbd>/</kbd>, <kbd>j</kbd>, <kbd>k</kbd>, <kbd>Enter</kbd>, <kbd>?</kbd>)}
           </p>
         )}
         <div className="filters" role="group" aria-label={t('검색 조건')}>
@@ -572,7 +573,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       <div role="status">
         {syncJob && (
           <p className="status-line muted small">
-            <span className="spinner" aria-hidden="true" /> {jobLine(syncJob)}{t(' · 색인 스킬 ')}{(health?.skills ?? 0).toLocaleString()}{t('개')}
+            <span className="spinner" aria-hidden="true" /> {t('{0} · 색인 스킬 {1}개', jobLine(syncJob), (health?.skills ?? 0).toLocaleString())}
           </p>
         )}
       </div>
@@ -599,7 +600,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                   // results are in; a few slow lookups (huge repos) are still being folded in
                   <span className="status-line">
                     <span>
-                      <b>{shown.length}</b>{t('개 결과')}
+                      {tj('{0}개 결과', <b>{shown.length}</b>)}
                     </span>
                     <span className="muted small status-line">
                       <span className="spinner" aria-hidden="true" />{t(' 나머지 후보 확인 중')}
@@ -610,7 +611,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                   </span>
                 ) : status === 'running' ? (
                   <span className="status-line">
-                    <span className="spinner" aria-hidden="true" /> {stage ? STAGES[stage] : t('검색')}{t(' 중…')}{' '}
+                    <span className="spinner" aria-hidden="true" /> {t('{0} 중…', stage ? STAGES[stage] : t('검색'))}{' '}
                     <button type="button" className="linkish small" onClick={() => stopRef.current()} title="Esc">
                       {t('중지')}
                     </button>
@@ -625,10 +626,10 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 ) : (
                   // one count, the same as the pager's: cards shown; folded copies and filtered-out ones are noted
                   <span>
-                    <b>{shown.length}</b>{t('개 결과')}
-                    {sorted.length > shown.length && <span className="muted small"> · {sorted.length - shown.length}{t('개 접힘')}</span>}
-                    {filtering && <span className="muted small">{t(' · 필터로 ')}{items.length - riskHiddenNow - sorted.length}{t('개 뺌')}</span>}
-                    {riskHiddenNow > 0 && <span className="muted small">{t(' · 위험 조건으로 ')}{riskHiddenNow}{t('개 뺌')}</span>}
+                    {tj('{0}개 결과', <b>{shown.length}</b>)}
+                    {sorted.length > shown.length && <span className="muted small"> · {t('{0}개 접힘', sorted.length - shown.length)}</span>}
+                    {filtering && <span className="muted small">{' '}{t('· 필터로 {0}개 뺌', items.length - riskHiddenNow - sorted.length)}</span>}
+                    {riskHiddenNow > 0 && <span className="muted small">{' '}{t('· 위험 조건으로 {0}개 뺌', riskHiddenNow)}</span>}
                     {doneInfo && <span className="muted small"> · {doneInfo.cached ? t('저장된 결과') : t('{0}초', (doneInfo.elapsedMs / 1000).toFixed(1))}</span>}
                   </span>
                 )}
@@ -643,7 +644,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                       run(lastQuery, 'high', liftedStars);
                     }}
                   >
-                    {t('위험 높음 ')}{hiddenRisky}{t('개 숨김 · 보기')}
+                    {t('위험 높음 {0}개 숨김 · 보기', hiddenRisky)}
                   </button>
                 )}
                 {status === 'done' && hiddenLowStars + hiddenUnknownStars > 0 && (
@@ -656,7 +657,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                       run(lastQuery, maxRisk, final!.minStars!);
                     }}
                   >
-                    {t('별 기준 없이 다시 찾기 (숨긴 후보 ')}{hiddenLowStars + hiddenUnknownStars}{t('개)')}
+                    {t('별 기준 없이 다시 찾기 (숨긴 후보 {0}개)', hiddenLowStars + hiddenUnknownStars)}
                   </button>
                 )}
                 {conditionsChanged && (
@@ -673,7 +674,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 {minor.length > 0 && (
                   <details className="notices" ref={noticesRef}>
                     <summary>
-                      <Icon name="info" size={14} />{t(' 알림 ')}{minor.length}
+                      <Icon name="info" size={14} />{' '}{t('알림 {0}', minor.length)}
                     </summary>
                     <ul>
                       {minor.map((m) => (
@@ -728,7 +729,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                     >
                       {[5, 10, 20].map((n) => (
                         <option key={n} value={n}>
-                          {n}{t('개씩')}
+                          {t('{0}개씩', n)}
                         </option>
                       ))}
                     </select>
@@ -750,7 +751,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
               <div className="warn-strip">
                 <Icon name="info" size={15} />{' '}
                 <span>
-                  <span className="mono">{lastQuery}</span>{t('은(는) 너무 일반적인 단어라 결과가 넓어요. 하려는 일을 함께 적어 보세요 (예: create a new skill).')}
+                  {tj('{0}은(는) 너무 일반적인 단어라 결과가 넓어요. 하려는 일을 함께 적어 보세요 (예: create a new skill).', <span className="mono">{lastQuery}</span>)}
                 </span>
               </div>
             )}
@@ -759,8 +760,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
               <div className="warn-strip">
                 <Icon name="info" size={15} />{' '}
                 <span>
-                  {koreanNote ? t('스킬 설명이 대부분 영어라 한국어 검색어는 결과가 적거나 부정확합니다. ') : ''}{t('영어로 찾으면 결과가 더 많아요')}
-                  {suggest.dropped.length > 0 && <span className="muted">{t(' (번역 못 한 단어: ')}{suggest.dropped.join(', ')})</span>}.
+                  {t('{0}영어로 찾으면 결과가 더 많아요', koreanNote ? t('스킬 설명이 대부분 영어라 한국어 검색어는 결과가 적거나 부정확합니다. ') : '')}
+                  {suggest.dropped.length > 0 && <span className="muted">{' '}{t('(번역 못 한 단어: {0})', suggest.dropped.join(', '))}</span>}.
                 </span>
                 <button
                   type="button"
@@ -770,7 +771,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                     run(suggest.query);
                   }}
                 >
-                  <span className="mono">{suggest.query}</span>{t('로 찾기')}
+                  {tj('{0}로 찾기', <span className="mono">{suggest.query}</span>)}
                 </button>
               </div>
             )}
@@ -821,7 +822,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                       })
                     }
                   >
-                    {t('같은 이름 ')}<span className="mono">{it.name}</span>{t(' 접기')}
+                    {tj('같은 이름 {0} 접기', <span className="mono">{it.name}</span>)}
                   </button>
                 )}
                 {same && (
@@ -833,7 +834,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                       setOpenNames((s) => new Set(s).add(same.key));
                     }}
                   >
-                    {t('같은 이름 ')}<span className="mono">{it.name}</span> {same.count}{t('개 더 보기')}
+                    {tj('같은 이름 {0} {1}개 더 보기', <span className="mono">{it.name}</span>, same.count)}
                     {same.riskier && <span className="warn-text">{t(' · 위험 주의 포함')}</span>}
                   </button>
                 )}
@@ -846,7 +847,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                       setOpenRepos((s) => new Set(s).add(more.repo));
                     }}
                   >
-                    <span className="mono">{more.repo}</span>{t('에서 ')}{more.count}{t('개 더 보기')}
+                    {tj('{0}에서 {1}개 더 보기', <span className="mono">{more.repo}</span>, more.count)}
                   </button>
                 )}
               </Fragment>
@@ -920,7 +921,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 <Icon name="back" size={15} className="flip" />
               </button>
               <span className="muted small pager-info">
-                {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, shown.length)} / {shown.length}{t('개')}
+                {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, shown.length)} / {t('{0}개', shown.length)}
               </span>
             </nav>
           )}

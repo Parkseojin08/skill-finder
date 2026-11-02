@@ -147,7 +147,7 @@ export function MarketplacesPage() {
                 <b>{j.kind === 'sync' ? t('동기화') : t('스킬 수집')}</b> {jobTarget(j)} · {JOB_STATUS[j.status]} · {j.done}/{j.total}
                 {j.errors.length > 0 && (
                   <details>
-                    <summary className="small">{t('오류 ')}{j.errors.length}{t('건')}</summary>
+                    <summary className="small">{t('오류 {0}건', j.errors.length)}</summary>
                     <ul className="small">
                       {j.errors.slice(0, 20).map((e, i) => (
                         <li key={i}>{e}</li>
@@ -157,7 +157,7 @@ export function MarketplacesPage() {
                 )}
                 {(j.skipped?.length ?? 0) > 0 && (
                   <details className="muted">
-                    <summary className="small">{t('설치 불가 ')}{j.skipped!.length}{t('개 · 마켓플레이스 항목이 가리키는 저장소·커밋·폴더가 없음')}</summary>
+                    <summary className="small">{t('설치 불가 {0}개 · 마켓플레이스 항목이 가리키는 저장소·커밋·폴더가 없음', j.skipped!.length)}</summary>
                     <ul className="small">
                       {j.skipped!.slice(0, 50).map((e, i) => {
                         // "<plugin>: <reason>": the reason is the server's Korean
@@ -198,7 +198,7 @@ function MarketplaceRow({ m, job, onChange, act }: { m: MarketplaceInfo; job?: J
       </td>
       <td>
         {m.pluginCount ?? '–'}
-        {m.pendingSkillIndex > 0 && <div className="muted small">{t('스킬 미수집 ')}{m.pendingSkillIndex}</div>}
+        {m.pendingSkillIndex > 0 && <div className="muted small">{t('스킬 미수집 {0}', m.pendingSkillIndex)}</div>}
       </td>
       <td className="small">{m.syncedAt ? formatAgo(m.syncedAt) : t('안 함')}</td>
       <td className="actions">

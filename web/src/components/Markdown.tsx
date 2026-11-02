@@ -14,10 +14,10 @@ const components: Components = {
   img: ({ src, alt }) =>
     typeof src === 'string' && /^https?:\/\//.test(src) ? (
       <a href={src} target="_blank" rel="noopener noreferrer" className="img-link">
-        {t('[이미지: ')}{alt || src}]
+        {t('[이미지: {0}]', alt || src)}
       </a>
     ) : (
-      <span className="img-link">{t('[이미지: ')}{alt || String(src ?? '')}]</span>
+      <span className="img-link">{t('[이미지: {0}]', alt || String(src ?? ''))}</span>
     ),
 };
 

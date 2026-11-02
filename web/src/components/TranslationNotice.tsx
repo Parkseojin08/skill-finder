@@ -63,7 +63,7 @@ export function TranslationNotice({ compact: compactProp = false }: { compact?: 
         {t('번역 오류')}
       </span>
     ) : (
-      <div className="warn-strip">{t('번역을 시작하지 못해 설명을 영어로 보여 줍니다 (')}{s.error})</div>
+      <div className="warn-strip">{t('번역을 시작하지 못해 설명을 영어로 보여 줍니다 ({0})', s.error)}</div>
     );
   }
   return compact ? (

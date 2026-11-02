@@ -57,7 +57,7 @@ export function RepoCard({ repo, onOpenSkill }: { repo: RepoResult; onOpenSkill:
         </CardContent>
       )}
       <CardFooter className="flex flex-wrap items-center gap-2">
-        <span className="muted small">{t('스킬 ')}{repo.skills.length}{t('개')}</span>
+        <span className="muted small">{t('스킬 {0}개', repo.skills.length)}</span>
         {repo.skills.map((s) => (
           <Button key={s.id} variant="outline" size="sm" onClick={() => onOpenSkill(s.id)}>
             {s.name}

@@ -179,7 +179,7 @@ export function App() {
         {update && (
           // the version's change notes, when they are signed (the server drops unsigned ones)
           <details className="update-badge" role="status">
-            <summary title={t('검은 Skill Finder 창을 닫았다가 바탕화면의 Skill Finder로 다시 켜면 자동으로 업데이트됩니다.')}>{t('새 버전 ')}{update.version}{t(' · 다시 켜면 업데이트')}</summary>
+            <summary title={t('검은 Skill Finder 창을 닫았다가 바탕화면의 Skill Finder로 다시 켜면 자동으로 업데이트됩니다.')}>{t('새 버전 {0} · 다시 켜면 업데이트', update.version)}</summary>
             <div className="update-notes">
               {update.notes?.length ? (
                 <ul>

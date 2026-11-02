@@ -7,6 +7,7 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '
 import { cn } from '@/lib/utils';
 import { Icon } from './Icon.tsx';
 import { t } from '../i18n.ts';
+import { tj } from '../i18nNodes.tsx';
 
 type Match = { path: string; overlap: number };
 
@@ -215,7 +216,7 @@ export function FolderInput({
             <div className="picker-card">
               <Icon name="folder" size={28} />
               <h2>{t('폴더 선택 창에서 폴더를 고르세요')}</h2>
-              <p className="muted">{t('"프로젝트 폴더 선택" 창에서 폴더를 고른 뒤 ')}<b>{t('폴더 선택')}</b>{t('을, 그만두려면 ')}<b>{t('취소')}</b>{t('를 누르세요. 창을 닫기 전까지 이 화면은 잠깁니다.')}</p>
+              <p className="muted">{tj('"프로젝트 폴더 선택" 창에서 폴더를 고른 뒤 {0}을, 그만두려면 {1}를 누르세요. 창을 닫기 전까지 이 화면은 잠깁니다.', <b>{t('폴더 선택')}</b>, <b>{t('취소')}</b>)}</p>
               <p className="muted small">{t('창이 보이지 않으면 작업 표시줄에서 "프로젝트 폴더 선택"을 눌러 주세요.')}</p>
             </div>
           </div>,

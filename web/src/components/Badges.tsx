@@ -97,7 +97,7 @@ export function CopiesBadge({ copies }: { copies?: SourceRef[] }) {
   if (!repos.length) return null;
   return (
     <span className="badge copies" title={t('같은 SKILL.md가 있는 다른 저장소: {0}', repos.join(', '))}>
-      {t('사본 ')}{repos.length}{t('곳')}
+      {t('사본 {0}곳', repos.length)}
     </span>
   );
 }

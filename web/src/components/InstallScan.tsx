@@ -20,7 +20,7 @@ export function scanIsHigh(scan: Scan | null | undefined): boolean {
  * rules, or what a plugin runs once installed. `compact`: the confirm dialogs (findings and a one-line summary).
  */
 export function InstallScanView({ scan, error, compact = false }: { scan: Scan | null; error?: string | null; compact?: boolean }) {
-  if (error) return <p className="muted small">{t('설치될 파일을 확인하지 못했습니다: ')}{error}</p>;
+  if (error) return <p className="muted small">{t('설치될 파일을 확인하지 못했습니다: {0}', error)}</p>;
   if (!scan) return <p className="muted small">{t('설치될 파일 확인 중…')}</p>;
   if (scan.kind === 'none') return null;
   if (scan.kind === 'plugin') {
@@ -43,7 +43,7 @@ export function InstallScanView({ scan, error, compact = false }: { scan: Scan |
             </details>
           ))
         )}
-        <p className="muted small">{t('검사한 커밋 ')}{commit.slice(0, 7)}{t('의 내용입니다. 플러그인은 설치할 때 최신을 받아 달라질 수 있습니다.')}</p>
+        <p className="muted small">{t('검사한 커밋 {0}의 내용입니다. 플러그인은 설치할 때 최신을 받아 달라질 수 있습니다.', commit.slice(0, 7))}</p>
       </div>
     );
   }
@@ -55,7 +55,7 @@ export function InstallScanView({ scan, error, compact = false }: { scan: Scan |
     <div className="install-scan">
       {!compact && <div className="muted small">{t('설치될 파일 검사')}</div>}
       <p className={findings.length ? (scanIsHigh(scan) ? 'warn-box' : 'note') : 'muted small'}>
-        {t('SKILL.md 말고 함께 설치되는 텍스트 파일 ')}{checked}{t('개를 같은 규칙으로 검사했습니다')}
+        {t('SKILL.md 말고 함께 설치되는 텍스트 파일 {0}개를 같은 규칙으로 검사했습니다', checked)}
         {findings.length ? t('. 위험 신호가 있는 파일 {0}개:', findings.length) : t(' · 위험 신호 없음')}
         {!scan.pinned && t(' (설치는 최신 커밋을 받아 다를 수 있음)')}
       </p>
@@ -71,7 +71,7 @@ export function InstallScanView({ scan, error, compact = false }: { scan: Scan |
       {(skipped.length > 0 || unlisted > 0) && (
         <details className="muted small">
           <summary>
-            {t('검사하지 않은 파일 ')}{skipped.length + unlisted}{t('개 (')}{[...reasons, ...(unlisted ? [t('목록에 없음 {0}', unlisted)] : [])].join(', ')})
+            {t('검사하지 않은 파일 {0}개 ({1})', skipped.length + unlisted, [...reasons, ...(unlisted ? [t('목록에 없음 {0}', unlisted)] : [])].join(', '))}
           </summary>
           <ul className="scan-skipped">
             {skipped.slice(0, 100).map((s) => (

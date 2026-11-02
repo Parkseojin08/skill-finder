@@ -2,6 +2,7 @@ import { goInApp } from '../../lib/links.ts';
 import type { Health } from '../../types.ts';
 import { TranslationNotice } from '../TranslationNotice.tsx';
 import { t } from '../../i18n.ts';
+import { tj } from '../../i18nNodes.tsx';
 
 /** The search page before a search: what it does, example queries, versions and what is missing (split out of SearchPage). */
 export function SearchIntro({ examples, onExample, health, githubToken }: { examples: string[]; onExample: (query: string) => void; health: Health | null; githubToken: boolean | null }) {
@@ -23,7 +24,7 @@ export function SearchIntro({ examples, onExample, health, githubToken }: { exam
           <span className={health.claudeVersion ? '' : 'warn-text'}>claude-code {health.claudeVersion ?? t('없음')}</span>
           <span>skills-cli {health.skillsCli}</span>
           <span>
-            {t('색인 스킬 ')}{health.skills.toLocaleString()}{t(' · 플러그인 ')}{health.plugins.toLocaleString()}
+            {t('색인 스킬 {0} · 플러그인 {1}', health.skills.toLocaleString(), health.plugins.toLocaleString())}
           </span>
         </p>
       )}
@@ -31,9 +32,9 @@ export function SearchIntro({ examples, onExample, health, githubToken }: { exam
       {githubToken === false && (
         // before the first search only (UI debate D-4); in results it stays in the folded notices (D#260b)
         <p className="muted small">
-          {t('GitHub 토큰 없음 · GitHub 코드 검색을 건너뛰고 스킬 목록도 느리게 모읍니다. ')}<a href="/settings" onClick={(e) => goInApp(e, '/settings')}>
+          {tj('GitHub 토큰 없음 · GitHub 코드 검색을 건너뛰고 스킬 목록도 느리게 모읍니다. {0}', <a href="/settings" onClick={(e) => goInApp(e, '/settings')}>
             {t('설정에서 넣기')}
-          </a>
+          </a>)}
         </p>
       )}
       <TranslationNotice />

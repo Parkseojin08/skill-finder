@@ -57,7 +57,7 @@ export function ActiveFacets({ value, onChange }: { value: Facets; onChange: (f:
           aria-label={t('필터 {0} 끄기', facetLabel(g, k))}
           onClick={() => onChange({ ...value, [g]: value[g].filter((x) => x !== k) })}
         >
-          {t('필터 ')}{facetLabel(g, k)} ×
+          {t('필터 {0}', facetLabel(g, k))} ×
         </button>
       ))}
     </>
@@ -76,7 +76,7 @@ export function FacetPanel({ items, value, onChange }: { items: ResultItem[]; va
     <aside className={`facets ${open ? 'open' : ''}`} aria-label={t('결과 분류 필터')}>
       <div className="facets-head">
         <button type="button" className="facets-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-          <Icon name="sliders" size={15} />{t(' 필터')}{active > 0 ? ` ${active}` : ''}
+          <Icon name="sliders" size={15} />{' '}{t('필터{0}', active > 0 ? ` ${active}` : '')}
         </button>
         <span className="facets-title">{t('필터')}</span>
         {active > 0 && (

@@ -184,7 +184,7 @@ export function RepoInstallDialog({
           <div className="flex flex-col gap-4">
             {note}
             <fieldset className="flex flex-col gap-2">
-              <legend className="muted small">{t('스킬 (')}{chosen.length}/{installable.length})</legend>
+              <legend className="muted small">{t('스킬 ({0}/{1})', chosen.length, installable.length)}</legend>
               {repo.skills.map((s) => (
                 <Label key={s.id} className="repo-skill-row">
                   <Checkbox checked={selected.has(s.id)} disabled={!s.installable} onCheckedChange={(on) => toggle(s.id, on === true)} />
@@ -222,7 +222,7 @@ export function RepoInstallDialog({
                   <div key={i} className="cmd cmd-stacked">
                     <code>{st.display}</code>
                     <span className="muted small">
-                      {t('작업 폴더: ')}{st.cwd} <CopyButton text={st.display} className="linkish small" />
+                      {t('작업 폴더: {0}', st.cwd)}{' '}<CopyButton text={st.display} className="linkish small" />
                     </span>
                   </div>
                 ))}
@@ -235,7 +235,7 @@ export function RepoInstallDialog({
         {step === 'confirm' && chosenHigh.length > 0 && (
           <Label className="flex items-center gap-2">
             <Checkbox checked={highChecked} onCheckedChange={(on) => setHighChecked(on === true)} />
-            {t('위험 높음 ')}{chosenHigh.length}{t('개(')}{chosenHigh.map((s) => s.name).join(', ')}{t(')의 명령과 위험 신호를 확인했습니다')}
+            {t('위험 높음 {0}개({1})의 명령과 위험 신호를 확인했습니다', chosenHigh.length, chosenHigh.map((s) => s.name).join(', '))}
           </Label>
         )}
 
@@ -250,7 +250,7 @@ export function RepoInstallDialog({
         {step === 'confirm' && toOverwrite.length > 0 && (
           <Label className="flex items-center gap-2">
             <Checkbox checked={overwriteChecked} onCheckedChange={(on) => setOverwriteChecked(on === true)} />
-            {t('같은 이름의 기존 폴더 ')}{toOverwrite.length}{t('개(')}{toOverwrite.map((s) => s.name).join(', ')}{t(')를 덮어쓰는 것을 확인했습니다')}
+            {t('같은 이름의 기존 폴더 {0}개({1})를 덮어쓰는 것을 확인했습니다', toOverwrite.length, toOverwrite.map((s) => s.name).join(', '))}
           </Label>
         )}
 
@@ -285,7 +285,7 @@ export function RepoInstallDialog({
               </Button>
               <Button onClick={() => void run()} disabled={(chosenHigh.length > 0 && !highChecked) || (toOverwrite.length > 0 && !overwriteChecked)}>
                 <DownloadSimpleIcon data-icon="inline-start" />
-                {chosen.length}{t('개 설치')}
+                {t('{0}개 설치', chosen.length)}
               </Button>
             </>
           )}

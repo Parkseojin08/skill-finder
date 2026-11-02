@@ -39,17 +39,17 @@ export function NoResults(props: {
           <span className="muted small">{t('다시 찾아볼 조건:')}</span>
           {sourcesOff > 0 && (
             <button type="button" className="chip-btn" onClick={props.onAllSources}>
-              {t('출처 ')}{sourcesOff}{t('곳 꺼짐 · 모두 켜고 다시 찾기')}
+              {t('출처 {0}곳 꺼짐 · 모두 켜고 다시 찾기', sourcesOff)}
             </button>
           )}
           {riskChip && (
             <button type="button" className="chip-btn" onClick={props.onAllRisk}>
-              {t('위험 ')}{maxRisk === 'low' ? t('낮음만') : t('주의까지')}{t('으로 ')}{riskHidden}{t('개 숨김 · 모두 보고 다시 찾기')}
+              {t('위험 {0}으로 {1}개 숨김 · 모두 보고 다시 찾기', maxRisk === 'low' ? t('낮음만') : t('주의까지'), riskHidden)}
             </button>
           )}
           {starsChip && (
             <button type="button" className="chip-btn" onClick={props.onLiftStars}>
-              {t('별 ')}{minStars.toLocaleString()}{t(' 기준으로 ')}{starsHidden}{t('개 숨김 · 이번만 풀고 다시 찾기')}
+              {t('별 {0} 기준으로 {1}개 숨김 · 이번만 풀고 다시 찾기', minStars.toLocaleString(), starsHidden)}
             </button>
           )}
         </div>

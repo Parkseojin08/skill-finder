@@ -53,7 +53,7 @@ export function TeamPreset({ data, projectPath, onInstalled }: { data: Installed
       </p>
       <div className="examples">
         <button type="button" className="ghost" onClick={exportPreset} disabled={!size} title={size ? undefined : t('색인에 있는 설치된 스킬이 없습니다')}>
-          {t('프리셋 내보내기')}{size ? t(' ({0}개)', size) : ''}
+          {t('프리셋 내보내기{0}', size ? t(' ({0}개)', size) : '')}
         </button>
         <button type="button" className="ghost" onClick={() => fileRef.current?.click()} disabled={busy}>
           {busy ? t('찾는 중…') : t('프리셋 가져오기')}
@@ -82,7 +82,7 @@ export function TeamPreset({ data, projectPath, onInstalled }: { data: Installed
           note={
             preset.resolved.missing.length > 0 && (
               <div className="warn-box small">
-                <p>{t('이 PC의 색인에서 찾지 못해 빠진 것 ')}{preset.resolved.missing.length}{t('개:')}</p>
+                <p>{t('이 PC의 색인에서 찾지 못해 빠진 것 {0}개:', preset.resolved.missing.length)}</p>
                 <ul>
                   {preset.resolved.missing.slice(0, 20).map((m, i) => (
                     <li key={i}>

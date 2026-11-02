@@ -11,6 +11,7 @@ import { installedMarkdown, saveFile } from '../lib/exportList.ts';
 import { InstallHistory } from '../components/InstallHistory.tsx';
 import { TeamPreset } from '../components/TeamPreset.tsx';
 import { serverText, t } from '../i18n.ts';
+import { tj } from '../i18nNodes.tsx';
 
 /** How an install compares with the index (UI debate 3-3); shown only, nothing is updated from here. */
 const CHANGE: Record<InstallChange, string | null> = {
@@ -192,7 +193,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
       {data && (
         <>
           <section>
-            <h2>{t('플러그인 (')}{managed.length})</h2>
+            <h2>{t('플러그인 ({0})', managed.length)}</h2>
             {data.pluginError && <p className="warn-box">{data.pluginError}</p>}
             <p className="muted small">
               {t('플러그인을 지우면 그 안의 스킬·훅·MCP 서버가 함께 제거됩니다. 다음 Claude Code 세션부터 반영됩니다.')}
@@ -224,7 +225,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
                         {p.projectPath && <div className="muted small">{p.projectPath}</div>}
                         {p.skills.length > 0 && (
                           <details className="plugin-skills">
-                            <summary className="muted small">{t('스킬 ')}{p.skills.length}{t('개')}</summary>
+                            <summary className="muted small">{t('스킬 {0}개', p.skills.length)}</summary>
                             <ul>
                               {p.skills.map((s) => (
                                 <li key={s.id}>
@@ -269,7 +270,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
             {synced.length > 0 && (
               <details className="synced">
                 <summary>
-                  {t('Claude 앱 계정에서 동기화된 플러그인 ')}{synced.length}{t('개 ')}<span className="muted small">{t('· 앱 설정에서 관리')}</span>
+                  {tj('Claude 앱 계정에서 동기화된 플러그인 {0}개 {1}', synced.length, <span className="muted small">{t('· 앱 설정에서 관리')}</span>)}
                 </summary>
                 <ul className="synced-list">
                   {synced.map((p) => (
@@ -284,15 +285,15 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
             )}
           </section>
           <section>
-            <h2>{t('스킬 (')}{data.skills.length})</h2>
+            <h2>{t('스킬 ({0})', data.skills.length)}</h2>
             {data.skills.length > 0 && (
               <p className="muted small" title={t('설치된 스킬마다 이름과 설명이 매 요청에 들어갑니다. 글자 수로 센 추정치입니다.')}>
-                {t('이 스킬들이 매 요청에 차지하는 컨텍스트: 약 ')}{data.skills.reduce((n, s) => n + s.tokens.perTurn, 0).toLocaleString()}{t(' 토큰(이름·설명)')}
+                {t('이 스킬들이 매 요청에 차지하는 컨텍스트: 약 {0} 토큰(이름·설명)', data.skills.reduce((n, s) => n + s.tokens.perTurn, 0).toLocaleString())}
               </p>
             )}
             {unindexedSkills > 0 && (
               <p className="muted small">
-                {t('색인에 없는 스킬 ')}{unindexedSkills}{t('개(앱 밖에서 설치했거나 아직 모으지 않은 스킬)는 상세 화면이 없고, 설치된 파일에 지금 규칙을 돌린 위험 등급만 보입니다.')}
+                {t('색인에 없는 스킬 {0}개(앱 밖에서 설치했거나 아직 모으지 않은 스킬)는 상세 화면이 없고, 설치된 파일에 지금 규칙을 돌린 위험 등급만 보입니다.', unindexedSkills)}
               </p>
             )}
             <table className="table">
@@ -329,7 +330,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
                       <td>
                         {/* the current rules run on the installed files, wherever they came from */}
                         <RiskSummary level={s.risk.level} flags={s.risk.flags} />
-                        {s.installedRisk && s.installedRisk !== s.risk.level && <div className="muted small">{t('설치할 때는 ')}{RISK_LEVEL[s.installedRisk]}</div>}
+                        {s.installedRisk && s.installedRisk !== s.risk.level && <div className="muted small">{t('설치할 때는 {0}', RISK_LEVEL[s.installedRisk])}</div>}
                         {CHANGE[s.change] && <div className="warn-text small">{CHANGE[s.change]}</div>}
                       </td>
                       <td className="actions">
