@@ -217,10 +217,16 @@ export const pluginCommitKey = (id: string, scope: string, projectPath: string |
 
 /** How a plugin install compares with the index: its skills' top risk and whether it came from the indexed commit. */
 export function pluginIndexInfo(store: Store, id: string, commit: string | undefined): { indexed: boolean; topRisk: RiskLevel | null; change: Change } {
-  const plugin = store.getPlugin(id);
-  if (!plugin) return { indexed: false, topRisk: null, change: 'unknown' };
   const rank: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2 };
-  const topRisk = store.listSkillsByPlugin(id).reduce<RiskLevel>((top, s) => (rank[s.risk_level as RiskLevel] > rank[top] ? (s.risk_level as RiskLevel) : top), 'low');
+  const top = (skills: Array<{ risk_level: string | null }>) => skills.reduce<RiskLevel>((t, s) => (rank[s.risk_level as RiskLevel] > rank[t] ? (s.risk_level as RiskLevel) : t), 'low');
+  const plugin = store.getPlugin(id);
+  if (!plugin) {
+    // installed from a repo's own marketplace: known through the skills whose install plan points at it
+    const at = id.lastIndexOf('@');
+    const skills = at > 0 ? store.listSkillsByInstallPlugin(id.slice(at + 1), id.slice(0, at)) : [];
+    return skills.length ? { indexed: true, topRisk: top(skills), change: 'unknown' } : { indexed: false, topRisk: null, change: 'unknown' };
+  }
+  const topRisk = top(store.listSkillsByPlugin(id));
   const indexedAt = plugin.skills_indexed_sha;
   return { indexed: true, topRisk, change: !commit || !indexedAt ? 'unknown' : commit === indexedAt ? 'same' : 'changed' };
 }

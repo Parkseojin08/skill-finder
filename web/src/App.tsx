@@ -5,7 +5,8 @@ import { RecommendPage } from './pages/RecommendPage.tsx';
 import { SearchPage, searchUrl } from './pages/SearchPage.tsx';
 import { SettingsPage } from './pages/SettingsPage.tsx';
 import { SkillPage } from './pages/SkillPage.tsx';
-import type { OpenedFrom, ResultItem } from './types.ts';
+import { apiGet } from './api.ts';
+import type { Health, OpenedFrom, ResultItem } from './types.ts';
 
 type Path = '/' | '/recommend' | '/skill' | '/installed' | '/marketplaces' | '/settings';
 type Route = { path: Path; skillId: string | null };
@@ -34,11 +35,25 @@ function fromQuery(): OpenedFrom | undefined {
   return { sid, pos: Number(q.get('pos')) || 0, page: Number(q.get('page')) || 0, provisional: q.get('prov') === '1' };
 }
 
+const BACK_LABEL: Partial<Record<Path, string>> = { '/': '검색 결과로', '/recommend': 'README 추천으로', '/installed': '설치됨으로', '/marketplaces': '마켓플레이스로', '/settings': '설정으로' };
+
 export function App() {
   const [route, setRoute] = useState<Route>(readRoute);
   // Result cards carry the per-search score (R, P); the skill page shows it when opened from a result.
   const [opened, setOpened] = useState<Map<string, ResultItem>>(new Map());
   const [lastQuery, setLastQuery] = useState('');
+  // A newer release on the download page (installed app only): said in the menu bar on every screen, not only
+  // before the first search (project review 2026-11-02). The server looks every 6 hours; this asks it every 30 min.
+  const [update, setUpdate] = useState<Health['update']>(null);
+  useEffect(() => {
+    const check = () =>
+      apiGet<Health>('/health')
+        .then((h) => setUpdate(h.update))
+        .catch(() => {});
+    check();
+    const timer = setInterval(check, 30 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const onPop = () => setRoute(readRoute());
@@ -105,10 +120,11 @@ export function App() {
     [go],
   );
 
-  // The skill page belongs to whichever list it was opened from.
+  // The skill page belongs to whichever screen it was opened from (search, README, installed, ...): the menu shows
+  // that screen and the back button names it (project review 2026-11-02).
   const [listPath, setListPath] = useState<Path>('/');
   useEffect(() => {
-    if (route.path === '/' || route.path === '/recommend') setListPath(route.path);
+    if (route.path !== '/skill') setListPath(route.path);
   }, [route.path]);
   const navActive = route.path === '/skill' ? listPath : route.path;
 
@@ -145,6 +161,11 @@ export function App() {
             </a>
           ))}
         </nav>
+        {update && (
+          <span className="update-badge" role="status" title="검은 Skill Finder 창을 닫았다가 바탕화면의 Skill Finder로 다시 켜면 자동으로 업데이트됩니다.">
+            새 버전 {update.version} · 다시 켜면 업데이트
+          </span>
+        )}
       </header>
       <main>
         {/* Search stays mounted so results survive opening a skill or visiting other pages. */}
@@ -161,7 +182,8 @@ export function App() {
             item={opened.get(route.skillId) ?? null}
             query={lastQuery}
             from={openedFrom.get(route.skillId)}
-            onBack={() => (window.history.length > 1 ? window.history.back() : go('/'))}
+            backLabel={BACK_LABEL[listPath] ?? '뒤로'}
+            onBack={() => (window.history.length > 1 ? window.history.back() : go(listPath))}
           />
         )}
         {route.path === '/installed' && <InstalledPage onOpenSkill={(id) => go('/skill', id)} />}

@@ -1,4 +1,4 @@
-import type { InstallMethod, RiskLevel, TrustTier } from './types.ts';
+import type { InstallMethod, Job, RiskLevel, TrustTier } from './types.ts';
 
 export const RISK_FLAGS: Record<string, { label: string; meaning: string; info?: boolean }> = {
   scripts: { label: '스크립트 포함', meaning: '실행 가능한 코드(.sh, .py, .js 등)가 들어 있습니다.' },
@@ -104,3 +104,19 @@ export const HELP = {
   scope: `개인: 내 모든 프로젝트에서 씁니다. 프로젝트: 고른 폴더에서만 쓰고, 설정 파일이 git으로 팀과 공유될 수 있습니다. 로컬: 고른 폴더에서 나만 씁니다(플러그인만).`,
   score: '점수는 관련도·인기·최신성·신뢰도를 고정 비율(55·20·10·15)로 더한 참고값입니다. 결과 순서는 이름 일치 → 다운로드 → 스타 기준이라 점수 순서와 다를 수 있습니다.',
 } as const;
+
+/** The popular-repo collection's job label (server tasks.ts). */
+export const POPULAR_JOB = 'popular-repos';
+/** What a job works on: "인기 저장소", "전체" (every marketplace) or the marketplace's name. */
+export const jobTarget = (j: Pick<Job, 'label'>) => (j.label === POPULAR_JOB ? '인기 저장소' : j.label === '*' ? '전체' : j.label);
+/** A running job in one line, as the search page's status line says it ("claude-community 마켓플레이스 스킬 모으는 중 12/40"). */
+export function jobLine(j: Pick<Job, 'kind' | 'label' | 'done' | 'total'>): string {
+  const what =
+    j.kind === 'sync'
+      ? `${j.label === '*' ? '마켓플레이스' : `${j.label} 마켓플레이스`} 동기화 중`
+      : j.label === POPULAR_JOB
+        ? '인기 저장소의 스킬 모으는 중'
+        : `${j.label === '*' ? '모든 마켓플레이스' : `${j.label} 마켓플레이스`} 스킬 모으는 중`;
+  const pct = j.total > 0 ? ` (${Math.floor((j.done / j.total) * 100)}%)` : '';
+  return `${what} ${j.done}/${j.total || '?'}${pct}`;
+}

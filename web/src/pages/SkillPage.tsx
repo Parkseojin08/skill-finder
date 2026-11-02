@@ -21,7 +21,22 @@ function installTarget(d: SkillDetail): string | null {
   return d.repo;
 }
 
-export function SkillPage({ id, item, query, from, onBack }: { id: string; item: ResultItem | null; query: string; from?: OpenedFrom; onBack: () => void }) {
+export function SkillPage({
+  id,
+  item,
+  query,
+  from,
+  backLabel,
+  onBack,
+}: {
+  id: string;
+  item: ResultItem | null;
+  query: string;
+  from?: OpenedFrom;
+  /** Names the screen it was opened from ("검색 결과로", "설치됨으로"). */
+  backLabel: string;
+  onBack: () => void;
+}) {
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
@@ -79,7 +94,7 @@ export function SkillPage({ id, item, query, from, onBack }: { id: string; item:
   return (
     <div className="page skill-page">
       <button type="button" className="linkish back" onClick={onBack}>
-        <Icon name="back" size={15} /> 검색 결과로
+        <Icon name="back" size={15} /> {backLabel}
       </button>
 
       <header className="skill-head">

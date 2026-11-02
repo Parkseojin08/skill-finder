@@ -2251,3 +2251,17 @@ kbd {
     margin: 0;
   }
 }
+
+/* a newer release, in the menu bar on every screen (project review 2026-11-02) */
+@layer app {
+  .update-badge {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--ok);
+    border: 1px solid color-mix(in srgb, var(--ok) 40%, transparent);
+    background: var(--ok-soft);
+    border-radius: var(--corner-sm);
+    padding: 3px 8px;
+    white-space: nowrap;
+  }
+}

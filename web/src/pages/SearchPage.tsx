@@ -6,7 +6,7 @@ import { RepoCard } from '../components/RepoCard.tsx';
 import { ResultCard, skillHref } from '../components/ResultCard.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { useInstalled } from '../installed.ts';
-import { RISK_RANK, STAGES } from '../labels.ts';
+import { jobLine, RISK_RANK, STAGES } from '../labels.ts';
 import { byPopular, foldResults, nameMatches, navigationalWord, SORTS, type SortKey } from '../lib/resultOrder.ts';
 import type { Health, Job, OpenedFrom, ResultItem, RiskLevel, SearchEvent, SearchSource, SettingsResponse, SourceKind, SourceProgress } from '../types.ts';
 
@@ -455,8 +455,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       <div role="status">
         {syncJob && (
           <p className="status-line muted small">
-            <span className="spinner" aria-hidden="true" /> {syncJob.kind === 'collect' ? '인기 저장소의 스킬 모으는 중' : '마켓플레이스 동기화 중'} {syncJob.done}/
-            {syncJob.total || '?'} · 색인 스킬 {(health?.skills ?? 0).toLocaleString()}개
+            <span className="spinner" aria-hidden="true" /> {jobLine(syncJob)} · 색인 스킬 {(health?.skills ?? 0).toLocaleString()}개
           </p>
         )}
       </div>
@@ -490,11 +489,6 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             </p>
           )}
           {health && !health.claudeVersion && <p className="warn-text small">Claude Code를 찾지 못해 플러그인 설치가 되지 않습니다.</p>}
-          {health?.update && (
-            <p className="state-on small" role="status">
-              새 버전({health.update.version})이 나왔습니다. 검은 Skill Finder 창을 닫았다가 바탕화면의 Skill Finder로 다시 켜면 자동으로 업데이트됩니다.
-            </p>
-          )}
           {githubToken === false && (
             // before the first search only (UI debate D-4); in results it stays in the folded notices (D:48)
             <p className="muted small">

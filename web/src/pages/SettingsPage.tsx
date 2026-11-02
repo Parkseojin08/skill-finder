@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiGet, apiSend } from '../api.ts';
 import { searchLogChanged } from './SearchPage.tsx';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
@@ -13,9 +13,13 @@ export function SettingsPage() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
+  /** Changes typed but not sent yet; kept over a save's answer so typing during a save is not lost. */
+  const pending = useRef<Partial<Settings>>({});
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
   const apply = (r: SettingsResponse) => {
     setData(r);
-    setDraft(r.settings);
+    setDraft({ ...r.settings, ...pending.current });
   };
 
   useEffect(() => {
@@ -35,12 +39,49 @@ export function SettingsPage() {
     }
   };
 
+  // Every setting saves itself (project review 2026-11-02: changes left unsaved used to vanish without a word): a
+  // switch or a choice at once, a number or a folder once typing stops, and whatever is left when leaving the page.
+  const flush = () => {
+    clearTimeout(timer.current);
+    const patch = pending.current;
+    pending.current = {};
+    if (Object.keys(patch).length) void save({ settings: patch }, 'minStars' in patch ? '저장했습니다 (검색 캐시를 비웠습니다)' : '저장했습니다');
+  };
+  const change = (patch: Partial<Settings>, waitMs = 0) => {
+    setDraft((d) => (d ? { ...d, ...patch } : d));
+    pending.current = { ...pending.current, ...patch };
+    clearTimeout(timer.current);
+    timer.current = setTimeout(flush, waitMs);
+  };
+  const flushRef = useRef(flush);
+  flushRef.current = flush;
+  useEffect(() => {
+    // closing or reloading the tab: a plain request would be cut off, keepalive lets it finish
+    const onHide = () => {
+      const patch = pending.current;
+      if (!Object.keys(patch).length) return;
+      pending.current = {};
+      void fetch('/api/settings', {
+        method: 'PUT',
+        keepalive: true,
+        headers: { 'X-Skill-Finder': '1', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings: patch }),
+      });
+    };
+    window.addEventListener('pagehide', onHide);
+    return () => {
+      window.removeEventListener('pagehide', onHide);
+      flushRef.current();
+    };
+  }, []);
+
   if (!data || !draft) return <div className="page">{msg ? <p className="warn-box">{msg.text}</p> : <p className="muted">불러오는 중…</p>}</div>;
 
 
   return (
     <div className="page settings">
       <h1>설정</h1>
+      <p className="muted small">바꾸면 바로 저장됩니다. 숫자와 폴더는 입력을 멈추면 저장됩니다.</p>
       <div role="status">{msg && <p className={msg.ok ? 'ok-box' : 'warn-box'}>{msg.text}</p>}</div>
 
       <section>
@@ -78,7 +119,8 @@ export function SettingsPage() {
             min={0}
             step={500}
             value={draft.minStars}
-            onChange={(e) => setDraft({ ...draft, minStars: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+            onChange={(e) => change({ minStars: Math.max(0, Math.floor(Number(e.target.value) || 0)) }, 800)}
+            onBlur={flush}
           />
         </label>
         <p className="muted small">이 수보다 스타가 적거나 스타 수를 알 수 없는 저장소의 스킬은 검색 결과에서 숨깁니다. 0이면 제한하지 않습니다.</p>
@@ -89,18 +131,18 @@ export function SettingsPage() {
         <div className="grid2">
           <label className="field">
             <span>기본 설치 범위</span>
-            <select value={draft.defaultScope} onChange={(e) => setDraft({ ...draft, defaultScope: e.target.value as 'user' | 'project' })}>
+            <select value={draft.defaultScope} onChange={(e) => change({ defaultScope: e.target.value as 'user' | 'project' })}>
               <option value="user">개인</option>
               <option value="project">프로젝트</option>
             </select>
           </label>
           <div className="field">
             <span>기본 프로젝트 폴더</span>
-            <FolderInput value={draft.defaultProjectPath} onChange={(p) => setDraft({ ...draft, defaultProjectPath: p })} label="기본 프로젝트 폴더" />
+            <FolderInput value={draft.defaultProjectPath} onChange={(p) => change({ defaultProjectPath: p }, 800)} label="기본 프로젝트 폴더" />
           </div>
         </div>
         <label className="chip">
-          <input type="checkbox" checked={draft.telemetryDisabled} onChange={(e) => setDraft({ ...draft, telemetryDisabled: e.target.checked })} />
+          <input type="checkbox" checked={draft.telemetryDisabled} onChange={(e) => change({ telemetryDisabled: e.target.checked })} />
           skills CLI 텔레메트리 끄기 (DISABLE_TELEMETRY=1). 끄지 않으면 skills.sh 순위 집계에 익명 정보가 전송됩니다.
         </label>
       </section>
@@ -108,7 +150,7 @@ export function SettingsPage() {
       <section>
         <h2>스킬 수집</h2>
         <label className="chip">
-          <input type="checkbox" checked={draft.autoCollect} onChange={(e) => setDraft({ ...draft, autoCollect: e.target.checked })} />
+          <input type="checkbox" checked={draft.autoCollect} onChange={(e) => change({ autoCollect: e.target.checked })} />
           커뮤니티 마켓플레이스 스킬을 백그라운드에서 자동으로 모으기
         </label>
         <p className="muted small">
@@ -120,7 +162,7 @@ export function SettingsPage() {
       <section>
         <h2>검색 기록</h2>
         <label className="chip">
-          <input type="checkbox" checked={draft.searchLog} onChange={(e) => setDraft({ ...draft, searchLog: e.target.checked })} />
+          <input type="checkbox" checked={draft.searchLog} onChange={(e) => change({ searchLog: e.target.checked })} />
           검색 기록 남기기
         </label>
         <p className="muted small">
@@ -178,14 +220,6 @@ export function SettingsPage() {
         <DiagnosticsButton />
       </section>
 
-      <div className="row">
-        <button type="button" className="primary" onClick={() => save({ settings: draft }, '설정을 저장했습니다 (검색 캐시를 비웠습니다)')}>
-          설정 저장
-        </button>
-        <button type="button" className="ghost" onClick={() => setDraft(data.settings)}>
-          되돌리기
-        </button>
-      </div>
     </div>
   );
 }

@@ -271,6 +271,19 @@ export class Store {
     return this.get<SkillRow>('SELECT * FROM skills WHERE id = ?', id);
   }
 
+  /**
+   * Skills of a plugin that lives in a repo's own marketplace (not one the app indexes): the generic skills whose
+   * install plan names that marketplace and plugin (install_json), so an install from it is not "색인에 없음".
+   */
+  listSkillsByInstallPlugin(marketplace: string, plugin: string): SkillRow[] {
+    return this.all<SkillRow>(
+      `SELECT * FROM skills WHERE install_json IS NOT NULL
+       AND json_extract(install_json, '$.marketplaceName') = ? AND json_extract(install_json, '$.pluginName') = ? ORDER BY name`,
+      marketplace,
+      plugin,
+    );
+  }
+
   listSkillsByPlugin(pluginId: string): SkillRow[] {
     return this.all<SkillRow>('SELECT * FROM skills WHERE plugin_id = ? ORDER BY name', pluginId);
   }

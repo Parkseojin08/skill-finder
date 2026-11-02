@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiGet, apiSend } from '../api.ts';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
-import { formatAgo } from '../labels.ts';
+import { formatAgo, jobTarget, POPULAR_JOB } from '../labels.ts';
 import type { Job, MarketplaceInfo } from '../types.ts';
 
 type Act = <T>(p: Promise<T>, okText: string, after?: (r: T) => void) => Promise<void>;
 
 const JOB_STATUS: Record<Job['status'], string> = { running: '진행 중', paused: '일시정지', done: '완료', error: '오류', cancelled: '중단됨' };
-const POPULAR_LABEL = 'popular-repos';
-const jobLabel = (j: Job) => (j.label === POPULAR_LABEL ? '인기 저장소' : j.label === '*' ? '전체' : j.label);
 
 type PopularStatus = { lastRunAt: string | null; repos: number; withSkills: number; skills: number };
 
@@ -113,7 +111,7 @@ export function MarketplacesPage() {
         )}
       </section>
 
-      <PopularReposSection job={jobFor('collect', POPULAR_LABEL)} act={act} />
+      <PopularReposSection job={jobFor('collect', POPULAR_JOB)} act={act} />
 
       <section>
         <h2>마켓플레이스 추가</h2>
@@ -144,7 +142,7 @@ export function MarketplacesPage() {
           <ul className="jobs">
             {jobs.slice(0, 8).map((j) => (
               <li key={j.id}>
-                <b>{j.kind === 'sync' ? '동기화' : '스킬 수집'}</b> {jobLabel(j)} · {JOB_STATUS[j.status]} · {j.done}/{j.total}
+                <b>{j.kind === 'sync' ? '동기화' : '스킬 수집'}</b> {jobTarget(j)} · {JOB_STATUS[j.status]} · {j.done}/{j.total}
                 {j.errors.length > 0 && (
                   <details>
                     <summary className="small">오류 {j.errors.length}건</summary>
