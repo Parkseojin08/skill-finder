@@ -17,7 +17,29 @@ Claude Code 스킬을 한곳에서 찾아 점수·위험 신호와 함께 보고
 
 ### Windows
 
-[소개 페이지](https://skill-finder.a01075011775.workers.dev)에서 zip을 받아 압축을 풀고 `SkillFinder.exe`를 실행합니다. 서버를 켜고 브라우저를 열며, 새 버전이 나오면 알려 줍니다.
+[소개 페이지](https://skill-finder.a01075011775.workers.dev)에서 zip을 받아 압축을 풀고 `SkillFinder.exe`를 실행합니다. 서버를 켜고 브라우저를 열며, 새 버전이 나오면 서명을 확인한 뒤 업데이트합니다.
+
+### macOS·Linux·Windows (npx)
+
+Node.js 22.18 이상이 있으면 설치 없이 실행합니다. 데이터는 사용자 폴더(macOS `~/Library/Application Support/Skill Finder`, Linux `~/.local/share/skill-finder`, Windows `%LOCALAPPDATA%\SkillFinder\npx-data`)에 남습니다.
+
+```bash
+npx skill-finder
+```
+
+### Claude Code 안에서 쓰기
+
+같은 명령에 읽기 전용 하위 명령이 있습니다. 앱이 꺼져 있으면 백그라운드로 켜고 결과만 출력하므로, Claude Code에게 "skill-finder로 pdf 스킬 찾아 줘"처럼 시킬 수 있습니다. 설치·삭제는 하지 않습니다(앱 화면의 확인 창에서만).
+
+```bash
+npx skill-finder search "pdf tables" --limit 5
+npx skill-finder show gh:anthropics/skills:skills/pdf
+npx skill-finder recommend          # 지금 폴더의 README와 비슷한 스킬
+npx skill-finder installed --json
+npx skill-finder stop               # 백그라운드로 켠 앱 끄기
+```
+
+`--json`은 기계가 읽는 출력, `--lang ko|en|ja`는 출력 언어입니다.
 
 ### 소스에서
 

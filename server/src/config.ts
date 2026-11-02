@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,7 +9,16 @@ export const WEB_DIST_DIR = join(ROOT_DIR, 'web', 'dist');
 /** The release launcher keeps the token outside the app folder (UI debate D-6); from the environment only. */
 export const ENV_PATH = process.env.SKILL_FINDER_ENV_PATH ? resolve(process.env.SKILL_FINDER_ENV_PATH) : join(ROOT_DIR, '.env');
 export const SKILLS_CLI_VERSION = '1.7.4';
-export const SKILLS_CLI_PATH = join(ROOT_DIR, 'node_modules', 'skills', 'bin', 'cli.mjs');
+/** The bundled skills CLI: under the app, or wherever npm put it when installed as a package (npx hoists it). */
+export const SKILLS_CLI_PATH = (() => {
+  const local = join(ROOT_DIR, 'node_modules', 'skills', 'bin', 'cli.mjs');
+  if (existsSync(local)) return local;
+  try {
+    return join(dirname(createRequire(import.meta.url).resolve('skills/package.json')), 'bin', 'cli.mjs');
+  } catch {
+    return local;
+  }
+})();
 export const DEV_VITE_PORT = 5173;
 
 function parseEnvFile(text: string): Record<string, string> {
