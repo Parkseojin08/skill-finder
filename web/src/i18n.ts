@@ -13,16 +13,24 @@ export const LANGS: Array<{ code: Lang; label: string }> = [
   { code: 'ja', label: '日本語' },
 ];
 const KEY = 'skill-finder-lang';
+// the browser's objects by shape, so Node code that shares the web's pure modules (server/scripts/bench) still
+// type-checks without the DOM library
+const browser = globalThis as unknown as {
+  window?: unknown;
+  localStorage?: { getItem(k: string): string | null; setItem(k: string, v: string): void };
+  navigator?: { language?: string };
+  location?: { reload(): void };
+};
 
 function detect(): Lang {
-  if (typeof window === 'undefined') return 'ko'; // tests and the CLI read the Korean source
+  if (browser.window === undefined) return 'ko'; // tests and the CLI read the Korean source
   try {
-    const saved = localStorage.getItem(KEY);
+    const saved = browser.localStorage?.getItem(KEY);
     if (saved === 'ko' || saved === 'en' || saved === 'ja') return saved;
   } catch {
     // not remembered: the browser's language
   }
-  const nav = (navigator.language || 'ko').slice(0, 2).toLowerCase();
+  const nav = (browser.navigator?.language || 'ko').slice(0, 2).toLowerCase();
   return nav === 'ko' ? 'ko' : nav === 'ja' ? 'ja' : 'en';
 }
 
@@ -38,11 +46,11 @@ export function t(ko: string, ...args: unknown[]): string {
 
 export function setLang(lang: Lang): void {
   try {
-    localStorage.setItem(KEY, lang);
+    browser.localStorage?.setItem(KEY, lang);
   } catch {
     // only this visit
   }
-  window.location.reload();
+  browser.location?.reload();
 }
 
 type Pattern = { re: RegExp; to: string; order: number[] };
