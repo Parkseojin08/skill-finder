@@ -10,6 +10,7 @@ import { Markdown, splitFrontmatter } from '../components/Markdown.tsx';
 import { Translated } from '../components/Translated.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { HelpTip } from '../components/HelpTip.tsx';
+import { FavoriteButton } from '../components/FavoriteButton.tsx';
 import { formatAgo, formatBytes, formatCount, HELP, LOW_RISK_NOTE, METHOD, QUALITY, RISK_FLAGS, RISK_RANK } from '../labels.ts';
 import type { Breakdown, OpenedFrom, ResultItem, SettingsResponse, SkillDetail } from '../types.ts';
 
@@ -258,6 +259,7 @@ export function SkillPage({
                 </a>
               )}
               <ShareMenu detail={detail} />
+              <FavoriteButton id={detail.id} name={detail.name} className="stat" />
             </div>
           </section>
 

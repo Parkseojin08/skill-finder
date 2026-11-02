@@ -7,6 +7,7 @@ import { adminRouter } from './routes/admin.ts';
 import { healthRouter } from './routes/health.ts';
 import { installRouter } from './routes/install.ts';
 import { presetsRouter } from './routes/presets.ts';
+import { accountRouter } from './routes/account.ts';
 import { recommendRouter } from './routes/recommend.ts';
 import { searchRouter } from './routes/search.ts';
 import { skillsRouter } from './routes/skills.ts';
@@ -27,6 +28,7 @@ export function createApp(ctx: AppContext, opts: { searchDeps?: SearchDeps } = {
   app.use('/api', skillsRouter(ctx));
   app.use('/api', installRouter(ctx));
   app.use('/api', presetsRouter(ctx));
+  app.use('/api', accountRouter(ctx));
   app.use('/api', recommendRouter(ctx));
   app.use('/api', adminRouter(ctx));
 

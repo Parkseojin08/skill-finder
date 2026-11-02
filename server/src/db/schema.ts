@@ -58,4 +58,22 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE install_log ADD COLUMN risk_level TEXT;
   CREATE INDEX skills_md_sha ON skills(skill_md_sha256);
   `,
+  // Accounts on this PC and their favorite skills (user decision 2026-11-02). The password is a scrypt hash; the
+  // signed-in state is a signed cookie (auth.ts), so there is no session table. The skill's name is kept so a
+  // favorite whose skill left the index can still be listed and removed.
+  `
+  CREATE TABLE users (
+    id INTEGER PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE favorites (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    skill_id TEXT NOT NULL,
+    skill_name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, skill_id)
+  );
+  `,
 ];
