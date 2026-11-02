@@ -94,9 +94,10 @@ export function SkillPage({
   useEffect(() => {
     if (name) document.title = `${name} · Skill Finder`;
   }, [name]);
-  // the skill's own sources once loaded: a result card's can include a merged copy's (another repo); skills.sh
-  // is known only from the search, so it comes from the card
-  const sources = detail ? [...detail.sources, ...(item?.sources ?? []).filter((s) => s.kind === 'skillssh')] : (item?.sources ?? []);
+  // the skill's own sources once loaded. Its skills.sh page: the search's link when it came from there (skills.sh's
+  // own id), else the detail's (built from the folder name); one badge, not both
+  const cardSkillsSh = (item?.sources ?? []).filter((s) => s.kind === 'skillssh');
+  const sources = detail ? [...detail.sources.filter((s) => s.kind !== 'skillssh' || !cardSkillsSh.length), ...cardSkillsSh] : (item?.sources ?? []);
   const breakdown: Partial<Breakdown> = { ...(item?.breakdown ?? {}), ...(detail?.partialBreakdown ?? {}) };
   const flags = detail?.riskFlags ?? item?.riskFlags ?? [];
   const quality = detail?.qualityWarnings ?? item?.qualityWarnings ?? [];
@@ -104,7 +105,7 @@ export function SkillPage({
   const md = detail?.skillMd ? splitFrontmatter(detail.skillMd) : null;
   const method = detail?.install.method ?? item?.install.method;
 
-  const skillsSh = detail?.sources.find((s) => s.kind === 'skillssh');
+  const skillsSh = detail ? sources.find((s) => s.kind === 'skillssh') : undefined;
   const tabs: Array<{ key: Tab; label: string }> = [
     { key: 'overview', label: '개요' },
     { key: 'install', label: '설치' },

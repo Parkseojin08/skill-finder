@@ -102,6 +102,7 @@ describe('§10.1 설치 방식', () => {
       '-y',
     ]);
     assert.ok(plan.command.includes(`/tree/${'a'.repeat(40)}/skills/x`), plan.command);
+    assert.ok(!plan.command.split(' ').includes('-y'), '손으로 실행할 명령에는 -y가 없음(CLI가 직접 물음)');
     const [global] = buildSteps(plan, 'user', null);
     assert.equal(global.args.at(-1), '-g');
   });

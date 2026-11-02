@@ -84,6 +84,13 @@ export type FtsPluginHit = { plugin: PluginRow; bm25: number };
 
 const now = () => new Date().toISOString();
 
+/** A long install output keeps its start and its end, where the error usually is (review 2026-11-02). */
+export function clipOutput(text: string, max = 20_000): string {
+  if (text.length <= max) return text;
+  const head = Math.floor(max / 5);
+  return `${text.slice(0, head)}\n…(중간 ${text.length - max}자 생략)…\n${text.slice(text.length - (max - head))}`;
+}
+
 export class Store {
   readonly db: Db;
   private cache = new Map<string, StatementSync>();
@@ -586,7 +593,7 @@ export class Store {
       e.project_path,
       JSON.stringify(e.argv),
       e.exit_code,
-      e.output.slice(0, 20_000),
+      clipOutput(e.output),
       now(),
       e.ref ?? null,
       e.skill_md_sha256 ?? null,
@@ -594,7 +601,6 @@ export class Store {
     );
   }
 
-  /** Skills the app installed into a skills folder (skills CLI), newest first, to match those folders to the index. */
   /** The latest installs and removals, newest first (the 설치됨 screen's history). */
   listInstallLog(limit = 50): Array<{ id: number; created_at: string; method: string; scope: string; project_path: string | null; skill_id: string | null; plugin_id: string | null; exit_code: number | null; output: string | null }> {
     return this.all(
@@ -616,6 +622,7 @@ export class Store {
       .slice(0, limit);
   }
 
+  /** Skills the app installed into a skills folder (skills CLI), newest first, to match those folders to the index. */
   listInstalledSkillLog(): Array<{ skill_id: string; scope: string; project_path: string | null; risk_level: string | null; created_at: string }> {
     return this.all(
       `SELECT skill_id, scope, project_path, risk_level, created_at FROM install_log

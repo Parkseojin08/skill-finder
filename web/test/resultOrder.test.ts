@@ -81,7 +81,8 @@ describe('SKILL.md 링크와 내보내기 (사용성 검토 2026-11-02)', () => 
     const { relativeTarget } = await import('../src/lib/links.ts');
     assert.equal(relativeTarget('./reference.md'), 'reference.md');
     assert.equal(relativeTarget('docs/a%20b.md#part'), 'docs/a b.md');
-    for (const other of ['https://x.com', 'mailto:a@b.c', '#top', '/abs', '../outside.md', 'a/../../b', '%E0%A4%A', undefined]) {
+    assert.equal(relativeTarget('./a/./b.md'), 'a/b.md');
+    for (const other of ['https://x.com', 'mailto:a@b.c', '#top', '/abs', '../outside.md', 'a/../../b', '..%5Cout.md', '%E0%A4%A', './', undefined]) {
       assert.equal(relativeTarget(other), null, String(other));
     }
   });

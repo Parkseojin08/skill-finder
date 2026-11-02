@@ -252,6 +252,8 @@ describe('README 추천 단어 조절·README 없는 프로젝트 (전체 점검
     assert.ok(!off.keywords.some((k) => k.term === 'pdf'), '끈 단어는 키워드에 없음');
     const added = recommendForProject(srv.ctx.store, project('pdf-reader'), DEFAULT_SETTINGS.weights, { extra: ['spreadsheet'] });
     assert.equal(added.keywords[0].term, 'spreadsheet', '더한 단어는 가장 무겁게');
+    const addedOff = recommendForProject(srv.ctx.store, project('pdf-reader'), DEFAULT_SETTINGS.weights, { extra: ['spreadsheet'], exclude: ['spreadsheet'] });
+    assert.ok(!addedOff.keywords.some((k) => k.term === 'spreadsheet'), '더한 단어도 끄면 빠짐');
   });
 
   it('README가 없으면 package.json의 설명·키워드로 추천한다', () => {

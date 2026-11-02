@@ -2385,6 +2385,20 @@ kbd {
     border-radius: var(--corner);
     white-space: nowrap;
   }
+  .export-items p {
+    margin: 0;
+    max-width: 260px;
+    white-space: normal;
+  }
+  /* the open file's path and its copy button */
+  .file-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 6px;
+    overflow-wrap: anywhere;
+  }
 }
 
 /* README 추천 matched words, 설치 기록 (review 2026-11-02) */

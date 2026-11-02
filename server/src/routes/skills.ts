@@ -61,10 +61,12 @@ export function skillsRouter(ctx: AppContext): Router {
 
     const signals = plugin?.signals_json ? JSON.parse(plugin.signals_json) : null;
     const repoMeta = skill.repo ? (store.getRepo(skill.repo) ?? null) : null;
-    // skills.sh lists it (it has a download count from there): its page also shows Gen·Socket·Snyk audits
+    // skills.sh lists it (it has a download count from there): its page also shows Gen·Socket·Snyk audits.
+    // Its page is named after the skill's folder (skillId), not the frontmatter name.
+    const skillsShId = skill.dir_path ? (skill.dir_path.split('/').pop() ?? skill.name) : skill.name;
     const skillsSh =
       skill.installs != null && skill.repo
-        ? { kind: 'skillssh' as const, label: 'skills.sh', url: `https://skills.sh/${[...skill.repo.split('/'), skill.name].map(encodeURIComponent).join('/')}` }
+        ? { kind: 'skillssh' as const, label: 'skills.sh', url: `https://skills.sh/${[...skill.repo.split('/'), skillsShId].map(encodeURIComponent).join('/')}` }
         : null;
     const sources = [plugin ? marketplaceSource(skill, plugin) : null, githubSource(skill), skillsSh].filter(Boolean);
     res.json({
@@ -186,7 +188,7 @@ export function skillsRouter(ctx: AppContext): Router {
   r.get('/install/preview', async (req, res) => {
     const id = typeof req.query.id === 'string' ? req.query.id : '';
     const scope = req.query.scope as InstallScope;
-    const projectPath = typeof req.query.projectPath === 'string' && req.query.projectPath ? req.query.projectPath : null;
+    const projectPath = typeof req.query.projectPath === 'string' && req.query.projectPath.trim() ? req.query.projectPath.trim() : null;
     const skill = store.getSkill(id);
     if (!skill) {
       res.status(404).json({ error: '스킬을 찾을 수 없습니다' });

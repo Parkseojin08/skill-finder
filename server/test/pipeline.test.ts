@@ -670,7 +670,7 @@ describe('캐시에 남는 검색의 모양 (전체 점검 #12)', () => {
 
   it('결과·항목·경고의 필드가 정해 둔 것뿐이고, 버전은 18이다', async () => {
     const { RESULTS_VERSION } = await import('../src/search/pipeline.ts');
-    assert.equal(RESULTS_VERSION, 18, '버전을 올렸으면 이 테스트의 필드 목록도 맞추세요');
+    assert.equal(RESULTS_VERSION, 19, '버전을 올렸으면 이 테스트의 필드 목록도 맞추세요');
     const ctx = ctxWithSkills();
     for (const q of ['pdf tables', 'PDF에서 표 추출', 'pdf']) {
       const events = await collect(deps(ctx), q);

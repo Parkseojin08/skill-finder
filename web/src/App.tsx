@@ -153,6 +153,8 @@ export function App() {
               href={r.path}
               className={navActive === r.path ? 'active' : ''}
               aria-current={navActive === r.path ? 'page' : undefined}
+              // narrow screens hide the long label; the link keeps its full name for screen readers
+              aria-label={r.short ? r.label : undefined}
               onClick={(e) => {
                 e.preventDefault();
                 go(r.path);

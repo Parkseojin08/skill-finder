@@ -1,5 +1,6 @@
 import { RISK_FLAGS, RISK_LEVEL } from '../labels.ts';
 import type { SkillDetail } from '../types.ts';
+import { linkText } from '../lib/exportList.ts';
 import { CopyButton } from './CopyButton.tsx';
 
 /**
@@ -16,7 +17,7 @@ export function ShareMenu({ detail }: { detail: SkillDetail }) {
   const items: Array<{ label: string; text: string }> = [];
   if (url) items.push({ label: '저장소 주소', text: url });
   if (command) items.push({ label: '설치 명령', text: command });
-  if (url) items.push({ label: 'Markdown 한 줄', text: `[${detail.name}](${url})${short ? ` — ${short}` : ''}` });
+  if (url) items.push({ label: 'Markdown 한 줄', text: `[${linkText(detail.name)}](${url})${short ? ` — ${short}` : ''}` });
   items.push({ label: '공유용 글', text: [`${detail.name}${short ? ` — ${short}` : ''}`, risk, command ? `설치: ${command}` : '', url].filter(Boolean).join('\n') });
   return (
     <details className="share-menu">

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { createContext } from '../src/bootstrap.ts';
 import { openDb } from '../src/db/index.ts';
+import { clipOutput } from '../src/db/store.ts';
 import { TreeIndex } from '../src/discovery/tree.ts';
 import { buildSkillRow } from '../src/indexer.ts';
 
@@ -94,5 +95,17 @@ describe('데이터 백업·손상 복구 (전체 점검 #4)', () => {
     const fresh = openContext(config);
     assert.equal(fresh.store.countSkills(), 0);
     fresh.store.db.close();
+  });
+});
+
+describe('설치 기록 출력 자르기 (리뷰 2026-11-02)', () => {
+  it('긴 출력은 앞과 끝(오류가 나오는 곳)을 남긴다', () => {
+    const out = 'START' + 'x'.repeat(30_000) + 'ERROR at the end';
+    const clipped = clipOutput(out);
+    assert.ok(clipped.length < 20_100);
+    assert.ok(clipped.startsWith('START'));
+    assert.ok(clipped.endsWith('ERROR at the end'));
+    assert.match(clipped, /중간 \d+자 생략/);
+    assert.equal(clipOutput('short'), 'short');
   });
 });

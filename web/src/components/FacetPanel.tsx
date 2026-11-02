@@ -36,7 +36,8 @@ function options(group: Group, counts: Map<string, number>, selected: string[]):
 }
 
 /** Sidebar that narrows the current results by provider, category and install method, with live counts. */
-export const facetLabel = (g: Group, k: string) => (g === 'trust' ? TRUST[k as keyof typeof TRUST].label : g === 'method' ? METHOD[k as keyof typeof METHOD] : (CATEGORY[k] ?? k));
+export const facetLabel = (g: Group, k: string) =>
+  (g === 'trust' ? TRUST[k as keyof typeof TRUST]?.label : g === 'method' ? METHOD[k as keyof typeof METHOD] : CATEGORY[k]) ?? k;
 
 /**
  * The side filters in force, as chips in the results toolbar ("Anthropic 공식 ×"): a filter kept from the last

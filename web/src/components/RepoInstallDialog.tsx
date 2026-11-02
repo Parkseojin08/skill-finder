@@ -5,7 +5,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { apiGet, streamNdjson } from '../api.ts';
+import { ApiError, apiGet, streamNdjson } from '../api.ts';
 import { forgetInstalled } from '../installed.ts';
 import { METHOD } from '../labels.ts';
 import type { InstallPreview, InstallScan, RepoResult, SettingsResponse } from '../types.ts';
@@ -123,6 +123,8 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
           }
         });
       } catch (e) {
+        // the server refused it before starting (400, 409): that is its answer, nothing is still running
+        if (e instanceof ApiError && e.status > 0) answered = true;
         setLog((l) => [...l, String((e as Error).message ?? e)]);
       }
       // cut off without a result, as in the single install (F4): wait for it to finish before the next one, which

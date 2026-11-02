@@ -32,8 +32,12 @@ export type InstallPlan = {
 
 const NPX_SKILLS = `npx skills@${SKILLS_CLI_VERSION}`;
 
-function skillsCliArgs(source: string, name: string, scope: InstallScope): string[] {
-  return ['add', source, '--skill', name, '-a', 'claude-code', '--copy', '-y', ...(scope === 'user' ? ['-g'] : [])];
+/**
+ * `-y` only for the app's own run, after its confirm dialog (D-5). The command shown for running by hand (copied,
+ * shared, exported) leaves it out, so the CLI asks there as it normally would (review 2026-11-02).
+ */
+function skillsCliArgs(source: string, name: string, scope: InstallScope, yes = true): string[] {
+  return ['add', source, '--skill', name, '-a', 'claude-code', '--copy', ...(yes ? ['-y'] : []), ...(scope === 'user' ? ['-g'] : [])];
 }
 
 /**
@@ -101,7 +105,7 @@ export function planInstall(skill: SkillRow, plugin: PluginRow | null, marketpla
   return {
     method: 'skills-cli',
     scopes: ['user', 'project'],
-    command: formatCommand('npx', [`skills@${SKILLS_CLI_VERSION}`, ...skillsCliArgs(source, skill.name, 'user')]),
+    command: formatCommand('npx', [`skills@${SKILLS_CLI_VERSION}`, ...skillsCliArgs(source, skill.name, 'user', false)]),
     repo,
     source,
     ...(pinnedRef ? { pinnedRef } : {}),

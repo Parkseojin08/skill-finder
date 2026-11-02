@@ -8,8 +8,9 @@ import { SearchIntro } from '../components/search/SearchIntro.tsx';
 import { ResultCard, skillHref } from '../components/ResultCard.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { useInstalled } from '../installed.ts';
-import { jobLine, RISK_RANK, STAGES } from '../labels.ts';
+import { CATEGORY, jobLine, METHOD, RISK_RANK, STAGES, TRUST } from '../labels.ts';
 import { fileStem, resultsJson, resultsMarkdown, saveFile } from '../lib/exportList.ts';
+import { goInApp } from '../lib/links.ts';
 import { readPageSize, savePageSize } from '../lib/prefs.ts';
 import { byPopular, foldResults, nameMatches, navigationalWord, SORTS, type SortKey } from '../lib/resultOrder.ts';
 import type { Health, Job, OpenedFrom, ResultItem, RiskLevel, SearchEvent, SearchSource, SettingsResponse, SourceKind, SourceProgress } from '../types.ts';
@@ -55,6 +56,7 @@ const SEARCH_LOG_EVENT = 'skill-finder-search-log';
  */
 export function searchLogChanged(on: boolean): void {
   if (!on) {
+    lastSearchAddress = null;
     try {
       sessionStorage.removeItem(SNAPSHOT_KEY);
     } catch {
@@ -73,7 +75,9 @@ function parseFacets(v: string): Facets {
   const out: Facets = { trust: [], category: [], method: [] };
   for (const part of v.split(',')) {
     const [g, k] = part.split('.');
-    if (k && (g === 'trust' || g === 'category' || g === 'method') && !out[g].includes(k)) out[g].push(k);
+    // only known values: a hand-edited address must not break the page
+    const known = Object.hasOwn(g === 'trust' ? TRUST : g === 'method' ? METHOD : g === 'category' ? CATEGORY : {}, k);
+    if (k && known && !out[g as keyof Facets].includes(k)) out[g as keyof Facets].push(k);
   }
   return out;
 }
@@ -123,6 +127,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   const [openNames, setOpenNames] = useState<Set<string>>(() => new Set());
   const [startedAt, setStartedAt] = useState(0);
   const [githubToken, setGithubToken] = useState<boolean | null>(null);
+  /** The last search was stopped by hand: "nothing found" would not be true then. */
+  const [stopped, setStopped] = useState(false);
   /** Whether the search log is on; when off the query is not put in the address either. */
   const [logOn, setLogOn] = useState(true);
   useEffect(() => {
@@ -253,6 +259,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       const ac = new AbortController();
       abortRef.current = ac;
       setStatus('running');
+      setStopped(false);
       setStage(null);
       setWarnings([]);
       setItems([]);
@@ -372,10 +379,13 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
     abortRef.current?.abort();
     setProvisional(false);
     setStatus('done');
+    setStopped(true);
     setWarnings((w) => [...w, { source: 'client', message: '검색을 중지했습니다. 지금까지 찾은 결과만 보입니다.', severity: 'note' }]);
   };
 
   const toggleSource = (s: SourceKind) => setSources((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
+  // the GitHub box stays ticked underneath while there is no token (it comes back with one), but searches nothing
+  const usableSources = sources.filter((s) => !(s === 'github' && githubToken === false));
   // The risk limit above narrows what is on screen at once (project review 2026-11-02: "낮음만" still showed
   // "주의" cards until the next search); a wider limit or other sources need a new search, offered below.
   const riskOk = (it: ResultItem) => RISK_RANK[it.riskLevel] <= RISK_RANK[maxRisk];
@@ -432,7 +442,9 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
    *  page, or the first card an "N개 더" opened (the button itself goes away; review 2026-11-02). */
   const focusAt = useRef<number | null>(null);
   const goPage = (p: number) => {
-    setPage(Math.min(Math.max(1, p), pageCount));
+    const next = Math.min(Math.max(1, p), pageCount);
+    if (next === currentPage) return; // no redraw would take the focus request, and a later one would
+    setPage(next);
     focusAt.current = 0;
     resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
@@ -498,7 +510,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
               }
             }}
           />
-          <button type="submit" className="primary" disabled={!query.trim() || sources.length === 0}>
+          <button type="submit" className="primary" disabled={!query.trim() || usableSources.length === 0}>
             검색
           </button>
         </form>
@@ -537,7 +549,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
               />
               {SOURCE_LABEL[s]}
               {s === 'github' && githubToken === false && (
-                <a className="muted small" href="/settings">
+                <a className="muted small" href="/settings" onClick={(e) => goInApp(e, '/settings')}>
                   (토큰 넣기)
                 </a>
               )}
@@ -681,6 +693,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                       <button type="button" className="ghost" onClick={() => saveFile(`skill-finder-${fileStem(lastQuery)}.md`, resultsMarkdown(lastQuery, shown.map((r) => r.item)), 'text/markdown')}>
                         Markdown으로 저장
                       </button>
+                      <p className="muted small">보이는 순서·필터 그대로 모든 쪽을 저장합니다. 접힌 같은 이름 결과는 펼친 것만 들어갑니다.</p>
                     </div>
                   </details>
                 )}
@@ -835,7 +848,15 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 )}
               </Fragment>
             ))}
-            {status === 'done' && items.length === 0 && (
+            {status === 'done' && items.length === 0 && stopped && (
+              <p className="empty">
+                검색을 중지했습니다. 그때까지 찾은 결과가 없습니다.{' '}
+                <button type="button" className="linkish" onClick={() => run(lastQuery)}>
+                  다시 찾기
+                </button>
+              </p>
+            )}
+            {status === 'done' && items.length === 0 && !stopped && (
               <NoResults
                 hiddenUnknownStars={hiddenUnknownStars}
                 hiddenLowStars={hiddenLowStars}

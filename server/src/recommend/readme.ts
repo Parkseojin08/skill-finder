@@ -457,6 +457,8 @@ export function recommendForProject(store: Store, projectPath: unknown, weights:
   for (const word of opts.extra ?? []) {
     for (const term of processTerm(word.trim()) ?? []) {
       const key = stem(term);
+      // an added word switched off on the page is left out like any other
+      if (off.has(term.toLowerCase()) || off.has(word.trim().toLowerCase())) continue;
       if (!keywords.some((k) => k.key === key)) keywords = [{ key, term, weight: top }, ...keywords];
     }
   }

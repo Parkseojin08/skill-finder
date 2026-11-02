@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { apiGet, streamNdjson } from '../api.ts';
+import { ApiError, apiGet, streamNdjson } from '../api.ts';
 import { forgetInstalled } from '../installed.ts';
 import { HELP, METHOD, RISK_FLAGS, RISK_LEVEL, RISK_RANK, SCOPE } from '../labels.ts';
 import { HelpTip } from './HelpTip.tsx';
@@ -191,6 +191,11 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
       });
     } catch (e) {
       failure = String((e as Error).message ?? e);
+      // the server refused it before starting (400, 409): that is its answer, nothing is still running
+      if (e instanceof ApiError && e.status > 0) {
+        answered = true;
+        setResult({ ok: false, message: failure });
+      }
     }
     // The answer stopped without a result (a dropped connection, a closed tab): say whether it is still running
     // rather than leaving the log hanging (project review F4).
@@ -358,6 +363,7 @@ function ConfirmDialog(props: {
       </div>
       <SiblingRiskNote skills={props.siblings} />
       <InstallScanView scan={props.scan} compact />
+      {props.scanFailed && <p className="warn-box">함께 들어올 파일을 검사하지 못했습니다. 무엇이 설치되는지 앱이 확인하지 못했으니, 저장소를 직접 보고 설치하세요.</p>}
       <OverwriteNote existing={props.preview.existing} />
       {overwrite && (
         <label className="confirm-check">

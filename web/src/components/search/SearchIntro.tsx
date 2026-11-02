@@ -1,3 +1,4 @@
+import { goInApp } from '../../lib/links.ts';
 import type { Health } from '../../types.ts';
 import { TranslationNotice } from '../TranslationNotice.tsx';
 
@@ -30,7 +31,9 @@ export function SearchIntro({ examples, onExample, health, githubToken }: { exam
       {githubToken === false && (
         // before the first search only (UI debate D-4); in results it stays in the folded notices (D#260b)
         <p className="muted small">
-          GitHub 토큰 없음 · GitHub 코드 검색을 건너뛰고 스킬 목록도 느리게 모읍니다. <a href="/settings">설정에서 넣기</a>
+          GitHub 토큰 없음 · GitHub 코드 검색을 건너뛰고 스킬 목록도 느리게 모읍니다. <a href="/settings" onClick={(e) => goInApp(e, '/settings')}>
+            설정에서 넣기
+          </a>
         </p>
       )}
       <TranslationNotice />

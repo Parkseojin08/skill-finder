@@ -5,6 +5,8 @@ import type { InstalledResponse, ResultItem } from '../types.ts';
 import { repoOf } from './resultOrder.ts';
 
 const cell = (s: string) => s.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
+/** The text of a Markdown link: brackets in a name would end it early. */
+export const linkText = (s: string) => s.replace(/[[\]\\]/g, (c) => `\\${c}`);
 const today = () => new Date().toISOString().slice(0, 10);
 
 export function resultsJson(query: string, items: ResultItem[]): string {
@@ -35,7 +37,7 @@ export function resultsJson(query: string, items: ResultItem[]): string {
 export function resultsMarkdown(query: string, items: ResultItem[]): string {
   const rows = items.map((it) => {
     const url = it.sources.find((s) => s.url)?.url;
-    const name = url ? `[${cell(it.name)}](${url})` : cell(it.name);
+    const name = url ? `[${linkText(cell(it.name))}](${url})` : cell(it.name);
     return `| ${name} | ${cell(repoOf(it) ?? '')} | ${it.installs ?? ''} | ${it.stars ?? ''} | ${RISK_LEVEL[it.riskLevel]} | ${it.install.command ? `\`${cell(it.install.command)}\`` : ''} |`;
   });
   return [
