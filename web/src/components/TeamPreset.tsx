@@ -4,6 +4,7 @@ import { fileStem, saveFile } from '../lib/exportList.ts';
 import { parsePreset, presetFrom, presetSize } from '../lib/preset.ts';
 import type { InstalledResponse, RepoResult } from '../types.ts';
 import { RepoInstallDialog } from './RepoInstallDialog.tsx';
+import { serverText, t } from '../i18n.ts';
 
 type Resolved = { skills: RepoResult['skills']; missing: Array<{ name: string; reason: string }> };
 
@@ -18,7 +19,7 @@ export function TeamPreset({ data, projectPath, onInstalled }: { data: Installed
   const [busy, setBusy] = useState(false);
   const [preset, setPreset] = useState<{ name: string; resolved: Resolved } | null>(null);
   const size = data ? presetSize(data) : 0;
-  const defaultName = projectPath.trim().split(/[\\/]/).filter(Boolean).pop() ?? '내 스킬';
+  const defaultName = projectPath.trim().split(/[\\/]/).filter(Boolean).pop() ?? t('내 스킬');
 
   const exportPreset = () => {
     if (!data) return;
@@ -32,7 +33,7 @@ export function TeamPreset({ data, projectPath, onInstalled }: { data: Installed
     try {
       const { name, items } = parsePreset(await file.text());
       const resolved = await apiSend<Resolved>('POST', '/presets/resolve', { items });
-      if (!resolved.skills.length) throw new Error(`이 PC에서 설치할 수 있는 스킬을 찾지 못했습니다 (${resolved.missing.length}개 없음). 색인을 모은 뒤 다시 해 보세요.`);
+      if (!resolved.skills.length) throw new Error(t('이 PC에서 설치할 수 있는 스킬을 찾지 못했습니다 ({0}개 없음). 색인을 모은 뒤 다시 해 보세요.', resolved.missing.length));
       setPreset({ name, resolved });
     } catch (e) {
       setError(String((e as Error).message ?? e));
@@ -44,17 +45,16 @@ export function TeamPreset({ data, projectPath, onInstalled }: { data: Installed
 
   return (
     <section className="team-preset" aria-labelledby="team-preset-title">
-      <h2 id="team-preset-title">팀 프리셋</h2>
+      <h2 id="team-preset-title">{t('팀 프리셋')}</h2>
       <p className="muted small">
-        지금 목록의 스킬을 파일로 저장해 팀원에게 주면, 팀원은 "가져오기"로 같은 스킬을 확인 창을 거쳐 설치합니다. 파일에는 스킬 이름과 색인
-        id만 들어갑니다.
+        {t('지금 목록의 스킬을 파일로 저장해 팀원에게 주면, 팀원은 "가져오기"로 같은 스킬을 확인 창을 거쳐 설치합니다. 파일에는 스킬 이름과 색인 id만 들어갑니다.')}
       </p>
       <div className="examples">
-        <button type="button" className="ghost" onClick={exportPreset} disabled={!size} title={size ? undefined : '색인에 있는 설치된 스킬이 없습니다'}>
-          프리셋 내보내기{size ? ` (${size}개)` : ''}
+        <button type="button" className="ghost" onClick={exportPreset} disabled={!size} title={size ? undefined : t('색인에 있는 설치된 스킬이 없습니다')}>
+          {t('프리셋 내보내기')}{size ? t(' ({0}개)', size) : ''}
         </button>
         <button type="button" className="ghost" onClick={() => fileRef.current?.click()} disabled={busy}>
-          {busy ? '찾는 중…' : '프리셋 가져오기'}
+          {busy ? t('찾는 중…') : t('프리셋 가져오기')}
         </button>
         <input
           ref={fileRef}
@@ -76,15 +76,15 @@ export function TeamPreset({ data, projectPath, onInstalled }: { data: Installed
         <RepoInstallDialog
           repo={{ repo: preset.name, url: '', description: null, stars: null, topics: [], skills: preset.resolved.skills }}
           open
-          title={`프리셋 "${preset.name}" 설치`}
+          title={t('프리셋 "{0}" 설치', preset.name)}
           note={
             preset.resolved.missing.length > 0 && (
               <div className="warn-box small">
-                <p>이 PC의 색인에서 찾지 못해 빠진 것 {preset.resolved.missing.length}개:</p>
+                <p>{t('이 PC의 색인에서 찾지 못해 빠진 것 ')}{preset.resolved.missing.length}{t('개:')}</p>
                 <ul>
                   {preset.resolved.missing.slice(0, 20).map((m, i) => (
                     <li key={i}>
-                      <span className="mono">{m.name}</span> — {m.reason}
+                      <span className="mono">{m.name}</span> — {serverText(m.reason)}
                     </li>
                   ))}
                 </ul>

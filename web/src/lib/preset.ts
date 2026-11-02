@@ -2,6 +2,7 @@
 // The file only names skills (this PC's index ids and plugin ids); the importing app looks each one up in its own
 // index and installs through the usual confirm dialog.
 import type { InstalledResponse } from '../types.ts';
+import { t } from '../i18n.ts';
 
 export const PRESET_FORMAT = 'skill-finder-preset';
 const MAX_ITEMS = 200;
@@ -24,7 +25,7 @@ export function presetFrom(data: InstalledResponse, name: string): Preset {
     seen.add(s.skillId);
     items.push({ id: s.skillId, name: s.name });
   }
-  return { format: PRESET_FORMAT, version: 1, name: name.trim() || '내 스킬', createdAt: new Date().toISOString(), items };
+  return { format: PRESET_FORMAT, version: 1, name: name.trim() || t('내 스킬'), createdAt: new Date().toISOString(), items };
 }
 
 /** The items count, without what the index does not know. */
@@ -34,19 +35,19 @@ const short = (v: unknown, max: number) => (typeof v === 'string' && v.trim() &&
 
 /** Reads a preset file; throws with a message to show when it is not one. */
 export function parsePreset(text: string): { name: string; items: PresetItem[] } {
-  if (text.length > MAX_BYTES) throw new Error('프리셋 파일이 1MB를 넘습니다.');
+  if (text.length > MAX_BYTES) throw new Error(t('프리셋 파일이 1MB를 넘습니다.'));
   let data: unknown;
   try {
     data = JSON.parse(text);
   } catch {
-    throw new Error('JSON 파일이 아닙니다.');
+    throw new Error(t('JSON 파일이 아닙니다.'));
   }
   const d = data as Partial<Preset>;
-  if (!d || d.format !== PRESET_FORMAT || d.version !== 1 || !Array.isArray(d.items)) throw new Error('Skill Finder 팀 프리셋 파일이 아닙니다.');
+  if (!d || d.format !== PRESET_FORMAT || d.version !== 1 || !Array.isArray(d.items)) throw new Error(t('Skill Finder 팀 프리셋 파일이 아닙니다.'));
   const items = d.items
     .slice(0, MAX_ITEMS)
     .map((i) => ({ id: short(i?.id, 400), plugin: short(i?.plugin, 200), name: short(i?.name, 200) }))
     .filter((i) => i.id || i.plugin);
-  if (!items.length) throw new Error('프리셋에 스킬이 없습니다.');
-  return { name: short(d.name, 100) ?? '팀 프리셋', items };
+  if (!items.length) throw new Error(t('프리셋에 스킬이 없습니다.'));
+  return { name: short(d.name, 100) ?? t('팀 프리셋'), items };
 }

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group';
 import { cn } from '@/lib/utils';
 import { Icon } from './Icon.tsx';
+import { t } from '../i18n.ts';
 
 type Match = { path: string; overlap: number };
 
@@ -122,11 +123,11 @@ export function FolderInput({
     if (!entry) {
       const p = text ? pathFromText(text) : null;
       if (p) choose(p);
-      else setError('폴더를 끌어다 놓으세요.');
+      else setError(t('폴더를 끌어다 놓으세요.'));
       return;
     }
     if (!entry.isDirectory) {
-      setError('파일이 아니라 폴더를 끌어다 놓으세요.');
+      setError(t('파일이 아니라 폴더를 끌어다 놓으세요.'));
       return;
     }
     setResolving(true);
@@ -135,7 +136,7 @@ export function FolderInput({
       const r = await apiSend<{ matches: Match[] }>('POST', '/resolve-folder', { name: entry.name, entries: names });
       if (r.matches.length === 1 || (r.matches.length > 1 && r.matches[0].overlap > r.matches[1].overlap)) choose(r.matches[0].path);
       else if (r.matches.length > 1) setChoices(r.matches);
-      else setError(`"${entry.name}" 폴더의 위치를 찾지 못했습니다. 사용자 폴더 밖에 있다면 "폴더 선택"을 쓰세요.`);
+      else setError(t('"{0}" 폴더의 위치를 찾지 못했습니다. 사용자 폴더 밖에 있다면 "폴더 선택"을 쓰세요.', entry.name));
     } catch (err) {
       setError(String((err as Error).message ?? err));
     } finally {
@@ -170,16 +171,16 @@ export function FolderInput({
         <InputGroupInput
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder ?? '예: C:\\work\\my-app — 폴더를 여기로 끌어다 놓아도 됩니다'}
+          placeholder={placeholder ?? t('예: C:\\work\\my-app — 폴더를 여기로 끌어다 놓아도 됩니다')}
           spellCheck={false}
           disabled={disabled}
-          aria-label={label ?? '프로젝트 경로'}
+          aria-label={label ?? t('프로젝트 경로')}
           list={recent.length ? listId : undefined}
         />
         <InputGroupAddon align="inline-end">
           <InputGroupButton size="sm" variant="secondary" onClick={pick} disabled={disabled || picking}>
             <FolderOpenIcon data-icon="inline-start" />
-            {picking ? '선택 창 열림…' : '폴더 선택'}
+            {picking ? t('선택 창 열림…') : t('폴더 선택')}
           </InputGroupButton>
         </InputGroupAddon>
       </InputGroup>
@@ -192,13 +193,13 @@ export function FolderInput({
       )}
       {dragging && (
         <div className="drop-hint" aria-hidden="true">
-          <UploadSimpleIcon /> 여기에 놓으면 이 폴더로 정합니다
+          <UploadSimpleIcon />{t(' 여기에 놓으면 이 폴더로 정합니다')}
         </div>
       )}
-      {resolving && <p className="muted small">폴더 위치를 찾는 중…</p>}
+      {resolving && <p className="muted small">{t('폴더 위치를 찾는 중…')}</p>}
       {choices.length > 0 && (
         <div className="drop-choices">
-          <span className="muted small">같은 이름의 폴더가 여러 개입니다. 고르세요:</span>
+          <span className="muted small">{t('같은 이름의 폴더가 여러 개입니다. 고르세요:')}</span>
           {choices.map((m) => (
             <Button key={m.path} variant="outline" size="sm" className="justify-start" onClick={() => choose(m.path)}>
               {m.path}
@@ -210,12 +211,12 @@ export function FolderInput({
       {picking &&
         createPortal(
           // Blocks the page until the OS dialog returns (choose or cancel), like a native modal.
-          <div className="picker-overlay" role="alertdialog" aria-modal="true" aria-live="assertive" aria-label="폴더 선택 중">
+          <div className="picker-overlay" role="alertdialog" aria-modal="true" aria-live="assertive" aria-label={t('폴더 선택 중')}>
             <div className="picker-card">
               <Icon name="folder" size={28} />
-              <h2>폴더 선택 창에서 폴더를 고르세요</h2>
-              <p className="muted">"프로젝트 폴더 선택" 창에서 폴더를 고른 뒤 <b>폴더 선택</b>을, 그만두려면 <b>취소</b>를 누르세요. 창을 닫기 전까지 이 화면은 잠깁니다.</p>
-              <p className="muted small">창이 보이지 않으면 작업 표시줄에서 "프로젝트 폴더 선택"을 눌러 주세요.</p>
+              <h2>{t('폴더 선택 창에서 폴더를 고르세요')}</h2>
+              <p className="muted">{t('"프로젝트 폴더 선택" 창에서 폴더를 고른 뒤 ')}<b>{t('폴더 선택')}</b>{t('을, 그만두려면 ')}<b>{t('취소')}</b>{t('를 누르세요. 창을 닫기 전까지 이 화면은 잠깁니다.')}</p>
+              <p className="muted small">{t('창이 보이지 않으면 작업 표시줄에서 "프로젝트 폴더 선택"을 눌러 주세요.')}</p>
             </div>
           </div>,
           document.body,

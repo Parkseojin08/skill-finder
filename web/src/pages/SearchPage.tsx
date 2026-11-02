@@ -14,13 +14,14 @@ import { goInApp } from '../lib/links.ts';
 import { readPageSize, savePageSize } from '../lib/prefs.ts';
 import { byPopular, foldResults, nameMatches, navigationalWord, repoMainSkill, SORTS, type SortKey } from '../lib/resultOrder.ts';
 import type { Health, Job, OpenedFrom, ResultItem, RiskLevel, SearchEvent, SearchSource, SettingsResponse, SourceKind, SourceProgress } from '../types.ts';
+import { serverText, t } from '../i18n.ts';
 
 
 /** Below this many indexed skills the index is probably still being built (first run). */
 const FEW_SKILLS = 1000;
 const EXAMPLES = ['pull request review', 'extract tables from pdf', 'react performance', 'postgres migration review', 'commit message'];
-const SOURCE_LABEL: Record<SourceKind, string> = { marketplace: '마켓플레이스', skillssh: 'skills.sh', github: 'GitHub' };
-const PROGRESS_LABEL: Record<SearchSource, string> = { local: '내 PC 색인', skillssh: 'skills.sh', github: 'GitHub 코드', repos: '같은 이름 저장소' };
+const SOURCE_LABEL: Record<SourceKind, string> = { marketplace: t('마켓플레이스'), skillssh: 'skills.sh', github: 'GitHub' };
+const PROGRESS_LABEL: Record<SearchSource, string> = { local: t('내 PC 색인'), skillssh: 'skills.sh', github: t('GitHub 코드'), repos: t('같은 이름 저장소') };
 
 /** Where each source is while a search runs: "내 PC 색인 120개 0.2초 · skills.sh 확인 중 · …", plus the elapsed time. */
 function SourceProgressLine({ progress, startedAt }: { progress: Partial<Record<SearchSource, SourceProgress>>; startedAt: number }) {
@@ -31,10 +32,10 @@ function SourceProgressLine({ progress, startedAt }: { progress: Partial<Record<
   }, []);
   const shown = (Object.keys(PROGRESS_LABEL) as SearchSource[]).filter((s) => progress[s] && progress[s].state !== 'skipped');
   const text = (p: SourceProgress) =>
-    p.state === 'running' ? '확인 중' : p.state === 'done' ? `${p.count ?? 0}개 · ${((p.ms ?? 0) / 1000).toFixed(1)}초` : p.state === 'timeout' ? '시간 초과' : '실패';
+    p.state === 'running' ? t('확인 중') : p.state === 'done' ? t('{0}개 · {1}초', p.count ?? 0, ((p.ms ?? 0) / 1000).toFixed(1)) : p.state === 'timeout' ? t('시간 초과') : t('실패');
   return (
     <p className="source-progress muted small" aria-live="off">
-      <span className="mono">{((now - startedAt) / 1000).toFixed(1)}초</span>
+      <span className="mono">{((now - startedAt) / 1000).toFixed(1)}{t('초')}</span>
       {shown.map((s) => (
         <span key={s} className={progress[s]!.state === 'running' ? 'pending' : progress[s]!.state === 'done' ? undefined : 'warn-text'}>
           {PROGRESS_LABEL[s]} {text(progress[s]!)}
@@ -297,7 +298,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 setProgress((p) => ({ ...p, [e.source]: { state: e.state, count: e.count, ms: e.ms } }));
                 break;
               case 'warning':
-                setWarnings((w) => [...w, { source: e.source, message: e.message, severity: e.severity }]);
+                setWarnings((w) => [...w, { source: e.source, message: serverText(e.message), severity: e.severity }]);
                 break;
               case 'candidates':
                 setItems(e.items);
@@ -380,7 +381,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
     setProvisional(false);
     setStatus('done');
     setStopped(true);
-    setWarnings((w) => [...w, { source: 'client', message: '검색을 중지했습니다. 지금까지 찾은 결과만 보입니다.', severity: 'note' }]);
+    setWarnings((w) => [...w, { source: 'client', message: t('검색을 중지했습니다. 지금까지 찾은 결과만 보입니다.'), severity: 'note' }]);
   };
 
   const toggleSource = (s: SourceKind) => setSources((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
@@ -460,9 +461,9 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   const urgent = warnings.filter((w) => isUrgent(w) && w !== koreanNote);
   const minor: Array<{ key: string; node: ReactNode }> = [
     ...warnings.filter((w) => !isUrgent(w)).map((w, i) => ({ key: `w${i}`, node: w.message })),
-    ...(final && final.hiddenNoDescription > 0 ? [{ key: 'nodesc', node: `설명이 없어 판단할 수 없는 결과 ${final.hiddenNoDescription}개는 숨겼습니다.` }] : []),
+    ...(final && final.hiddenNoDescription > 0 ? [{ key: 'nodesc', node: t('설명이 없어 판단할 수 없는 결과 {0}개는 숨겼습니다.', final.hiddenNoDescription) }] : []),
     ...(final && (final.hiddenNoMatch ?? 0) > 0
-      ? [{ key: 'nomatch', node: `검색어 단어가 이름·설명에 하나도 없는 결과 ${final.hiddenNoMatch}개는 숨겼습니다.` }]
+      ? [{ key: 'nomatch', node: t('검색어 단어가 이름·설명에 하나도 없는 결과 {0}개는 숨겼습니다.', final.hiddenNoMatch) }]
       : []),
   ];
   // what the server left out under the limit the results were searched with (not the one picked since)
@@ -476,7 +477,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   return (
     <div className="page search-page">
       {/* headings for screen readers: the search screen had none to jump to (review 2026-11-02) */}
-      <h1 className="sr-only">스킬 검색</h1>
+      <h1 className="sr-only">{t('스킬 검색')}</h1>
       <div className="search-hero">
         <form
           className="search-box"
@@ -492,9 +493,9 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="필요한 기능을 영어로 입력하세요"
+            placeholder={t('필요한 기능을 영어로 입력하세요')}
             maxLength={300}
-            aria-label="검색어"
+            aria-label={t('검색어')}
             autoFocus
             // Esc leaves the box so j / k work; ↓ goes to the first result (review 2026-11-02: after a search the
             // focus stayed here and "j" was typed into the query)
@@ -513,12 +514,12 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             }}
           />
           <button type="submit" className="primary" disabled={!query.trim() || usableSources.length === 0}>
-            검색
+            {t('검색')}
           </button>
         </form>
         <div className="search-sub">
           <span className="muted small">
-            영어로 검색하세요 · 예:{' '}
+            {t('영어로 검색하세요 · 예:')}{' '}
             <button
               type="button"
               className="linkish mono"
@@ -531,18 +532,18 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             </button>
           </span>
           <span className="muted small kbd-hint">
-            <kbd>/</kbd> 검색창으로 이동 · <kbd>?</kbd> 단축키
+            <kbd>/</kbd>{t(' 검색창으로 이동 · ')}<kbd>?</kbd>{t(' 단축키')}
           </span>
         </div>
         {shortcutsOpen && (
           <p className="shortcut-help muted small" role="note">
-            <kbd>/</kbd> 검색창 · <kbd>j</kbd> 다음 결과 · <kbd>k</kbd> 이전 결과 · <kbd>Enter</kbd> 열기 · <kbd>?</kbd> 이 안내 닫기
+            <kbd>/</kbd>{t(' 검색창 · ')}<kbd>j</kbd>{t(' 다음 결과 · ')}<kbd>k</kbd>{t(' 이전 결과 · ')}<kbd>Enter</kbd>{t(' 열기 · ')}<kbd>?</kbd>{t(' 이 안내 닫기')}
           </p>
         )}
-        <div className="filters" role="group" aria-label="검색 조건">
+        <div className="filters" role="group" aria-label={t('검색 조건')}>
           {(Object.keys(SOURCE_LABEL) as SourceKind[]).map((s) => (
             // GitHub here is its code search, which needs a token: without one the box did nothing either way
-            <label key={s} className="chip" title={s === 'github' && githubToken === false ? '설정에서 GitHub 토큰을 넣으면 사용됩니다' : undefined}>
+            <label key={s} className="chip" title={s === 'github' && githubToken === false ? t('설정에서 GitHub 토큰을 넣으면 사용됩니다') : undefined}>
               <input
                 type="checkbox"
                 checked={sources.includes(s) && !(s === 'github' && githubToken === false)}
@@ -552,17 +553,17 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
               {SOURCE_LABEL[s]}
               {s === 'github' && githubToken === false && (
                 <a className="muted small" href="/settings" onClick={(e) => goInApp(e, '/settings')}>
-                  (토큰 넣기)
+                  {t('(토큰 넣기)')}
                 </a>
               )}
             </label>
           ))}
           <label className="select-inline">
-            <span className="muted small">위험</span>
-            <select value={maxRisk} onChange={(e) => setMaxRisk(e.target.value as RiskLevel)} aria-label="최대 위험 등급">
-              <option value="low">낮음만</option>
-              <option value="medium">주의까지</option>
-              <option value="high">모두</option>
+            <span className="muted small">{t('위험')}</span>
+            <select value={maxRisk} onChange={(e) => setMaxRisk(e.target.value as RiskLevel)} aria-label={t('최대 위험 등급')}>
+              <option value="low">{t('낮음만')}</option>
+              <option value="medium">{t('주의까지')}</option>
+              <option value="high">{t('모두')}</option>
             </select>
           </label>
         </div>
@@ -571,7 +572,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       <div role="status">
         {syncJob && (
           <p className="status-line muted small">
-            <span className="spinner" aria-hidden="true" /> {jobLine(syncJob)} · 색인 스킬 {(health?.skills ?? 0).toLocaleString()}개
+            <span className="spinner" aria-hidden="true" /> {jobLine(syncJob)}{t(' · 색인 스킬 ')}{(health?.skills ?? 0).toLocaleString()}{t('개')}
           </p>
         )}
       </div>
@@ -598,37 +599,37 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                   // results are in; a few slow lookups (huge repos) are still being folded in
                   <span className="status-line">
                     <span>
-                      <b>{shown.length}</b>개 결과
+                      <b>{shown.length}</b>{t('개 결과')}
                     </span>
                     <span className="muted small status-line">
-                      <span className="spinner" aria-hidden="true" /> 나머지 후보 확인 중
+                      <span className="spinner" aria-hidden="true" />{t(' 나머지 후보 확인 중')}
                     </span>
                     <button type="button" className="linkish small" onClick={() => stopRef.current()} title="Esc">
-                      중지
+                      {t('중지')}
                     </button>
                   </span>
                 ) : status === 'running' ? (
                   <span className="status-line">
-                    <span className="spinner" aria-hidden="true" /> {stage ? STAGES[stage] : '검색'} 중…{' '}
+                    <span className="spinner" aria-hidden="true" /> {stage ? STAGES[stage] : t('검색')}{t(' 중…')}{' '}
                     <button type="button" className="linkish small" onClick={() => stopRef.current()} title="Esc">
-                      중지
+                      {t('중지')}
                     </button>
                   </span>
                 ) : status === 'error' ? (
                   <span className="warn-text">
-                    검색 실패{' '}
+                    {t('검색 실패')}{' '}
                     <button type="button" className="linkish small" onClick={() => run(lastQuery, maxRisk, liftedStars)}>
-                      다시 시도
+                      {t('다시 시도')}
                     </button>
                   </span>
                 ) : (
                   // one count, the same as the pager's: cards shown; folded copies and filtered-out ones are noted
                   <span>
-                    <b>{shown.length}</b>개 결과
-                    {sorted.length > shown.length && <span className="muted small"> · {sorted.length - shown.length}개 접힘</span>}
-                    {filtering && <span className="muted small"> · 필터로 {items.length - riskHiddenNow - sorted.length}개 뺌</span>}
-                    {riskHiddenNow > 0 && <span className="muted small"> · 위험 조건으로 {riskHiddenNow}개 뺌</span>}
-                    {doneInfo && <span className="muted small"> · {doneInfo.cached ? '저장된 결과' : `${(doneInfo.elapsedMs / 1000).toFixed(1)}초`}</span>}
+                    <b>{shown.length}</b>{t('개 결과')}
+                    {sorted.length > shown.length && <span className="muted small"> · {sorted.length - shown.length}{t('개 접힘')}</span>}
+                    {filtering && <span className="muted small">{t(' · 필터로 ')}{items.length - riskHiddenNow - sorted.length}{t('개 뺌')}</span>}
+                    {riskHiddenNow > 0 && <span className="muted small">{t(' · 위험 조건으로 ')}{riskHiddenNow}{t('개 뺌')}</span>}
+                    {doneInfo && <span className="muted small"> · {doneInfo.cached ? t('저장된 결과') : t('{0}초', (doneInfo.elapsedMs / 1000).toFixed(1))}</span>}
                   </span>
                 )}
                 <ActiveFacets value={facets} onChange={changeFacets} />
@@ -636,43 +637,43 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                   <button
                     type="button"
                     className="status-chip action"
-                    title="위험 등급 필터를 '모두'로 바꿔 다시 검색합니다"
+                    title={t('위험 등급 필터를 \'모두\'로 바꿔 다시 검색합니다')}
                     onClick={() => {
                       setMaxRisk('high');
                       run(lastQuery, 'high', liftedStars);
                     }}
                   >
-                    위험 높음 {hiddenRisky}개 숨김 · 보기
+                    {t('위험 높음 ')}{hiddenRisky}{t('개 숨김 · 보기')}
                   </button>
                 )}
                 {status === 'done' && hiddenLowStars + hiddenUnknownStars > 0 && (
                   <button
                     type="button"
                     className="status-chip action"
-                    title={`${[hiddenLowStars ? `별 ${final!.minStars!.toLocaleString()} 미만 ${hiddenLowStars}개` : '', hiddenUnknownStars ? `별 수 모름 ${hiddenUnknownStars}개` : ''].filter(Boolean).join(' · ')}를 숨겼습니다. 이번 검색만 별 기준 없이 다시 찾습니다(설정은 그대로). 같은 이름 사본은 접히고 결과는 50개까지라, 숨긴 수만큼 늘지는 않습니다.`}
+                    title={t('{0}를 숨겼습니다. 이번 검색만 별 기준 없이 다시 찾습니다(설정은 그대로). 같은 이름 사본은 접히고 결과는 50개까지라, 숨긴 수만큼 늘지는 않습니다.', [hiddenLowStars ? t('별 {0} 미만 {1}개', final!.minStars!.toLocaleString(), hiddenLowStars) : '', hiddenUnknownStars ? t('별 수 모름 {0}개', hiddenUnknownStars) : ''].filter(Boolean).join(' · '))}
                     onClick={() => {
                       beforeLift.current = new Set(shown.map((r) => r.item.id));
                       run(lastQuery, maxRisk, final!.minStars!);
                     }}
                   >
-                    별 기준 없이 다시 찾기 (숨긴 후보 {hiddenLowStars + hiddenUnknownStars}개)
+                    {t('별 기준 없이 다시 찾기 (숨긴 후보 ')}{hiddenLowStars + hiddenUnknownStars}{t('개)')}
                   </button>
                 )}
                 {conditionsChanged && (
-                  <button type="button" className="status-chip action" title="위쪽 조건이 이 결과를 찾을 때와 다릅니다" onClick={() => run(lastQuery, maxRisk, liftedStars)}>
-                    조건이 바뀌었습니다 · 다시 검색
+                  <button type="button" className="status-chip action" title={t('위쪽 조건이 이 결과를 찾을 때와 다릅니다')} onClick={() => run(lastQuery, maxRisk, liftedStars)}>
+                    {t('조건이 바뀌었습니다 · 다시 검색')}
                   </button>
                 )}
                 {status === 'done' && liftedStars != null && (
-                  <button type="button" className="status-chip action" title="설정한 최소 스타 수로 다시 검색합니다" onClick={() => run(lastQuery)}>
-                    별 제한 없이 보는 중
-                    {beforeLift.current && ` · 새로 보인 결과 ${shown.filter((r) => !beforeLift.current!.has(r.item.id)).length}개`} · 되돌리기
+                  <button type="button" className="status-chip action" title={t('설정한 최소 스타 수로 다시 검색합니다')} onClick={() => run(lastQuery)}>
+                    {t('별 제한 없이 보는 중')}
+                    {beforeLift.current && t(' · 새로 보인 결과 {0}개', shown.filter((r) => !beforeLift.current!.has(r.item.id)).length)}{t(' · 되돌리기')}
                   </button>
                 )}
                 {minor.length > 0 && (
                   <details className="notices" ref={noticesRef}>
                     <summary>
-                      <Icon name="info" size={14} /> 알림 {minor.length}
+                      <Icon name="info" size={14} />{t(' 알림 ')}{minor.length}
                     </summary>
                     <ul>
                       {minor.map((m) => (
@@ -687,15 +688,15 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 {status === 'done' && shown.length > 0 && (
                   // the results as shown (order, filters), all pages, saved in the browser only
                   <details className="export-menu">
-                    <summary className="status-chip action">내보내기</summary>
+                    <summary className="status-chip action">{t('내보내기')}</summary>
                     <div className="export-items">
                       <button type="button" className="ghost" onClick={() => saveFile(`skill-finder-${fileStem(lastQuery)}.json`, resultsJson(lastQuery, shown.map((r) => r.item)), 'application/json')}>
-                        JSON으로 저장
+                        {t('JSON으로 저장')}
                       </button>
                       <button type="button" className="ghost" onClick={() => saveFile(`skill-finder-${fileStem(lastQuery)}.md`, resultsMarkdown(lastQuery, shown.map((r) => r.item)), 'text/markdown')}>
-                        Markdown으로 저장
+                        {t('Markdown으로 저장')}
                       </button>
-                      <p className="muted small">보이는 순서·필터 그대로 모든 쪽을 저장합니다. 접힌 같은 이름 결과는 펼친 것만 들어갑니다.</p>
+                      <p className="muted small">{t('보이는 순서·필터 그대로 모든 쪽을 저장합니다. 접힌 같은 이름 결과는 펼친 것만 들어갑니다.')}</p>
                     </div>
                   </details>
                 )}
@@ -707,8 +708,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                         setSort(e.target.value as SortKey);
                         setPage(1);
                       }}
-                      aria-label="정렬 기준"
-                      title={sort === 'popular' || sort === 'stars' ? '다운로드 수·스타 수를 모르는 스킬은 뒤로 보냅니다' : undefined}
+                      aria-label={t('정렬 기준')}
+                      title={sort === 'popular' || sort === 'stars' ? t('다운로드 수·스타 수를 모르는 스킬은 뒤로 보냅니다') : undefined}
                     >
                       {SORTS.map((s) => (
                         <option key={s.key} value={s.key}>
@@ -723,11 +724,11 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                         setPage(1);
                         savePageSize(Number(e.target.value));
                       }}
-                      aria-label="페이지당 개수"
+                      aria-label={t('페이지당 개수')}
                     >
                       {[5, 10, 20].map((n) => (
                         <option key={n} value={n}>
-                          {n}개씩
+                          {n}{t('개씩')}
                         </option>
                       ))}
                     </select>
@@ -749,7 +750,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
               <div className="warn-strip">
                 <Icon name="info" size={15} />{' '}
                 <span>
-                  <span className="mono">{lastQuery}</span>은(는) 너무 일반적인 단어라 결과가 넓어요. 하려는 일을 함께 적어 보세요 (예: create a new skill).
+                  <span className="mono">{lastQuery}</span>{t('은(는) 너무 일반적인 단어라 결과가 넓어요. 하려는 일을 함께 적어 보세요 (예: create a new skill).')}
                 </span>
               </div>
             )}
@@ -758,8 +759,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
               <div className="warn-strip">
                 <Icon name="info" size={15} />{' '}
                 <span>
-                  {koreanNote ? '스킬 설명이 대부분 영어라 한국어 검색어는 결과가 적거나 부정확합니다. ' : ''}영어로 찾으면 결과가 더 많아요
-                  {suggest.dropped.length > 0 && <span className="muted"> (번역 못 한 단어: {suggest.dropped.join(', ')})</span>}.
+                  {koreanNote ? t('스킬 설명이 대부분 영어라 한국어 검색어는 결과가 적거나 부정확합니다. ') : ''}{t('영어로 찾으면 결과가 더 많아요')}
+                  {suggest.dropped.length > 0 && <span className="muted">{t(' (번역 못 한 단어: ')}{suggest.dropped.join(', ')})</span>}.
                 </span>
                 <button
                   type="button"
@@ -769,16 +770,16 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                     run(suggest.query);
                   }}
                 >
-                  <span className="mono">{suggest.query}</span>로 찾기
+                  <span className="mono">{suggest.query}</span>{t('로 찾기')}
                 </button>
               </div>
             )}
           </div>
 
-          {provisional && items.length > 0 && <p className="muted small">임시 결과입니다. 후보 확인이 끝나면 갱신됩니다.</p>}
+          {provisional && items.length > 0 && <p className="muted small">{t('임시 결과입니다. 후보 확인이 끝나면 갱신됩니다.')}</p>}
 
           {currentPage === 1 && (final?.repos?.length ?? 0) > 0 && (
-            <div className="repo-results" aria-label="이름이 같은 GitHub 저장소">
+            <div className="repo-results" aria-label={t('이름이 같은 GitHub 저장소')}>
               {final!.repos!.map((r) => (
                 <RepoCard
                   key={r.repo}
@@ -793,7 +794,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             </div>
           )}
 
-          {items.length > 0 && <h2 className="sr-only">검색 결과</h2>}
+          {items.length > 0 && <h2 className="sr-only">{t('검색 결과')}</h2>}
           <div className="results">
             {pageItems.map(({ item: it, more, same, copyOf }, i) => (
               <Fragment key={it.id}>
@@ -820,7 +821,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                       })
                     }
                   >
-                    같은 이름 <span className="mono">{it.name}</span> 접기
+                    {t('같은 이름 ')}<span className="mono">{it.name}</span>{t(' 접기')}
                   </button>
                 )}
                 {same && (
@@ -832,8 +833,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                       setOpenNames((s) => new Set(s).add(same.key));
                     }}
                   >
-                    같은 이름 <span className="mono">{it.name}</span> {same.count}개 더 보기
-                    {same.riskier && <span className="warn-text"> · 위험 주의 포함</span>}
+                    {t('같은 이름 ')}<span className="mono">{it.name}</span> {same.count}{t('개 더 보기')}
+                    {same.riskier && <span className="warn-text">{t(' · 위험 주의 포함')}</span>}
                   </button>
                 )}
                 {more && (
@@ -845,16 +846,16 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                       setOpenRepos((s) => new Set(s).add(more.repo));
                     }}
                   >
-                    <span className="mono">{more.repo}</span>에서 {more.count}개 더 보기
+                    <span className="mono">{more.repo}</span>{t('에서 ')}{more.count}{t('개 더 보기')}
                   </button>
                 )}
               </Fragment>
             ))}
             {status === 'done' && items.length === 0 && stopped && (
               <p className="empty">
-                검색을 중지했습니다. 그때까지 찾은 결과가 없습니다.{' '}
+                {t('검색을 중지했습니다. 그때까지 찾은 결과가 없습니다.')}{' '}
                 <button type="button" className="linkish" onClick={() => run(lastQuery)}>
-                  다시 찾기
+                  {t('다시 찾기')}
                 </button>
               </p>
             )}
@@ -883,16 +884,16 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             )}
             {items.length > 0 && sorted.length === 0 && (
               <p className="empty">
-                {riskHiddenNow > 0 ? '지금 위험 조건과 필터에 맞는 결과가 없습니다.' : '선택한 필터에 맞는 결과가 없습니다.'}{' '}
+                {riskHiddenNow > 0 ? t('지금 위험 조건과 필터에 맞는 결과가 없습니다.') : t('선택한 필터에 맞는 결과가 없습니다.')}{' '}
                 {riskHiddenNow > 0 && (
                   <button type="button" className="linkish" onClick={() => setMaxRisk(searched.risk)}>
-                    위험 조건 되돌리기
+                    {t('위험 조건 되돌리기')}
                   </button>
                 )}
                 {riskHiddenNow > 0 && filtering && ' · '}
                 {(filtering || riskHiddenNow === 0) && (
                   <button type="button" className="linkish" onClick={() => changeFacets(NO_FACETS)}>
-                    필터 초기화
+                    {t('필터 초기화')}
                   </button>
                 )}
               </p>
@@ -900,8 +901,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
           </div>
 
           {pageCount > 1 && (
-            <nav className="pager" aria-label="검색 결과 페이지">
-              <button type="button" className="ghost" onClick={() => goPage(currentPage - 1)} disabled={currentPage === 1} aria-label="이전 페이지">
+            <nav className="pager" aria-label={t('검색 결과 페이지')}>
+              <button type="button" className="ghost" onClick={() => goPage(currentPage - 1)} disabled={currentPage === 1} aria-label={t('이전 페이지')}>
                 <Icon name="back" size={15} />
               </button>
               {Array.from({ length: pageCount }, (_, i) => i + 1).map((p) => (
@@ -915,11 +916,11 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                   {p}
                 </button>
               ))}
-              <button type="button" className="ghost" onClick={() => goPage(currentPage + 1)} disabled={currentPage === pageCount} aria-label="다음 페이지">
+              <button type="button" className="ghost" onClick={() => goPage(currentPage + 1)} disabled={currentPage === pageCount} aria-label={t('다음 페이지')}>
                 <Icon name="back" size={15} className="flip" />
               </button>
               <span className="muted small pager-info">
-                {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, shown.length)} / {shown.length}개
+                {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, shown.length)} / {shown.length}{t('개')}
               </span>
             </nav>
           )}

@@ -1,5 +1,6 @@
 import { Component, useState, type ErrorInfo, type ReactNode } from 'react';
 import { apiGet, apiSend } from '../api.ts';
+import { t } from '../i18n.ts';
 
 /**
  * Copies the server's diagnostics (versions, counts, recent log; no token, searches or home folder name) to the
@@ -31,11 +32,11 @@ export function DiagnosticsButton() {
   return (
     <div className="diagnostics">
       <button type="button" className="ghost" onClick={() => void copy()} disabled={state === 'busy'}>
-        {state === 'copied' ? '복사됨' : state === 'busy' ? '모으는 중…' : '진단 정보 복사'}
+        {state === 'copied' ? t('복사됨') : state === 'busy' ? t('모으는 중…') : t('진단 정보 복사')}
       </button>
       {error && <p className="warn-box">{error}</p>}
       {fallback && (
-        <textarea className="diagnostics-text mono" readOnly value={fallback} rows={10} aria-label="진단 정보" onFocus={(e) => e.currentTarget.select()} />
+        <textarea className="diagnostics-text mono" readOnly value={fallback} rows={10} aria-label={t('진단 정보')} onFocus={(e) => e.currentTarget.select()} />
       )}
     </div>
   );
@@ -61,15 +62,15 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     if (!this.state.error) return this.props.children;
     return (
       <div className="page crash-page">
-        <h1>화면을 그리다 오류가 났습니다</h1>
-        <p className="muted">다시 시도해도 같으면 진단 정보를 복사해 문제를 알려 주세요. 색인과 설치된 스킬에는 영향이 없습니다.</p>
+        <h1>{t('화면을 그리다 오류가 났습니다')}</h1>
+        <p className="muted">{t('다시 시도해도 같으면 진단 정보를 복사해 문제를 알려 주세요. 색인과 설치된 스킬에는 영향이 없습니다.')}</p>
         <pre className="crash-detail">{String(this.state.error.message ?? this.state.error)}</pre>
         <div className="row">
           <button type="button" className="primary" onClick={() => this.setState({ error: null })}>
-            다시 시도
+            {t('다시 시도')}
           </button>
           <button type="button" className="ghost" onClick={() => window.location.reload()}>
-            새로 고침
+            {t('새로 고침')}
           </button>
         </div>
         <DiagnosticsButton />

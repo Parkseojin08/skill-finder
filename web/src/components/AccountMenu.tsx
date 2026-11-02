@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { onAskLogin, signIn, signOut, useAccount } from '../account.ts';
+import { t } from '../i18n.ts';
 
 /**
  * The account corner of the menu bar (user decision 2026-11-02): 로그인 when signed out, the name with
@@ -27,7 +28,7 @@ export function AccountMenu({ onFavorites }: { onFavorites: () => void }) {
     <div className="account">
       {user ? (
         <details className="account-menu" ref={menuRef}>
-          <summary className="account-name" title="계정">
+          <summary className="account-name" title={t('계정')}>
             {user.username}
           </summary>
           <div className="account-items">
@@ -39,7 +40,7 @@ export function AccountMenu({ onFavorites }: { onFavorites: () => void }) {
                 onFavorites();
               }}
             >
-              즐겨찾기
+              {t('즐겨찾기')}
             </button>
             <button
               type="button"
@@ -49,7 +50,7 @@ export function AccountMenu({ onFavorites }: { onFavorites: () => void }) {
                 void signOut();
               }}
             >
-              로그아웃
+              {t('로그아웃')}
             </button>
           </div>
         </details>
@@ -62,7 +63,7 @@ export function AccountMenu({ onFavorites }: { onFavorites: () => void }) {
             setOpen(true);
           }}
         >
-          로그인
+          {t('로그인')}
         </button>
       )}
       <LoginDialog open={open} why={why} onOpenChange={setOpen} />
@@ -101,23 +102,23 @@ function LoginDialog({ open, why, onOpenChange }: { open: boolean; why: string |
       <DialogContent className="login-dialog sm:max-w-sm">
         <form onSubmit={submit} className="flex flex-col gap-4">
           <DialogHeader>
-            <DialogTitle>{mode === 'login' ? '로그인' : '회원가입'}</DialogTitle>
-            <DialogDescription>{why ?? '즐겨찾기를 계정별로 모아 둡니다. 계정은 이 PC의 Skill Finder에만 저장되고 밖으로 보내지 않습니다.'}</DialogDescription>
+            <DialogTitle>{mode === 'login' ? t('로그인') : t('회원가입')}</DialogTitle>
+            <DialogDescription>{why ?? t('즐겨찾기를 계정별로 모아 둡니다. 계정은 이 PC의 Skill Finder에만 저장되고 밖으로 보내지 않습니다.')}</DialogDescription>
           </DialogHeader>
-          <div className="login-modes" role="group" aria-label="로그인 또는 회원가입">
+          <div className="login-modes" role="group" aria-label={t('로그인 또는 회원가입')}>
             <button type="button" className={mode === 'login' ? 'current' : 'ghost'} aria-pressed={mode === 'login'} onClick={() => setMode('login')}>
-              로그인
+              {t('로그인')}
             </button>
             <button type="button" className={mode === 'signup' ? 'current' : 'ghost'} aria-pressed={mode === 'signup'} onClick={() => setMode('signup')}>
-              회원가입
+              {t('회원가입')}
             </button>
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="login-name">아이디</Label>
+            <Label htmlFor="login-name">{t('아이디')}</Label>
             <Input id="login-name" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required minLength={3} maxLength={32} />
           </div>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="login-pass">비밀번호{mode === 'signup' ? ' (8자 이상)' : ''}</Label>
+            <Label htmlFor="login-pass">{t('비밀번호')}{mode === 'signup' ? t(' (8자 이상)') : ''}</Label>
             <Input
               id="login-pass"
               type="password"
@@ -136,7 +137,7 @@ function LoginDialog({ open, why, onOpenChange }: { open: boolean; why: string |
           )}
           <DialogFooter>
             <Button type="submit" disabled={busy || !username.trim() || !password}>
-              {busy ? '확인 중…' : mode === 'login' ? '로그인' : '가입하고 로그인'}
+              {busy ? t('확인 중…') : mode === 'login' ? t('로그인') : t('가입하고 로그인')}
             </Button>
           </DialogFooter>
         </form>

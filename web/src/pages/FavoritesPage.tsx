@@ -4,6 +4,7 @@ import { askLogin, toggleFavorite, useAccount } from '../account.ts';
 import { ResultCard, skillHref } from '../components/ResultCard.tsx';
 import { useInstalled } from '../installed.ts';
 import type { ResultItem } from '../types.ts';
+import { t } from '../i18n.ts';
 
 type Favorites = { items: ResultItem[]; gone: Array<{ id: string; name: string }> };
 
@@ -28,18 +29,18 @@ export function FavoritesPage({ onOpen }: { onOpen: (item: ResultItem) => void }
 
   return (
     <div className="page favorites-page">
-      <h1>즐겨찾기</h1>
+      <h1>{t('즐겨찾기')}</h1>
       {loaded && !user && (
         <div className="empty">
-          <p>즐겨찾기는 로그인한 뒤에 쓸 수 있습니다. 계정은 이 PC의 Skill Finder에만 저장됩니다.</p>
+          <p>{t('즐겨찾기는 로그인한 뒤에 쓸 수 있습니다. 계정은 이 PC의 Skill Finder에만 저장됩니다.')}</p>
           <button type="button" className="primary" onClick={() => askLogin()}>
-            로그인 · 회원가입
+            {t('로그인 · 회원가입')}
           </button>
         </div>
       )}
       {error && <p className="warn-box">{error}</p>}
       {user && data && data.items.length === 0 && data.gone.length === 0 && (
-        <p className="empty">아직 즐겨찾기가 없습니다. 검색 결과나 스킬 화면의 별을 누르면 여기에 모입니다.</p>
+        <p className="empty">{t('아직 즐겨찾기가 없습니다. 검색 결과나 스킬 화면의 별을 누르면 여기에 모입니다.')}</p>
       )}
       {user && data && data.items.length > 0 && (
         <div className="results">
@@ -50,13 +51,13 @@ export function FavoritesPage({ onOpen }: { onOpen: (item: ResultItem) => void }
       )}
       {user && data && data.gone.length > 0 && (
         <section>
-          <h2>색인에서 사라진 스킬</h2>
+          <h2>{t('색인에서 사라진 스킬')}</h2>
           <ul className="explain">
             {data.gone.map((g) => (
               <li key={g.id}>
                 <span className="mono">{g.name}</span>{' '}
                 <button type="button" className="linkish small" onClick={() => void toggleFavorite(g.id).catch(() => {})}>
-                  즐겨찾기에서 빼기
+                  {t('즐겨찾기에서 빼기')}
                 </button>
               </li>
             ))}

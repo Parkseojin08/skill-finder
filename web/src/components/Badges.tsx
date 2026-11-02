@@ -1,6 +1,7 @@
 import { BREAKDOWN, QUALITY, RISK_FLAGS, RISK_LEVEL } from '../labels.ts';
 import { Icon } from './Icon.tsx';
 import type { Breakdown, RiskLevel, SourceRef } from '../types.ts';
+import { serverText, t } from '../i18n.ts';
 
 /** "위험 높음" also differs by shape, not only by its red, which "공식" shares (UI debate 2-8). */
 export function RiskBadge({ level }: { level: RiskLevel }) {
@@ -19,7 +20,7 @@ const repoOfUrl = (url: string) => url.match(/^https:\/\/(?:github\.com|skills\.
 export function RiskSummary({ level, flags }: { level: RiskLevel; flags: string[] }) {
   // Real signals first, info-only ones (rm -rf) last so they never push a real signal out of view.
   const ordered = [...flags.filter((f) => !RISK_FLAGS[f]?.info), ...flags.filter((f) => RISK_FLAGS[f]?.info)];
-  const tip = ordered.length ? ordered.map((f) => `• ${RISK_FLAGS[f]?.label ?? f}: ${RISK_FLAGS[f]?.meaning ?? ''}`).join('\n') : '발견된 위험 신호가 없습니다';
+  const tip = ordered.length ? ordered.map((f) => `• ${RISK_FLAGS[f]?.label ?? f}: ${RISK_FLAGS[f]?.meaning ?? ''}`).join('\n') : t('발견된 위험 신호가 없습니다');
   const shown = ordered.slice(0, 3);
   return (
     <span className="risk-sum" title={tip}>
@@ -27,7 +28,7 @@ export function RiskSummary({ level, flags }: { level: RiskLevel; flags: string[
       {shown.length > 0 && (
         <span className="signals">
           {shown.map((f) => RISK_FLAGS[f]?.label ?? f).join(' · ')}
-          {ordered.length > shown.length && ` 외 ${ordered.length - shown.length}`}
+          {ordered.length > shown.length && t(' 외 {0}', ordered.length - shown.length)}
         </span>
       )}
     </span>
@@ -80,7 +81,7 @@ export function SourceBadges({ sources }: { sources: SourceRef[] }) {
           onClick={(e) => e.stopPropagation()}
         >
           {s.label === '공식' && <Icon name="check" size={12} />}
-          {s.label}
+          {serverText(s.label)}
         </a>
       ))}
     </>
@@ -95,8 +96,8 @@ export function CopiesBadge({ copies }: { copies?: SourceRef[] }) {
   const repos = [...new Set((copies ?? []).map((s) => repoOfUrl(s.url)).filter(Boolean))];
   if (!repos.length) return null;
   return (
-    <span className="badge copies" title={`같은 SKILL.md가 있는 다른 저장소: ${repos.join(', ')}`}>
-      사본 {repos.length}곳
+    <span className="badge copies" title={t('같은 SKILL.md가 있는 다른 저장소: {0}', repos.join(', '))}>
+      {t('사본 ')}{repos.length}{t('곳')}
     </span>
   );
 }

@@ -9,17 +9,18 @@ import { SettingsPage } from './pages/SettingsPage.tsx';
 import { SkillPage } from './pages/SkillPage.tsx';
 import { apiGet } from './api.ts';
 import type { Health, OpenedFrom, ResultItem } from './types.ts';
+import { t } from './i18n.ts';
 
 type Path = '/' | '/recommend' | '/skill' | '/installed' | '/marketplaces' | '/settings' | '/favorites';
 type Route = { path: Path; skillId: string | null };
 
 /** `short`: the label on a phone-width window, where the five did not fit (review 2026-11-02). */
 const NAV: Array<{ path: Path; label: string; short?: string }> = [
-  { path: '/', label: '검색' },
-  { path: '/recommend', label: 'README 추천', short: '추천' },
-  { path: '/installed', label: '설치됨' },
-  { path: '/marketplaces', label: '마켓플레이스', short: '마켓' },
-  { path: '/settings', label: '설정' },
+  { path: '/', label: t('검색') },
+  { path: '/recommend', label: t('README 추천'), short: t('추천') },
+  { path: '/installed', label: t('설치됨') },
+  { path: '/marketplaces', label: t('마켓플레이스'), short: t('마켓') },
+  { path: '/settings', label: t('설정') },
 ];
 const PATHS: Path[] = ['/', '/recommend', '/skill', '/installed', '/marketplaces', '/settings', '/favorites'];
 
@@ -38,7 +39,7 @@ function fromQuery(): OpenedFrom | undefined {
   return { sid, pos: Number(q.get('pos')) || 0, page: Number(q.get('page')) || 0, provisional: q.get('prov') === '1' };
 }
 
-const BACK_LABEL: Partial<Record<Path, string>> = { '/': '검색 결과로', '/recommend': 'README 추천으로', '/installed': '설치됨으로', '/marketplaces': '마켓플레이스로', '/settings': '설정으로', '/favorites': '즐겨찾기로' };
+const BACK_LABEL: Partial<Record<Path, string>> = { '/': t('검색 결과로'), '/recommend': t('README 추천으로'), '/installed': t('설치됨으로'), '/marketplaces': t('마켓플레이스로'), '/settings': t('설정으로'), '/favorites': t('즐겨찾기로') };
 
 export function App() {
   const [route, setRoute] = useState<Route>(readRoute);
@@ -76,7 +77,7 @@ export function App() {
   const lastOpened = useRef<string | null>(null);
   const firstRoute = useRef(true);
   useEffect(() => {
-    const label = route.path === '/favorites' ? '즐겨찾기' : NAV.find((n) => n.path === route.path)?.label;
+    const label = route.path === '/favorites' ? t('즐겨찾기') : NAV.find((n) => n.path === route.path)?.label;
     if (route.path !== '/skill') document.title = route.path === '/' || !label ? 'Skill Finder' : `${label} · Skill Finder`;
     if (firstRoute.current) {
       firstRoute.current = false;
@@ -178,7 +179,7 @@ export function App() {
         {update && (
           // the version's change notes, when they are signed (the server drops unsigned ones)
           <details className="update-badge" role="status">
-            <summary title="검은 Skill Finder 창을 닫았다가 바탕화면의 Skill Finder로 다시 켜면 자동으로 업데이트됩니다.">새 버전 {update.version} · 다시 켜면 업데이트</summary>
+            <summary title={t('검은 Skill Finder 창을 닫았다가 바탕화면의 Skill Finder로 다시 켜면 자동으로 업데이트됩니다.')}>{t('새 버전 ')}{update.version}{t(' · 다시 켜면 업데이트')}</summary>
             <div className="update-notes">
               {update.notes?.length ? (
                 <ul>
@@ -187,9 +188,9 @@ export function App() {
                   ))}
                 </ul>
               ) : (
-                <p className="muted small">변경 기록이 없습니다.</p>
+                <p className="muted small">{t('변경 기록이 없습니다.')}</p>
               )}
-              <p className="muted small">검은 Skill Finder 창을 닫았다가 바탕화면의 Skill Finder로 다시 켜면 서명을 확인한 뒤 업데이트됩니다.</p>
+              <p className="muted small">{t('검은 Skill Finder 창을 닫았다가 바탕화면의 Skill Finder로 다시 켜면 서명을 확인한 뒤 업데이트됩니다.')}</p>
             </div>
           </details>
         )}
@@ -210,7 +211,7 @@ export function App() {
             item={opened.get(route.skillId) ?? null}
             query={lastQuery}
             from={openedFrom.get(route.skillId)}
-            backLabel={BACK_LABEL[listPath] ?? '뒤로'}
+            backLabel={BACK_LABEL[listPath] ?? t('뒤로')}
             onOpenSkill={(sid) => go('/skill', sid)}
             onBack={() => (window.history.length > 1 ? window.history.back() : go(listPath))}
           />

@@ -3,6 +3,7 @@
 import { RISK_LEVEL } from '../labels.ts';
 import type { InstalledResponse, ResultItem } from '../types.ts';
 import { repoOf } from './resultOrder.ts';
+import { t } from '../i18n.ts';
 
 const cell = (s: string) => s.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
 /** The text of a Markdown link: brackets in a name would end it early. */
@@ -41,11 +42,11 @@ export function resultsMarkdown(query: string, items: ResultItem[]): string {
     return `| ${name} | ${cell(repoOf(it) ?? '')} | ${it.installs ?? ''} | ${it.stars ?? ''} | ${RISK_LEVEL[it.riskLevel]} | ${it.install.command ? `\`${cell(it.install.command)}\`` : ''} |`;
   });
   return [
-    `# Skill Finder 검색: ${query} (${today()})`,
+    t('# Skill Finder 검색: {0} ({1})', query, today()),
     '',
-    '위험 등급은 Skill Finder 규칙으로 판정한 것이고 안전 보증이 아닙니다.',
+    t('위험 등급은 Skill Finder 규칙으로 판정한 것이고 안전 보증이 아닙니다.'),
     '',
-    '| 이름 | 저장소 | 설치 수 | 별 | 위험 | 설치 명령 |',
+    t('| 이름 | 저장소 | 설치 수 | 별 | 위험 | 설치 명령 |'),
     '|---|---|---|---|---|---|',
     ...rows,
     '',
@@ -54,24 +55,24 @@ export function resultsMarkdown(query: string, items: ResultItem[]): string {
 
 export function installedMarkdown(data: InstalledResponse, projectPath: string): string {
   const plugins = data.plugins.map(
-    (p) => `| ${cell(p.id)} | ${p.scope} | ${p.version ?? ''} | ${p.topRisk ? RISK_LEVEL[p.topRisk] : '알 수 없음'} | ${p.removeCommand ? `\`${p.removeCommand}\`` : ''} |`,
+    (p) => `| ${cell(p.id)} | ${p.scope} | ${p.version ?? ''} | ${p.topRisk ? RISK_LEVEL[p.topRisk] : t('알 수 없음')} | ${p.removeCommand ? `\`${p.removeCommand}\`` : ''} |`,
   );
   const skills = data.skills.map(
-    (s) => `| ${cell(s.name)} | ${s.scope === 'user' ? '개인' : '프로젝트'} | ${RISK_LEVEL[s.risk.level]} | ${s.tokens.perTurn} | \`${cell(s.removeCommand)}\` |`,
+    (s) => `| ${cell(s.name)} | ${s.scope === 'user' ? t('개인') : t('프로젝트')} | ${RISK_LEVEL[s.risk.level]} | ${s.tokens.perTurn} | \`${cell(s.removeCommand)}\` |`,
   );
   return [
-    `# Skill Finder 설치됨 (${today()})`,
-    projectPath ? `\n프로젝트: ${projectPath}` : '',
+    t('# Skill Finder 설치됨 ({0})', today()),
+    projectPath ? t('\n프로젝트: {0}', projectPath) : '',
     '',
-    '## 플러그인',
+    t('## 플러그인'),
     '',
-    '| 플러그인 | 범위 | 버전 | 위험(안의 스킬 중 최고) | 삭제 명령 |',
+    t('| 플러그인 | 범위 | 버전 | 위험(안의 스킬 중 최고) | 삭제 명령 |'),
     '|---|---|---|---|---|',
     ...plugins,
     '',
-    '## 스킬',
+    t('## 스킬'),
     '',
-    '| 이름 | 범위 | 위험(설치된 파일 기준) | 매 턴 토큰(추정) | 삭제 명령 |',
+    t('| 이름 | 범위 | 위험(설치된 파일 기준) | 매 턴 토큰(추정) | 삭제 명령 |'),
     '|---|---|---|---|---|',
     ...skills,
     '',

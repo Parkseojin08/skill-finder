@@ -8,6 +8,7 @@ import { CopyButton } from './CopyButton.tsx';
 import { InstallScanView, scanIsHigh } from './InstallScan.tsx';
 import { RiskBadge, RiskFlags, RiskSummary } from './Badges.tsx';
 import { FolderInput, rememberProject } from './FolderInput.tsx';
+import { serverText, t } from '../i18n.ts';
 
 type LogLine = { line: string; stream: string };
 type PluginSkill = NonNullable<SkillDetail['plugin']>['skills'][number];
@@ -36,15 +37,14 @@ export function OverwriteNote({ existing }: { existing: ExistingSkill | null | u
   if (existing.same) {
     return (
       <p className="note">
-        이미 설치되어 있습니다{existing.change === 'changed' ? '(색인의 내용과 다름)' : ''}. 다시 설치하면 <code>{existing.path}</code>를 새 파일로 바꿉니다. 그 폴더에서
-        고친 내용은 사라집니다.
+        {t('이미 설치되어 있습니다')}{existing.change === 'changed' ? t('(색인의 내용과 다름)') : ''}{t('. 다시 설치하면 ')}<code>{existing.path}</code>{t('를 새 파일로 바꿉니다. 그 폴더에서 고친 내용은 사라집니다.')}
       </p>
     );
   }
   return (
     <p className="warn-box">
-      같은 이름의 {existing.same === false ? '다른 스킬' : '출처를 알 수 없는 스킬'}
-      {existing.name ? `(${existing.name})` : ''}이 이미 <code>{existing.path}</code>에 있습니다. 설치하면 그 폴더를 덮어씁니다.
+      {t('같은 이름의 ')}{existing.same === false ? t('다른 스킬') : t('출처를 알 수 없는 스킬')}
+      {existing.name ? `(${existing.name})` : ''}{t('이 이미 ')}<code>{existing.path}</code>{t('에 있습니다. 설치하면 그 폴더를 덮어씁니다.')}
     </p>
   );
 }
@@ -55,11 +55,10 @@ const folderName = (name: string) => name.toLowerCase().replace(/[^a-z0-9._]+/g,
 /** After an install: when it takes effect, where, and how to call it (project review F4). */
 function UsageNote({ plan, skillName, pluginName, scope, projectPath }: { plan: InstallPlan; skillName: string; pluginName: string | null; scope: InstallScope; projectPath: string }) {
   const command = plan.method === 'plugin' ? `/${plan.pluginName ?? pluginName ?? 'plugin'}:${folderName(skillName)}` : `/${folderName(skillName)}`;
-  const where = scope === 'user' ? '모든 프로젝트' : scope === 'project' ? `${projectPath} 폴더에서 연 Claude Code` : `${projectPath} 폴더에서 연 Claude Code(나만)`;
+  const where = scope === 'user' ? t('모든 프로젝트') : scope === 'project' ? t('{0} 폴더에서 연 Claude Code', projectPath) : t('{0} 폴더에서 연 Claude Code(나만)', projectPath);
   return (
     <div className="note small usage-note">
-      <b>사용법</b> · 다음 Claude Code 세션부터 {where}에서 쓸 수 있습니다. 설명과 맞는 일을 시키면 Claude가 알아서 쓰고, 직접 부르려면 <code>{command}</code>를
-      입력하세요. 지우려면 설치됨 화면에서 삭제합니다.
+      <b>{t('사용법')}</b>{t(' · 다음 Claude Code 세션부터 ')}{where}{t('에서 쓸 수 있습니다. 설명과 맞는 일을 시키면 Claude가 알아서 쓰고, 직접 부르려면 ')}<code>{command}</code>{t('를 입력하세요. 지우려면 설치됨 화면에서 삭제합니다.')}
     </div>
   );
 }
@@ -74,16 +73,16 @@ export function SiblingRiskNote({ skills, here = false }: { skills: PluginSkill[
   });
   return (
     <p className={top === 'high' ? 'warn-box' : 'note'}>
-      같은 플러그인에 이 스킬보다 위험한 스킬 {skills.length}개가 함께 설치됩니다: {named.join(', ')}
-      {skills.length > named.length && ` 외 ${skills.length - named.length}개`}.{!here && ' 개요 탭의 플러그인 목록에서 확인하세요.'}
+      {t('같은 플러그인에 이 스킬보다 위험한 스킬 ')}{skills.length}{t('개가 함께 설치됩니다: ')}{named.join(', ')}
+      {skills.length > named.length && t(' 외 {0}개', skills.length - named.length)}.{!here && t(' 개요 탭의 플러그인 목록에서 확인하세요.')}
     </p>
   );
 }
 
 /** Whether the files installed are the ones the risk check read (UI debate 1-3). */
 function versionNote(plan: InstallPlan): string | null {
-  if (plan.method === 'skills-cli' && plan.pinnedRef) return `검사한 커밋 ${plan.pinnedRef.slice(0, 7)} 그대로 설치합니다.`;
-  if (plan.method === 'skills-cli' || plan.method === 'plugin') return '설치할 때 최신 버전을 받습니다. 위험 검사를 한 버전과 다를 수 있습니다.';
+  if (plan.method === 'skills-cli' && plan.pinnedRef) return t('검사한 커밋 {0} 그대로 설치합니다.', plan.pinnedRef.slice(0, 7));
+  if (plan.method === 'skills-cli' || plan.method === 'plugin') return t('설치할 때 최신 버전을 받습니다. 위험 검사를 한 버전과 다를 수 있습니다.');
   return null;
 }
 type InstallEvent = { type: 'log'; line: string; stream: string } | { type: 'result'; ok: boolean; exitCode: number; message: string };
@@ -154,17 +153,17 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
   if (plan.method === 'manual-only') {
     return (
       <section className="install">
-        <h3>설치</h3>
-        <p className={plan.disabled ? 'warn-box' : 'muted'}>{plan.reason}</p>
+        <h3>{t('설치')}</h3>
+        <p className={plan.disabled ? 'warn-box' : 'muted'}>{serverText(plan.reason)}</p>
         <div className="cmd">
           <code>{plan.command}</code>
           <button type="button" className="ghost" onClick={() => copy(plan.command)}>
-            {copied ? '복사됨' : '복사'}
+            {copied ? t('복사됨') : t('복사')}
           </button>
         </div>
-        <p className="muted small">앱에서는 실행하지 않습니다. 내용을 확인한 뒤 터미널에서 직접 실행하세요.</p>
+        <p className="muted small">{t('앱에서는 실행하지 않습니다. 내용을 확인한 뒤 터미널에서 직접 실행하세요.')}</p>
         <button type="button" disabled>
-          설치 (비활성)
+          {t('설치 (비활성)')}
         </button>
       </section>
     );
@@ -184,7 +183,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
         if (e.type === 'log') setLog((l) => [...l, { line: e.line, stream: e.stream }]);
         else {
           answered = true;
-          setResult({ ok: e.ok, message: e.message });
+          setResult({ ok: e.ok, message: serverText(e.message) });
           if (e.ok) forgetInstalled();
           if (e.ok && scope !== 'user') rememberProject(projectPath);
         }
@@ -201,10 +200,10 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
     // rather than leaving the log hanging (project review F4).
     if (!answered) {
       const status = await apiGet<{ installing: boolean }>('/install/status').catch(() => null);
-      const where = '설치됨 화면에서 설치됐는지 확인하세요.';
+      const where = t('설치됨 화면에서 설치됐는지 확인하세요.');
       setResult({
         ok: false,
-        message: status?.installing ? `응답이 끊겼지만 설치는 아직 진행 중입니다. 잠시 뒤 ${where}` : `${failure ? `${failure}. ` : ''}설치 결과를 받지 못했습니다. ${where}`,
+        message: status?.installing ? t('응답이 끊겼지만 설치는 아직 진행 중입니다. 잠시 뒤 {0}', where) : t('{0}설치 결과를 받지 못했습니다. {1}', failure ? `${failure}. ` : '', where),
       });
     }
     setRunning(false);
@@ -215,26 +214,26 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
   const current = preview && preview.key === inputKey ? preview : null;
   const ready = !!current && !current.error && current.steps.length > 0 && (scan !== null || scanError !== null);
   const noFolder = scope !== 'user' && !projectPath.trim();
-  const waiting = !running && (noFolder ? '폴더를 고른 뒤 설치' : !current ? '확인 중…' : scan === null && scanError === null ? '파일 검사 중…' : null);
+  const waiting = !running && (noFolder ? t('폴더를 고른 뒤 설치') : !current ? t('확인 중…') : scan === null && scanError === null ? t('파일 검사 중…') : null);
   const siblings = riskierSiblings(skill);
   const version = versionNote(plan);
 
   return (
     <section className="install">
       <h3>
-        설치 <span className="muted small">· {METHOD[plan.method]}</span>
+        {t('설치 ')}<span className="muted small">· {METHOD[plan.method]}</span>
       </h3>
       {plan.method === 'plugin' && (
         <p className="note">
-          스킬 하나가 아니라 <b>{plan.pluginId}</b> 플러그인 전체가 설치됩니다
-          {skill.plugin ? ` (스킬 ${skill.plugin.skills.length}개${skill.plugin.hooks ? ', 훅' : ''}${skill.plugin.mcp ? ', MCP 서버' : ''}${skill.plugin.bin ? ', 실행 파일' : ''} 포함)` : ''}.
+          {t('스킬 하나가 아니라 ')}<b>{plan.pluginId}</b>{t(' 플러그인 전체가 설치됩니다')}
+          {skill.plugin ? t(' (스킬 {0}개{1}{2}{3} 포함)', skill.plugin.skills.length, skill.plugin.hooks ? t(', 훅') : '', skill.plugin.mcp ? t(', MCP 서버') : '', skill.plugin.bin ? t(', 실행 파일') : '') : ''}.
         </p>
       )}
       <SiblingRiskNote skills={siblings} />
       <fieldset className="scopes" disabled={running}>
         <legend>
-          범위
-          <HelpTip label="범위" text={HELP.scope} />
+          {t('범위')}
+          <HelpTip label={t('범위')} text={HELP.scope} />
         </legend>
         {plan.scopes.map((s) => (
           <label key={s}>
@@ -245,24 +244,24 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
       </fieldset>
       {scope !== 'user' && (
         <div className="field">
-          <span>프로젝트 폴더</span>
+          <span>{t('프로젝트 폴더')}</span>
           <FolderInput value={projectPath} onChange={setProjectPath} disabled={running} />
         </div>
       )}
-      {current?.error && <p className="warn-box">{current.error}</p>}
+      {current?.error && <p className="warn-box">{serverText(current.error)}</p>}
       {current && !current.error && current.steps.length > 0 && (
         <div className="preview">
-          <div className="muted small">실행할 명령</div>
+          <div className="muted small">{t('실행할 명령')}</div>
           {current.steps.map((s, i) => (
             <div key={i} className="cmd">
               <code>{s.display}</code>
               <CopyButton text={s.display} />
             </div>
           ))}
-          {current.steps.length > 1 && <CopyButton text={current.steps.map((s) => s.display).join('\n')} label="명령 모두 복사" className="linkish small" />}
+          {current.steps.length > 1 && <CopyButton text={current.steps.map((s) => s.display).join('\n')} label={t('명령 모두 복사')} className="linkish small" />}
           <div className="muted small">
-            설치 위치: {current.location}
-            {current.createsLockFile && <> · 프로젝트 루트에 <code>skills-lock.json</code>이 생깁니다</>}
+            {t('설치 위치: ')}{serverText(current.location)}
+            {current.createsLockFile && <>{t(' · 프로젝트 루트에 ')}<code>skills-lock.json</code>{t('이 생깁니다')}</>}
           </div>
           {version && <div className="muted small">{version}</div>}
           <OverwriteNote existing={current.existing} />
@@ -274,7 +273,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
         <RiskSummary level={skill.riskLevel} flags={skill.riskFlags} />
       </div>
       <button type="button" className="primary" disabled={!ready || running} onClick={() => setConfirming(true)}>
-        {running ? '설치 중…' : (waiting ?? (current?.existing?.same ? '다시 설치…' : '설치…'))}
+        {running ? t('설치 중…') : (waiting ?? (current?.existing?.same ? t('다시 설치…') : t('설치…')))}
       </button>
       {(log.length > 0 || result) && (
         <div className="install-log">
@@ -342,20 +341,20 @@ function ConfirmDialog(props: {
   }, []);
   return (
     <dialog ref={ref} className="confirm" onCancel={props.onCancel} aria-labelledby="confirm-title">
-      <h3 id="confirm-title">{props.name} 설치</h3>
+      <h3 id="confirm-title">{props.name}{t(' 설치')}</h3>
       <p className="warn-box">
-        스킬은 에이전트 권한으로 실행됩니다. 스크립트와 명령이 내 컴퓨터에서 Claude Code와 같은 권한으로 돌아갈 수 있으니, 내용을 확인한 출처만 설치하세요.
+        {t('스킬은 에이전트 권한으로 실행됩니다. 스크립트와 명령이 내 컴퓨터에서 Claude Code와 같은 권한으로 돌아갈 수 있으니, 내용을 확인한 출처만 설치하세요.')}
       </p>
-      <div className="muted small">정확한 명령</div>
+      <div className="muted small">{t('정확한 명령')}</div>
       {props.preview.steps.map((s, i) => (
         <div key={i} className="cmd cmd-stacked">
           <code>{s.display}</code>
-          <span className="muted small">작업 폴더: {s.cwd}</span>
+          <span className="muted small">{t('작업 폴더: ')}{s.cwd}</span>
         </div>
       ))}
-      <div className="muted small">설치 위치</div>
-      <p>{props.preview.location}</p>
-      {props.preview.createsLockFile && <p className="muted small">프로젝트 루트에 skills-lock.json 파일이 생성됩니다.</p>}
+      <div className="muted small">{t('설치 위치')}</div>
+      <p>{serverText(props.preview.location)}</p>
+      {props.preview.createsLockFile && <p className="muted small">{t('프로젝트 루트에 skills-lock.json 파일이 생성됩니다.')}</p>}
       {props.version && <p className="muted small">{props.version}</p>}
       <div className="badges">
         <RiskBadge level={props.riskLevel} />
@@ -363,26 +362,26 @@ function ConfirmDialog(props: {
       </div>
       <SiblingRiskNote skills={props.siblings} />
       <InstallScanView scan={props.scan} compact />
-      {props.scanFailed && <p className="warn-box">함께 들어올 파일을 검사하지 못했습니다. 무엇이 설치되는지 앱이 확인하지 못했으니, 저장소를 직접 보고 설치하세요.</p>}
+      {props.scanFailed && <p className="warn-box">{t('함께 들어올 파일을 검사하지 못했습니다. 무엇이 설치되는지 앱이 확인하지 못했으니, 저장소를 직접 보고 설치하세요.')}</p>}
       <OverwriteNote existing={props.preview.existing} />
       {overwrite && (
         <label className="confirm-check">
           <input type="checkbox" checked={overwriteChecked} onChange={(e) => setOverwriteChecked(e.target.checked)} />
-          기존 폴더를 덮어쓰는 것을 확인했습니다
+          {t('기존 폴더를 덮어쓰는 것을 확인했습니다')}
         </label>
       )}
       {high && (
         <label className="confirm-check">
-          <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />위 명령과 위험 신호를 확인했습니다
+          <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />{t('위 명령과 위험 신호를 확인했습니다')}
         </label>
       )}
       <div className="dialog-actions">
         {/* Cancel first, as in the delete dialog: Enter alone must not install (UI debate 1-2) */}
         <button type="button" className="ghost" onClick={props.onCancel} autoFocus>
-          취소
+          {t('취소')}
         </button>
         <button type="button" className="primary" onClick={props.onConfirm} disabled={(high && !checked) || (overwrite && !overwriteChecked)}>
-          {props.preview.existing?.same ? '다시 설치' : '설치'}
+          {props.preview.existing?.same ? t('다시 설치') : t('설치')}
         </button>
       </div>
     </dialog>

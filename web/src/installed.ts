@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { apiGet } from './api.ts';
 import type { InstalledIds } from './types.ts';
+import { t } from './i18n.ts';
 
-const SCOPE_SHORT: Record<string, string> = { user: '개인', project: '프로젝트', local: '로컬', synced: '앱 동기화' };
+const SCOPE_SHORT: Record<string, string> = { user: t('개인'), project: t('프로젝트'), local: t('로컬'), synced: t('앱 동기화') };
 
 /** One request shared by every screen, kept for a minute; an install or delete drops it (forgetInstalled). */
 let cache: { at: number; value: Promise<InstalledIds | null> } | null = null;
@@ -45,6 +46,6 @@ export function useInstalled(): (item: { id: string; plugin?: { id: string } | n
     const skill = ids.skills.filter((s) => s.id.toLowerCase() === lower).map((s) => SCOPE_SHORT[s.scope] ?? s.scope);
     if (skill.length) return [...new Set(skill)].join('·');
     const plugin = item.plugin ? ids.plugins.filter((p) => p.id === item.plugin!.id).map((p) => SCOPE_SHORT[p.scope] ?? p.scope) : [];
-    return plugin.length ? `플러그인 ${[...new Set(plugin)].join('·')}` : null;
+    return plugin.length ? t('플러그인 {0}', [...new Set(plugin)].join('·')) : null;
   };
 }

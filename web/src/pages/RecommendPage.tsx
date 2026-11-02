@@ -8,19 +8,20 @@ import { Translated } from '../components/Translated.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { readPageSize, savePageSize } from '../lib/prefs.ts';
 import type { RecommendResult, ResultItem, SettingsResponse } from '../types.ts';
+import { t } from '../i18n.ts';
 
 /** What to do next, per error status of POST /readme-skills. */
 const ERROR_HINT: Record<number, string> = {
-  400: '폴더의 전체 경로(예: C:\\Users\\me\\project)를 입력하거나 "폴더 선택"으로 고르세요.',
-  404: '프로젝트 루트 폴더를 골랐는지 확인하세요. 아래에 이 프로젝트를 나타내는 영어 단어를 넣어 직접 찾을 수도 있습니다.',
-  413: 'README가 1MB를 넘어 읽지 않았습니다.',
+  400: t('폴더의 전체 경로(예: C:\\Users\\me\\project)를 입력하거나 "폴더 선택"으로 고르세요.'),
+  404: t('프로젝트 루트 폴더를 골랐는지 확인하세요. 아래에 이 프로젝트를 나타내는 영어 단어를 넣어 직접 찾을 수도 있습니다.'),
+  413: t('README가 1MB를 넘어 읽지 않았습니다.'),
 };
 
 /** The summary's heading: what was read ("package.json + CLAUDE.md 요약 (README 없음)"), or the typed words. */
 function readFrom(result: RecommendResult): string {
-  if (!result.readmePath) return '넣은 단어로 찾은 결과';
+  if (!result.readmePath) return t('넣은 단어로 찾은 결과');
   const files = [result.readmePath, ...(result.alsoRead ?? [])].map((p) => p.split(/[\\/]/).pop()!);
-  return /^readme/i.test(files[0]) ? 'README 요약' : `${files.join(' + ')} 요약 (README 없음)`;
+  return /^readme/i.test(files[0]) ? t('README 요약') : t('{0} 요약 (README 없음)', files.join(' + '));
 }
 
 export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }) {
@@ -86,8 +87,8 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
   const addWord = () => {
     const w = newWord.trim().toLowerCase();
     setWordMsg(null);
-    if (terms.includes(w)) return setWordMsg('이미 있는 단어입니다.');
-    if (!/^[a-z][a-z0-9-]{1,40}$/.test(w)) return setWordMsg('스킬 설명이 영어라 영어 단어만 더할 수 있습니다(영문·숫자·-, 2~41자). 예: typescript, nextjs');
+    if (terms.includes(w)) return setWordMsg(t('이미 있는 단어입니다.'));
+    if (!/^[a-z][a-z0-9-]{1,40}$/.test(w)) return setWordMsg(t('스킬 설명이 영어라 영어 단어만 더할 수 있습니다(영문·숫자·-, 2~41자). 예: typescript, nextjs'));
     const nextAdded = [...added, w];
     setTerms([w, ...terms]);
     setAdded(nextAdded);
@@ -108,10 +109,9 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
 
   return (
     <div className="page recommend-page">
-      <h1>README 추천</h1>
+      <h1>{t('README 추천')}</h1>
       <p className="muted">
-        프로젝트 폴더를 고르면 맨 위의 README를 읽고, 이 프로젝트와 비슷한 스킬을 다운로드·인기 순으로 보여 줍니다. AI 없이 README의 단어로만
-        찾습니다. README가 없으면 package.json 같은 설명 파일과 CLAUDE.md·AGENTS.md를 읽습니다.
+        {t('프로젝트 폴더를 고르면 맨 위의 README를 읽고, 이 프로젝트와 비슷한 스킬을 다운로드·인기 순으로 보여 줍니다. AI 없이 README의 단어로만 찾습니다. README가 없으면 package.json 같은 설명 파일과 CLAUDE.md·AGENTS.md를 읽습니다.')}
       </p>
       <form
         className="row"
@@ -124,10 +124,10 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
           value={projectPath}
           onChange={setProjectPath}
           onPick={(p) => void analyze(p)}
-          placeholder="프로젝트 폴더 경로"
+          placeholder={t('프로젝트 폴더 경로')}
         />
         <button type="submit" className="primary" disabled={!projectPath.trim() || busy}>
-          {busy ? '분석 중…' : '분석'}
+          {busy ? t('분석 중…') : t('분석')}
         </button>
       </form>
 
@@ -151,9 +151,9 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
             void analyze(projectPath, { off: new Set(), added: words });
           }}
         >
-          <input value={manualWords} onChange={(e) => setManualWords(e.target.value)} placeholder="예: react dashboard charts" aria-label="이 프로젝트를 나타내는 영어 단어" />
+          <input value={manualWords} onChange={(e) => setManualWords(e.target.value)} placeholder={t('예: react dashboard charts')} aria-label={t('이 프로젝트를 나타내는 영어 단어')} />
           <button type="submit" className="ghost" disabled={busy || !manualWords.trim()}>
-            단어로 찾기
+            {t('단어로 찾기')}
           </button>
         </form>
       )}
@@ -163,7 +163,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
           <section className="readme-summary">
             <h2>{readFrom(result)}</h2>
             <h3 className="summary-title">{result.summary.title}</h3>
-            {result.summary.intro ? <Translated className="summary" text={result.summary.intro} /> : <p className="muted">소개 문단이 없습니다.</p>}
+            {result.summary.intro ? <Translated className="summary" text={result.summary.intro} /> : <p className="muted">{t('소개 문단이 없습니다.')}</p>}
             {result.summary.features.length > 0 && (
               <ul className="explain">
                 {result.summary.features.map((f) => (
@@ -172,19 +172,19 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
               </ul>
             )}
             <div className="keyword-line">
-              <span className="muted small">핵심 단어 · 눌러서 빼거나 다시 넣기</span>
-              {terms.map((t) => (
+              <span className="muted small">{t('핵심 단어 · 눌러서 빼거나 다시 넣기')}</span>
+              {terms.map((term) => (
                 <button
-                  key={t}
+                  key={term}
                   type="button"
-                  className={`chip-btn mono${off.has(t) ? ' off' : ''}`}
-                  aria-pressed={!off.has(t)}
-                  title={off.has(t) ? '빼 둔 단어 · 눌러서 다시 넣기' : '눌러서 이 단어 빼기'}
-                  onClick={() => toggleTerm(t)}
+                  className={`chip-btn mono${off.has(term) ? ' off' : ''}`}
+                  aria-pressed={!off.has(term)}
+                  title={off.has(term) ? t('빼 둔 단어 · 눌러서 다시 넣기') : t('눌러서 이 단어 빼기')}
+                  onClick={() => toggleTerm(term)}
                   // not disabled while recalculating: that would drop the keyboard focus (review 2026-11-02)
                   aria-busy={busy}
                 >
-                  {t}
+                  {term}
                 </button>
               ))}
               <form
@@ -194,9 +194,9 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
                   addWord();
                 }}
               >
-                <input value={newWord} onChange={(e) => setNewWord(e.target.value)} placeholder="단어 더하기 (영어)" aria-label="추천에 더할 단어" maxLength={41} />
+                <input value={newWord} onChange={(e) => setNewWord(e.target.value)} placeholder={t('단어 더하기 (영어)')} aria-label={t('추천에 더할 단어')} maxLength={41} />
                 <button type="submit" className="ghost" disabled={busy || !newWord.trim()}>
-                  더하기
+                  {t('더하기')}
                 </button>
               </form>
             </div>
@@ -211,13 +211,13 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
             <p className="empty">
               {hiddenRisky > 0 ? (
                 <>
-                  위험 높음으로 숨긴 {hiddenRisky}개만 있습니다.{' '}
+                  {t('위험 높음으로 숨긴 ')}{hiddenRisky}{t('개만 있습니다.')}{' '}
                   <button type="button" className="linkish" onClick={() => setShowRisky(true)}>
-                    보기
+                    {t('보기')}
                   </button>
                 </>
               ) : (
-                '비슷한 스킬을 찾지 못했습니다. README의 단어와 겹치는 스킬이 색인에 없습니다.'
+                t('비슷한 스킬을 찾지 못했습니다. README의 단어와 겹치는 스킬이 색인에 없습니다.')
               )}
             </p>
           ) : (
@@ -225,19 +225,19 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
               <div className="results-toolbar" ref={listRef}>
                 <div className="toolbar-left">
                   <span>
-                    비슷한 스킬 <b>{skills.length}</b>개 <span className="muted small">· 다운로드 → 스타 순</span>
+                    {t('비슷한 스킬 ')}<b>{skills.length}</b>{t('개 ')}<span className="muted small">{t('· 다운로드 → 스타 순')}</span>
                   </span>
                   {hiddenRisky > 0 && (
                     <button
                       type="button"
                       className="status-chip action"
-                      title="외부 스크립트 실행·비밀값 접근처럼 위험이 큰 스킬입니다. 상세 화면에서 이유를 확인한 뒤 설치하세요."
+                      title={t('외부 스크립트 실행·비밀값 접근처럼 위험이 큰 스킬입니다. 상세 화면에서 이유를 확인한 뒤 설치하세요.')}
                       onClick={() => {
                         setShowRisky(true);
                         setPage(1);
                       }}
                     >
-                      위험 높음 {hiddenRisky}개 숨김 · 보기
+                      {t('위험 높음 ')}{hiddenRisky}{t('개 숨김 · 보기')}
                     </button>
                   )}
                 </div>
@@ -250,11 +250,11 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
                       setPage(1);
                       savePageSize(Number(e.target.value));
                     }}
-                    aria-label="페이지당 개수"
+                    aria-label={t('페이지당 개수')}
                   >
                     {[5, 10, 20].map((n) => (
                       <option key={n} value={n}>
-                        {n}개씩
+                        {n}{t('개씩')}
                       </option>
                     ))}
                   </select>
@@ -264,13 +264,13 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
                 {pageItems.map((m, i) => (
                   <div key={m.item.id}>
                     <ResultCard item={m.item} position={i} href={skillHref(m.item.id)} installed={installedAs(m.item)} onSelect={() => onOpen(m.item)} />
-                    <p className="muted small matched-terms">겹친 단어: {m.matchedTerms.join(', ')}</p>
+                    <p className="muted small matched-terms">{t('겹친 단어: ')}{m.matchedTerms.join(', ')}</p>
                   </div>
                 ))}
               </div>
               {pageCount > 1 && (
-                <nav className="pager" aria-label="추천 결과 페이지">
-                  <button type="button" className="ghost" onClick={() => goPage(currentPage - 1)} disabled={currentPage === 1} aria-label="이전 페이지">
+                <nav className="pager" aria-label={t('추천 결과 페이지')}>
+                  <button type="button" className="ghost" onClick={() => goPage(currentPage - 1)} disabled={currentPage === 1} aria-label={t('이전 페이지')}>
                     <Icon name="back" size={15} />
                   </button>
                   {Array.from({ length: pageCount }, (_, i) => i + 1).map((p) => (
@@ -284,11 +284,11 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
                       {p}
                     </button>
                   ))}
-                  <button type="button" className="ghost" onClick={() => goPage(currentPage + 1)} disabled={currentPage === pageCount} aria-label="다음 페이지">
+                  <button type="button" className="ghost" onClick={() => goPage(currentPage + 1)} disabled={currentPage === pageCount} aria-label={t('다음 페이지')}>
                     <Icon name="back" size={15} className="flip" />
                   </button>
                   <span className="muted small pager-info">
-                    {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, skills.length)} / {skills.length}개
+                    {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, skills.length)} / {skills.length}{t('개')}
                   </span>
                 </nav>
               )}

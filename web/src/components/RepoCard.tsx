@@ -4,9 +4,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatCount } from '../labels.ts';
-import { useKorean } from '../translate.ts';
+import { TRANSLATE_TO, useKorean } from '../translate.ts';
 import type { RepoResult } from '../types.ts';
 import { RepoInstallDialog } from './RepoInstallDialog.tsx';
+import { t } from '../i18n.ts';
 
 /**
  * A GitHub repository matching a one-word query by name ("rea" → morluto/rea), shown above the skills.
@@ -21,15 +22,15 @@ export function RepoCard({ repo, onOpenSkill }: { repo: RepoResult; onOpenSkill:
       <CardHeader>
         <CardTitle className="repo-title">
           <GithubLogoIcon />
-          <button type="button" className="repo-name" onClick={() => setInstalling(true)} disabled={installable === 0} title="이 저장소의 스킬 설치">
+          <button type="button" className="repo-name" onClick={() => setInstalling(true)} disabled={installable === 0} title={t('이 저장소의 스킬 설치')}>
             {repo.repo}
           </button>
-          <a className="repo-gh" href={repo.url} target="_blank" rel="noopener noreferrer" aria-label={`${repo.repo} GitHub에서 보기`} title="GitHub에서 보기">
+          <a className="repo-gh" href={repo.url} target="_blank" rel="noopener noreferrer" aria-label={t('{0} GitHub에서 보기', repo.repo)} title={t('GitHub에서 보기')}>
             <ArrowSquareOutIcon />
           </a>
         </CardTitle>
         {repo.description && (
-          <CardDescription title={ko ? repo.description : undefined} lang={ko ? 'ko' : 'en'}>
+          <CardDescription title={ko ? repo.description : undefined} lang={ko ? (TRANSLATE_TO ?? 'en') : 'en'}>
             {ko ?? repo.description}
           </CardDescription>
         )}
@@ -42,7 +43,7 @@ export function RepoCard({ repo, onOpenSkill }: { repo: RepoResult; onOpenSkill:
           )}
           <Button size="sm" onClick={() => setInstalling(true)} disabled={installable === 0}>
             <DownloadSimpleIcon data-icon="inline-start" />
-            설치
+            {t('설치')}
           </Button>
         </CardAction>
       </CardHeader>
@@ -56,14 +57,14 @@ export function RepoCard({ repo, onOpenSkill }: { repo: RepoResult; onOpenSkill:
         </CardContent>
       )}
       <CardFooter className="flex flex-wrap items-center gap-2">
-        <span className="muted small">스킬 {repo.skills.length}개</span>
+        <span className="muted small">{t('스킬 ')}{repo.skills.length}{t('개')}</span>
         {repo.skills.map((s) => (
           <Button key={s.id} variant="outline" size="sm" onClick={() => onOpenSkill(s.id)}>
             {s.name}
           </Button>
         ))}
         <Button variant="ghost" size="sm" className="ml-auto" render={<a href={repo.url} target="_blank" rel="noopener noreferrer" />}>
-          GitHub에서 보기
+          {t('GitHub에서 보기')}
           <ArrowSquareOutIcon data-icon="inline-end" />
         </Button>
       </CardFooter>

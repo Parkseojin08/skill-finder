@@ -1,6 +1,7 @@
 // Result order and folding for the search page (moved out of SearchPage.tsx, UI debate 2-1; no behaviour change).
 import { RISK_RANK } from '../labels.ts';
 import type { ResultItem } from '../types.ts';
+import { t } from '../i18n.ts';
 
 /** `owner/repo` of a GitHub-indexed result (ids are `gh:<owner>/<repo>:<dir>`). */
 export const repoOf = (item: Pick<ResultItem, 'id'>) => item.id.match(/^gh:([^/]+\/[^:]+):/)?.[1] ?? null;
@@ -12,14 +13,14 @@ export const byPopular = (a: ResultItem, b: ResultItem) =>
   (b.installs ?? -1) - (a.installs ?? -1) || (b.stars ?? -1) - (a.stars ?? -1) || b.breakdown.R - a.breakdown.R;
 const byTierThenPopular = (a: ResultItem, b: ResultItem) => (b.tier ?? 0) - (a.tier ?? 0) || byPopular(a, b);
 export const SORTS: Array<{ key: SortKey; label: string; compare: (a: ResultItem, b: ResultItem) => number }> = [
-  { key: 'popular', label: '관련 → 다운로드 → 스타', compare: byTierThenPopular },
-  { key: 'stars', label: '스타 많은 순', compare: (a, b) => (b.stars ?? -1) - (a.stars ?? -1) || byPopular(a, b) },
+  { key: 'popular', label: t('관련 → 다운로드 → 스타'), compare: byTierThenPopular },
+  { key: 'stars', label: t('스타 많은 순'), compare: (a, b) => (b.stars ?? -1) - (a.stars ?? -1) || byPopular(a, b) },
   {
     key: 'recent',
-    label: '최근 업데이트 순',
+    label: t('최근 업데이트 순'),
     compare: (a, b) => (b.lastCommitAt ? Date.parse(b.lastCommitAt) : 0) - (a.lastCommitAt ? Date.parse(a.lastCommitAt) : 0) || byPopular(a, b),
   },
-  { key: 'name', label: '이름순', compare: (a, b) => a.name.localeCompare(b.name) },
+  { key: 'name', label: t('이름순'), compare: (a, b) => a.name.localeCompare(b.name) },
 ];
 
 /** Mirrors server/src/search/pipeline.ts: a one-word query as a name, and whether a result carries that name. */

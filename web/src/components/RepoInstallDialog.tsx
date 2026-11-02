@@ -14,6 +14,7 @@ import { FolderInput, rememberProject } from './FolderInput.tsx';
 import { needsOverwriteCheck, OverwriteNote } from './InstallPanel.tsx';
 import { CopyButton } from './CopyButton.tsx';
 import { InstallScanView, scanIsHigh } from './InstallScan.tsx';
+import { serverText, t } from '../i18n.ts';
 
 type Step = 'select' | 'confirm' | 'run';
 type Status = 'wait' | 'run' | 'ok' | 'fail';
@@ -132,7 +133,7 @@ export function RepoInstallDialog({
           else {
             answered = true;
             ok = e.ok;
-            setLog((l) => [...l, e.message]);
+            setLog((l) => [...l, serverText(e.message)]);
           }
         });
       } catch (e) {
@@ -144,12 +145,12 @@ export function RepoInstallDialog({
       // the server would otherwise refuse as "다른 설치가 진행 중"
       if (!answered) {
         let st = await apiGet<{ installing: boolean }>('/install/status').catch(() => null);
-        if (st?.installing) setLog((l) => [...l, '응답이 끊겼지만 설치는 아직 진행 중입니다. 끝나기를 기다립니다…']);
+        if (st?.installing) setLog((l) => [...l, t('응답이 끊겼지만 설치는 아직 진행 중입니다. 끝나기를 기다립니다…')]);
         for (let i = 0; st?.installing && i < 120; i++) {
           await new Promise((r) => setTimeout(r, 1000));
           st = await apiGet<{ installing: boolean }>('/install/status').catch(() => null);
         }
-        setLog((l) => [...l, '설치 결과를 받지 못했습니다. 설치됨 화면에서 설치됐는지 확인하세요.']);
+        setLog((l) => [...l, t('설치 결과를 받지 못했습니다. 설치됨 화면에서 설치됐는지 확인하세요.')]);
       }
       setStatus((cur) => ({ ...cur, [s.id]: ok ? 'ok' : 'fail' }));
       if (ok && scope === 'project') rememberProject(projectPath);
@@ -167,15 +168,15 @@ export function RepoInstallDialog({
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
       <DialogContent className="repo-install sm:max-w-xl" showCloseButton={!busy}>
         <DialogHeader>
-          <DialogTitle>{title ?? `${repo.repo} 설치`}</DialogTitle>
+          <DialogTitle>{title ?? t('{0} 설치', repo.repo)}</DialogTitle>
           <DialogDescription>
-            {step === 'select' && '설치할 스킬과 범위를 고르세요. 스킬마다 따로 설치되며, 다음 단계에서 실행할 명령을 확인합니다.'}
-            {step === 'confirm' && '아래 명령을 이 순서대로 실행합니다. 스킬은 에이전트 권한으로 실행되니 내용을 확인한 출처만 설치하세요.'}
-            {step === 'run' && (busy ? `설치 중… ${done + failedCount}/${chosen.length}` : `완료: 성공 ${done}개${failedCount ? `, 실패 ${failedCount}개` : ''}. 다음 Claude Code 세션부터 반영되고, 설명과 맞는 일을 시키거나 /이름으로 부르면 씁니다.`)}
+            {step === 'select' && t('설치할 스킬과 범위를 고르세요. 스킬마다 따로 설치되며, 다음 단계에서 실행할 명령을 확인합니다.')}
+            {step === 'confirm' && t('아래 명령을 이 순서대로 실행합니다. 스킬은 에이전트 권한으로 실행되니 내용을 확인한 출처만 설치하세요.')}
+            {step === 'run' && (busy ? t('설치 중… {0}/{1}', done + failedCount, chosen.length) : t('완료: 성공 {0}개{1}. 다음 Claude Code 세션부터 반영되고, 설명과 맞는 일을 시키거나 /이름으로 부르면 씁니다.', done, failedCount ? t(', 실패 {0}개', failedCount) : ''))}
           </DialogDescription>
           {/* the description changes in place, which is not announced: the same progress in a live region */}
           <p className="sr-only" role="status">
-            {step === 'run' ? (busy ? `설치 중 ${done + failedCount}/${chosen.length}` : `설치 완료: 성공 ${done}개${failedCount ? `, 실패 ${failedCount}개` : ''}`) : ''}
+            {step === 'run' ? (busy ? t('설치 중 {0}/{1}', done + failedCount, chosen.length) : t('설치 완료: 성공 {0}개{1}', done, failedCount ? t(', 실패 {0}개', failedCount) : '')) : ''}
           </p>
         </DialogHeader>
 
@@ -183,24 +184,24 @@ export function RepoInstallDialog({
           <div className="flex flex-col gap-4">
             {note}
             <fieldset className="flex flex-col gap-2">
-              <legend className="muted small">스킬 ({chosen.length}/{installable.length})</legend>
+              <legend className="muted small">{t('스킬 (')}{chosen.length}/{installable.length})</legend>
               {repo.skills.map((s) => (
                 <Label key={s.id} className="repo-skill-row">
                   <Checkbox checked={selected.has(s.id)} disabled={!s.installable} onCheckedChange={(on) => toggle(s.id, on === true)} />
                   <span className="mono">{s.name}</span>
                   <RiskBadge level={s.riskLevel} />
-                  <span className="muted small">{s.installable ? METHOD[s.method] : '앱에서 설치 불가'}</span>
+                  <span className="muted small">{s.installable ? METHOD[s.method] : t('앱에서 설치 불가')}</span>
                 </Label>
               ))}
             </fieldset>
             <fieldset className="flex flex-col gap-2">
-              <legend className="muted small">범위</legend>
+              <legend className="muted small">{t('범위')}</legend>
               <RadioGroup value={scope} onValueChange={(v) => setScope(v as 'user' | 'project')} className="flex gap-4">
                 <Label className="flex items-center gap-2">
-                  <RadioGroupItem value="user" /> 개인 (모든 프로젝트)
+                  <RadioGroupItem value="user" />{t(' 개인 (모든 프로젝트)')}
                 </Label>
                 <Label className="flex items-center gap-2">
-                  <RadioGroupItem value="project" /> 프로젝트
+                  <RadioGroupItem value="project" />{t(' 프로젝트')}
                 </Label>
               </RadioGroup>
               {scope === 'project' && <FolderInput value={projectPath} onChange={setProjectPath} />}
@@ -221,7 +222,7 @@ export function RepoInstallDialog({
                   <div key={i} className="cmd cmd-stacked">
                     <code>{st.display}</code>
                     <span className="muted small">
-                      작업 폴더: {st.cwd} <CopyButton text={st.display} className="linkish small" />
+                      {t('작업 폴더: ')}{st.cwd} <CopyButton text={st.display} className="linkish small" />
                     </span>
                   </div>
                 ))}
@@ -234,22 +235,22 @@ export function RepoInstallDialog({
         {step === 'confirm' && chosenHigh.length > 0 && (
           <Label className="flex items-center gap-2">
             <Checkbox checked={highChecked} onCheckedChange={(on) => setHighChecked(on === true)} />
-            위험 높음 {chosenHigh.length}개({chosenHigh.map((s) => s.name).join(', ')})의 명령과 위험 신호를 확인했습니다
+            {t('위험 높음 ')}{chosenHigh.length}{t('개(')}{chosenHigh.map((s) => s.name).join(', ')}{t(')의 명령과 위험 신호를 확인했습니다')}
           </Label>
         )}
 
         {step === 'confirm' && (
           <CopyButton
             text={chosen.flatMap((s) => (previews[s.id]?.steps ?? []).map((st) => st.display)).join('\n')}
-            label={`명령 ${chosen.length}개 모두 복사`}
+            label={t('명령 {0}개 모두 복사', chosen.length)}
             className="linkish small"
-            title="터미널에서 직접 실행하거나 다른 사람에게 보낼 수 있게 명령만 복사합니다"
+            title={t('터미널에서 직접 실행하거나 다른 사람에게 보낼 수 있게 명령만 복사합니다')}
           />
         )}
         {step === 'confirm' && toOverwrite.length > 0 && (
           <Label className="flex items-center gap-2">
             <Checkbox checked={overwriteChecked} onCheckedChange={(on) => setOverwriteChecked(on === true)} />
-            같은 이름의 기존 폴더 {toOverwrite.length}개({toOverwrite.map((s) => s.name).join(', ')})를 덮어쓰는 것을 확인했습니다
+            {t('같은 이름의 기존 폴더 ')}{toOverwrite.length}{t('개(')}{toOverwrite.map((s) => s.name).join(', ')}{t(')를 덮어쓰는 것을 확인했습니다')}
           </Label>
         )}
 
@@ -274,21 +275,21 @@ export function RepoInstallDialog({
         <DialogFooter>
           {step === 'select' && (
             <Button onClick={() => void review()} disabled={busy || chosen.length === 0 || (scope === 'project' && !projectPath.trim())}>
-              {busy ? '명령 확인 중…' : `다음: 명령 확인 (${chosen.length}개)`}
+              {busy ? t('명령 확인 중…') : t('다음: 명령 확인 ({0}개)', chosen.length)}
             </Button>
           )}
           {step === 'confirm' && (
             <>
               <Button variant="ghost" onClick={() => setStep('select')}>
-                뒤로
+                {t('뒤로')}
               </Button>
               <Button onClick={() => void run()} disabled={(chosenHigh.length > 0 && !highChecked) || (toOverwrite.length > 0 && !overwriteChecked)}>
                 <DownloadSimpleIcon data-icon="inline-start" />
-                {chosen.length}개 설치
+                {chosen.length}{t('개 설치')}
               </Button>
             </>
           )}
-          {step === 'run' && !busy && <Button onClick={() => onOpenChange(false)}>닫기</Button>}
+          {step === 'run' && !busy && <Button onClick={() => onOpenChange(false)}>{t('닫기')}</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

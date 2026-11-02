@@ -1,16 +1,17 @@
 import { useState } from 'react';
 import { apiGet } from '../api.ts';
 import { formatAgo } from '../labels.ts';
+import { t } from '../i18n.ts';
 
 type Entry = { id: number; at: string; method: string; scope: string; projectPath: string | null; target: string | null; ok: boolean; output: string };
 
 const WHAT: Record<string, string> = {
-  plugin: '설치 · 플러그인',
-  'skills-cli': '설치 · skills CLI',
-  'uninstall-plugin': '삭제 · 플러그인',
-  'uninstall-skill': '삭제 · 스킬',
+  plugin: t('설치 · 플러그인'),
+  'skills-cli': t('설치 · skills CLI'),
+  'uninstall-plugin': t('삭제 · 플러그인'),
+  'uninstall-skill': t('삭제 · 스킬'),
 };
-const SCOPE: Record<string, string> = { user: '개인', project: '프로젝트', local: '로컬' };
+const SCOPE: Record<string, string> = { user: t('개인'), project: t('프로젝트'), local: t('로컬') };
 
 /**
  * What the app ran, newest first (review 2026-11-02): each install and removal with its result and output, to see
@@ -31,20 +32,20 @@ export function InstallHistory() {
       }}
     >
       <summary>
-        <h2>설치 기록</h2> <span className="muted small">앱이 실행한 설치·삭제 최근 50건</span>
+        <h2>{t('설치 기록')}</h2> <span className="muted small">{t('앱이 실행한 설치·삭제 최근 50건')}</span>
       </summary>
       {error && <p className="warn-box">{error}</p>}
-      {!entries && !error && <p className="muted small">불러오는 중…</p>}
-      {entries?.length === 0 && <p className="muted small">아직 앱으로 설치하거나 삭제한 것이 없습니다.</p>}
+      {!entries && !error && <p className="muted small">{t('불러오는 중…')}</p>}
+      {entries?.length === 0 && <p className="muted small">{t('아직 앱으로 설치하거나 삭제한 것이 없습니다.')}</p>}
       {entries && entries.length > 0 && (
         <table className="table">
           <thead>
             <tr>
-              <th>언제</th>
-              <th>대상</th>
-              <th>무엇</th>
-              <th>범위</th>
-              <th>결과</th>
+              <th>{t('언제')}</th>
+              <th>{t('대상')}</th>
+              <th>{t('무엇')}</th>
+              <th>{t('범위')}</th>
+              <th>{t('결과')}</th>
             </tr>
           </thead>
           <tbody>
@@ -60,10 +61,10 @@ export function InstallHistory() {
                   {e.projectPath && <div className="muted small">{e.projectPath}</div>}
                 </td>
                 <td className="small">
-                  <span className={e.ok ? 'state-on' : 'warn-text'}>{e.ok ? '성공' : '실패'}</span>
+                  <span className={e.ok ? 'state-on' : 'warn-text'}>{e.ok ? t('성공') : t('실패')}</span>
                   {e.output && (
                     <details>
-                      <summary className="muted small">출력</summary>
+                      <summary className="muted small">{t('출력')}</summary>
                       <pre className="history-output">{e.output}</pre>
                     </details>
                   )}

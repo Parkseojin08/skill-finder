@@ -1,3 +1,4 @@
+import { serverText, t } from './i18n.ts';
 const HEADERS = { 'X-Skill-Finder': '1' };
 
 export class ApiError extends Error {
@@ -14,7 +15,7 @@ export class ApiError extends Error {
  */
 function request(input: string, init: RequestInit): Promise<Response> {
   return fetch(input, init).catch((err: unknown) => {
-    if (err instanceof TypeError) throw new ApiError(`Skill Finder 서버에 연결하지 못했습니다. 검은 실행 창이 켜져 있는지 확인하세요. (${err.message})`, 0);
+    if (err instanceof TypeError) throw new ApiError(t('Skill Finder 서버에 연결하지 못했습니다. 검은 실행 창이 켜져 있는지 확인하세요. ({0})', err.message), 0);
     throw err;
   });
 }
@@ -22,7 +23,7 @@ function request(input: string, init: RequestInit): Promise<Response> {
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new ApiError(body.error ?? `요청 실패 (${res.status})`, res.status);
+    throw new ApiError(body.error ? serverText(body.error) : t('요청 실패 ({0})', res.status), res.status);
   }
   return (await res.json()) as T;
 }
@@ -50,7 +51,7 @@ export async function streamNdjson<E>(path: string, body: unknown, onEvent: (e: 
   });
   if (!res.ok || !res.body) {
     const err = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new ApiError(err.error ?? `요청 실패 (${res.status})`, res.status);
+    throw new ApiError(err.error ? serverText(err.error) : t('요청 실패 ({0})', res.status), res.status);
   }
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = '';

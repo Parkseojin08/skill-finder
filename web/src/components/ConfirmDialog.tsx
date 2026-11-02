@@ -1,10 +1,11 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { t } from '../i18n.ts';
 
 /** In-page modal confirmation (replaces window.confirm, which blocks the whole browser tab). */
 export function ConfirmDialog({
   title,
   children,
-  confirmLabel = '확인',
+  confirmLabel = t('확인'),
   danger = false,
   onConfirm,
   onCancel,
@@ -33,7 +34,7 @@ export function ConfirmDialog({
       <div className="confirm-body">{children}</div>
       <div className="dialog-actions">
         <button type="button" className="ghost" onClick={onCancel} autoFocus>
-          취소
+          {t('취소')}
         </button>
         <button type="button" className={danger ? 'primary danger-solid' : 'primary'} onClick={onConfirm}>
           {confirmLabel}

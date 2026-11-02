@@ -1,7 +1,8 @@
 import { useState } from 'react';
+import { t } from '../i18n.ts';
 
 /** Copies `text` to the clipboard and says so for a moment ("복사됨"), or that it could not. */
-export function CopyButton({ text, label = '복사', className = 'ghost', title }: { text: string; label?: string; className?: string; title?: string }) {
+export function CopyButton({ text, label = t('복사'), className = 'ghost', title }: { text: string; label?: string; className?: string; title?: string }) {
   const [state, setState] = useState<'idle' | 'done' | 'failed'>('idle');
   return (
     <button
@@ -19,7 +20,7 @@ export function CopyButton({ text, label = '복사', className = 'ghost', title 
         setTimeout(() => setState('idle'), 1500);
       }}
     >
-      {state === 'done' ? '복사됨' : state === 'failed' ? '복사 안 됨' : label}
+      {state === 'done' ? t('복사됨') : state === 'failed' ? t('복사 안 됨') : label}
     </button>
   );
 }

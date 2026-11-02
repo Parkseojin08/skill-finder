@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { CATEGORY, METHOD, TRUST } from '../labels.ts';
 import type { ResultItem } from '../types.ts';
 import { Icon } from './Icon.tsx';
+import { t } from '../i18n.ts';
 
 export type Facets = { trust: string[]; category: string[]; method: string[] };
 type Group = keyof Facets;
@@ -53,10 +54,10 @@ export function ActiveFacets({ value, onChange }: { value: Facets; onChange: (f:
           key={`${g}:${k}`}
           type="button"
           className="status-chip action"
-          aria-label={`필터 ${facetLabel(g, k)} 끄기`}
+          aria-label={t('필터 {0} 끄기', facetLabel(g, k))}
           onClick={() => onChange({ ...value, [g]: value[g].filter((x) => x !== k) })}
         >
-          필터 {facetLabel(g, k)} ×
+          {t('필터 ')}{facetLabel(g, k)} ×
         </button>
       ))}
     </>
@@ -68,19 +69,19 @@ export function FacetPanel({ items, value, onChange }: { items: ResultItem[]; va
   const active = facetCount(value);
   const toggle = (g: Group, v: string) => onChange({ ...value, [g]: value[g].includes(v) ? value[g].filter((x) => x !== v) : [...value[g], v] });
 
-  const title: Record<Group, string> = { trust: '제공자', category: '카테고리', method: '설치 방식' };
+  const title: Record<Group, string> = { trust: t('제공자'), category: t('카테고리'), method: t('설치 방식') };
   const label = facetLabel;
 
   return (
-    <aside className={`facets ${open ? 'open' : ''}`} aria-label="결과 분류 필터">
+    <aside className={`facets ${open ? 'open' : ''}`} aria-label={t('결과 분류 필터')}>
       <div className="facets-head">
         <button type="button" className="facets-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-          <Icon name="sliders" size={15} /> 필터{active > 0 ? ` ${active}` : ''}
+          <Icon name="sliders" size={15} />{t(' 필터')}{active > 0 ? ` ${active}` : ''}
         </button>
-        <span className="facets-title">필터</span>
+        <span className="facets-title">{t('필터')}</span>
         {active > 0 && (
           <button type="button" className="linkish small" onClick={() => onChange(NO_FACETS)}>
-            초기화
+            {t('초기화')}
           </button>
         )}
       </div>
@@ -109,7 +110,7 @@ export function FacetPanel({ items, value, onChange }: { items: ResultItem[]; va
             </fieldset>
           );
         })}
-        <p className="facet-note">카테고리는 마켓플레이스 분류와 이름·설명의 키워드로 자동 분류해 틀릴 수 있습니다.</p>
+        <p className="facet-note">{t('카테고리는 마켓플레이스 분류와 이름·설명의 키워드로 자동 분류해 틀릴 수 있습니다.')}</p>
       </div>
     </aside>
   );

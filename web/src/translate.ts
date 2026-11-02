@@ -1,4 +1,5 @@
 import { useEffect, useSyncExternalStore } from 'react';
+import { LANG } from './i18n.ts';
 
 // English → Korean with the browser's built-in, on-device Translator API (Chrome 138+). Nothing is sent to a server.
 // Where the API is missing or never answers (other browsers, embedded Chromium), descriptions stay in English.
@@ -14,11 +15,13 @@ type TranslatorStatic = {
   create(o: CreateOptions): Promise<TranslatorLike>;
 };
 
-export type TranslateState = 'checking' | 'ready' | 'needs-download' | 'downloading' | 'unsupported' | 'error';
+export type TranslateState = 'checking' | 'ready' | 'needs-download' | 'downloading' | 'unsupported' | 'error' | 'off';
 export type TranslateStatus = { state: TranslateState; progress: number | null; error: string | null };
 
-const LANGS = { sourceLanguage: 'en', targetLanguage: 'ko' };
-const STORAGE_KEY = 'sf-ko-translations';
+/** The screen's language when descriptions need translating into it; English screens show them as they are. */
+export const TRANSLATE_TO: 'ko' | 'ja' | null = LANG === 'en' ? null : LANG;
+const LANGS = { sourceLanguage: 'en', targetLanguage: TRANSLATE_TO ?? 'ko' };
+const STORAGE_KEY = TRANSLATE_TO === 'ja' ? 'sf-ja-translations' : 'sf-ko-translations';
 const MAX_STORED = 3000;
 
 let status: TranslateStatus = { state: 'checking', progress: null, error: null };
@@ -120,6 +123,7 @@ async function create(): Promise<void> {
 }
 
 async function init() {
+  if (!TRANSLATE_TO) return setStatus({ state: 'off' });
   const T = api();
   if (!T) return setStatus({ state: 'unsupported' });
   // Embedded Chromium exposes the API but availability() never settles; treat a slow answer as unsupported.
@@ -177,7 +181,7 @@ export function useKorean(text: string | null | undefined, priority = 0): { ko: 
   useSyncExternalStore(subscribe, () => version);
   const t = text?.trim() ?? '';
   useEffect(() => {
-    if (!t || translations.has(t) || inFlight.has(t)) return;
+    if (!TRANSLATE_TO || !t || translations.has(t) || inFlight.has(t)) return;
     pending.set(t, priority);
     pump();
   }, [t, priority]);

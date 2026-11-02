@@ -147,3 +147,20 @@ describe('팀 프리셋 파일', () => {
     assert.equal(many.items.length, 200, '200개까지만');
   });
 });
+
+describe('화면 언어 (i18n)', () => {
+  it('t()는 한국어 원문을 키로 쓰고 {0}을 채운다; 서버 문구는 사전의 틀에 맞춰 옮긴다', async () => {
+    const { matchMessage, t } = await import('../src/i18n.ts');
+    assert.equal(t('결과 {0}개', 3), '결과 3개', '테스트(브라우저 밖)는 한국어');
+    const dict = {
+      '스킬을 찾을 수 없습니다': 'Skill not found',
+      '{0} 검색 실패 ({1})': '{0} search failed ({1})',
+      'skills.sh 검색 실패 ({0})': 'skills.sh search failed: {0}',
+      '시간 초과': 'timed out',
+    };
+    assert.equal(matchMessage(dict, '스킬을 찾을 수 없습니다'), 'Skill not found');
+    assert.equal(matchMessage(dict, 'GitHub 검색 실패 (rate limit)'), 'GitHub search failed (rate limit)');
+    assert.equal(matchMessage(dict, 'skills.sh 검색 실패 (시간 초과)'), 'skills.sh search failed: timed out', '더 긴(구체적인) 틀이 먼저, 채운 값도 옮김');
+    assert.equal(matchMessage(dict, '모르는 문구'), '모르는 문구');
+  });
+});

@@ -1,11 +1,12 @@
 import type { MouseEvent } from 'react';
 import { Icon } from './Icon.tsx';
 import { CATEGORY, formatAgo, formatCount } from '../labels.ts';
-import { useKorean } from '../translate.ts';
+import { TRANSLATE_TO, useKorean } from '../translate.ts';
 import type { OpenedFrom, ResultItem } from '../types.ts';
 import { repoOf } from '../lib/resultOrder.ts';
 import { CopiesBadge, RiskSummary, SourceBadges } from './Badges.tsx';
 import { FavoriteButton } from './FavoriteButton.tsx';
+import { t } from '../i18n.ts';
 
 
 /** The skill page's address; `from` (where in a search it was) rides along so a new tab still logs the view. */
@@ -68,68 +69,68 @@ export function ResultCard({
             </a>
           </h3>
           {repo && (
-            <span className="muted small mono card-owner" title="만든 곳 (GitHub 저장소)">
+            <span className="muted small mono card-owner" title={t('만든 곳 (GitHub 저장소)')}>
               {repo}
             </span>
           )}
           {item.plugin && (
-            <span className="muted small" title={`${item.plugin.marketplace} 마켓플레이스의 플러그인`}>
+            <span className="muted small" title={t('{0} 마켓플레이스의 플러그인', item.plugin.marketplace)}>
               {item.plugin.name}
-              {item.plugin.skillCount > 1 ? ` · 스킬 ${item.plugin.skillCount}개` : ''}
+              {item.plugin.skillCount > 1 ? t(' · 스킬 {0}개', item.plugin.skillCount) : ''}
             </span>
           )}
         </div>
         <FavoriteButton id={item.id} name={item.name} />
       </div>
-      <p className="summary clamp" title={ko ? item.description : undefined} lang={ko ? 'ko' : 'en'}>
-        {waiting && <span className="translating">번역 중 · </span>}
-        {ko ?? (item.description || '설명 없음')}
+      <p className="summary clamp" title={ko ? item.description : undefined} lang={ko ? (TRANSLATE_TO ?? 'en') : 'en'}>
+        {waiting && <span className="translating">{t('번역 중 · ')}</span>}
+        {ko ?? (item.description || t('설명 없음'))}
       </p>
       <div className="card-foot">
         <div className="meta">
           <SourceBadges sources={item.sources} />
           <CopiesBadge copies={item.copies} />
           {item.installs != null && (
-            <span className="stat" title="설치 수 (skills.sh)">
-              <Icon name="download" size={14} /> <span className="sr-only">설치 수 </span>
+            <span className="stat" title={t('설치 수 (skills.sh)')}>
+              <Icon name="download" size={14} /> <span className="sr-only">{t('설치 수 ')}</span>
               {formatCount(item.installs)}
             </span>
           )}
           {item.stars != null && (
-            <span className="stat" title="GitHub 스타">
-              <Icon name="star" size={14} /> <span className="sr-only">GitHub 스타 </span>
+            <span className="stat" title={t('GitHub 스타')}>
+              <Icon name="star" size={14} /> <span className="sr-only">{t('GitHub 스타 ')}</span>
               {formatCount(item.stars)}
             </span>
           )}
           {belowMinStars != null && (
-            <span className="status-chip warn" title="설정한 최소 스타 수보다 적거나 스타 수를 모르는 저장소입니다">
-              {item.stars == null ? '별 수 모름' : `별 ${belowMinStars.toLocaleString()} 미만`}
+            <span className="status-chip warn" title={t('설정한 최소 스타 수보다 적거나 스타 수를 모르는 저장소입니다')}>
+              {item.stars == null ? t('별 수 모름') : t('별 {0} 미만', belowMinStars.toLocaleString())}
             </span>
           )}
           {item.lastCommitAt && (
-            <span className="stat" title="최근 커밋">
-              <Icon name="clock" size={14} /> <span className="sr-only">최근 커밋 </span>
+            <span className="stat" title={t('최근 커밋')}>
+              <Icon name="clock" size={14} /> <span className="sr-only">{t('최근 커밋 ')}</span>
               {formatAgo(item.lastCommitAt)}
             </span>
           )}
           {(item.categories ?? [])
             .filter((c) => c !== 'other')
             .map((c) => (
-              <span key={c} className="cat-tag" title="자동 분류된 카테고리">
+              <span key={c} className="cat-tag" title={t('자동 분류된 카테고리')}>
                 #{CATEGORY[c] ?? c}
               </span>
             ))}
         </div>
         <div className="card-tags">
           {installed && (
-            <span className="status-chip ok" title="이 PC에 설치되어 있습니다">
-              <Icon name="check" size={13} /> 설치됨 · {installed}
+            <span className="status-chip ok" title={t('이 PC에 설치되어 있습니다')}>
+              <Icon name="check" size={13} />{t(' 설치됨 · ')}{installed}
             </span>
           )}
           <RiskSummary level={item.riskLevel} flags={item.riskFlags} />
           {pluginHigh && (
-            <span className="status-chip warn" title="이 스킬을 설치하면 플러그인 전체가 설치되고, 그 안에 위험 높음 스킬이 있습니다">
-              <Icon name="alert" size={13} /> 플러그인에 위험 높음 포함
+            <span className="status-chip warn" title={t('이 스킬을 설치하면 플러그인 전체가 설치되고, 그 안에 위험 높음 스킬이 있습니다')}>
+              <Icon name="alert" size={13} />{t(' 플러그인에 위험 높음 포함')}
             </span>
           )}
         </div>
