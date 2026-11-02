@@ -28,7 +28,17 @@ node --disable-warning=ExperimentalWarning scripts/bench/compare.ts out/per-a.js
 - 코드 변경 전후 비교: 같은 녹화·같은 DB로 변경 전 코드와 변경 후 코드에서 각각 `run.ts` → `score.ts --json` 한 뒤 `compare.ts`.
 - `record`는 사용자의 GitHub 한도를 씁니다. 질의 간격 기본 7초(`--gap`).
 - `--runtime`: 질의마다 힙 증가와 RSS(`node --expose-gc`로 실행하면 수집 뒤 값).
-- 녹화 파일은 `scripts/bench/recordings/`에 두세요(git 제외, 수 MB).
+- 녹화·DB 사본·고정 색인은 측정 폴더 `%LOCALAPPDATA%\SkillFinderBench\`(`SKILL_FINDER_BENCH_DIR`로 바꿈)에 둡니다. %TEMP%는 정리될 수 있고, 수십 MB라 git에 넣지 않습니다. 그 폴더의 `README.txt`에 무엇이 어느 녹화와 짝인지 적습니다(지금: `rec3-2026-10-30` 녹화 + `snap-2026-10-30` 사본).
+
+## 고정 색인 (`fixture.ts`)
+
+판정 질의가 닿는 스킬(질의마다 전문 검색 상위 150개, 그중 상위 50개와 판정된 스킬의 같은 이름 사본, 판정된 스킬 전부)과 그 플러그인·마켓플레이스·저장소 행만 남긴 작은 색인을 만듭니다. 검색 캐시·기록·설치 기록은 지웁니다. 같은 고정 색인끼리만 비교합니다(전체 색인 결과와는 후보가 달라 조금 다름).
+
+```bash
+node --disable-warning=ExperimentalWarning scripts/bench/fixture.ts --db <DB 사본>
+```
+
+출력은 측정 폴더의 `fixtures/fixture-<날짜>.db`입니다(2026-10-30 사본에서 6,522개, 33MB).
 
 ## 채점
 
