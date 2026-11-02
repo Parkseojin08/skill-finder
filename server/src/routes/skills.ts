@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { AppContext } from '../context.ts';
 import type { StoredFiles } from '../indexer.ts';
+import { existingSkillFolder } from '../install/installed.ts';
 import { buildSteps, installLocation, planInstall, type InstallScope } from '../install/plan.ts';
 import { isProjectDir } from '../install/validate.ts';
 import { freshness, TRUST_SCORE, trustTier } from '../search/rank.ts';
@@ -159,7 +160,7 @@ export function skillsRouter(ctx: AppContext): Router {
     res.json({ path, content: sanitizeText(out.text) });
   });
 
-  r.get('/install/preview', (req, res) => {
+  r.get('/install/preview', async (req, res) => {
     const id = typeof req.query.id === 'string' ? req.query.id : '';
     const scope = req.query.scope as InstallScope;
     const projectPath = typeof req.query.projectPath === 'string' && req.query.projectPath ? req.query.projectPath : null;
@@ -184,6 +185,8 @@ export function skillsRouter(ctx: AppContext): Router {
       steps: steps.map((s) => ({ display: s.display, cwd: s.cwd })),
       location: installLocation(plan, scope, projectPath),
       createsLockFile: plan.method === 'skills-cli' && scope === 'project',
+      // the skills CLI replaces a folder of the same name without asking (-y, D-5): say so before the install
+      existing: plan.method === 'skills-cli' && scope !== 'local' ? await existingSkillFolder(store, skill.id, plan.skillName!, scope, projectPath) : null,
     });
   });
 

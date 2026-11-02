@@ -138,11 +138,15 @@ export type SkillDetail = {
   install: InstallPlan;
 };
 
+/** A same-name skill folder the skills CLI would replace. `same`: true = this skill again, false = another, null = unknown. */
+export type ExistingSkill = { path: string; name: string; same: boolean | null; change: InstallChange };
+
 export type InstallPreview = {
   plan: InstallPlan;
   steps: Array<{ display: string; cwd: string }>;
   location: string;
   createsLockFile?: boolean;
+  existing?: ExistingSkill | null;
   error?: string;
 };
 

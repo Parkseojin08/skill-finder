@@ -92,3 +92,37 @@ describe('설정 (UI 토론 D-1)', () => {
     assert.equal(s.minStars, 7, '다른 설정은 그대로');
   });
 });
+
+describe('같은 이름 스킬 덮어쓰기 확인 (전체 점검 2026-11-02 #9)', () => {
+  it('미리보기는 같은 이름 폴더를 알리고, 다른 스킬이면 확인 없이 설치하지 않는다', async () => {
+    const { rawRequest, startTestServer } = await import('./helpers.ts');
+    const { skillFolderName } = await import('../src/install/installed.ts');
+    const srv = await startTestServer();
+    try {
+      const project = mkdtempSync(join(tmpdir(), 'sf-overwrite-'));
+      const raw = md('Web Guide');
+      const row = buildSkillRow({ repo: 'a/b', sha: '0'.repeat(40), dirPath: 'skills/web-guide', raw, tree: new TreeIndex([]), origin: 'generic', pluginId: null, extraFlags: [], install: null, lastCommitAt: null });
+      srv.ctx.store.upsertSkill(row, '');
+      assert.equal(skillFolderName('Web Guide'), 'web-guide', 'skills CLI의 폴더 이름 규칙');
+      const headers = { 'X-Skill-Finder': '1', Origin: `http://127.0.0.1:${srv.port}`, 'Content-Type': 'application/json' };
+      const preview = async () =>
+        JSON.parse((await rawRequest({ port: srv.port, path: `/api/install/preview?id=${encodeURIComponent(row.id)}&scope=project&projectPath=${encodeURIComponent(project)}`, headers })).body);
+      assert.equal((await preview()).existing, null);
+
+      const dir = join(project, '.claude', 'skills', 'web-guide');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'SKILL.md'), md('web-guide', 'Someone else.'));
+      const other = (await preview()).existing;
+      assert.equal(other.same, null, '색인에 없는 스킬: 출처를 모름');
+      assert.equal(other.path, dir);
+      const r = await rawRequest({ port: srv.port, method: 'POST', path: '/api/install', headers, body: JSON.stringify({ id: row.id, scope: 'project', projectPath: project }) });
+      assert.equal(r.status, 409, '확인 없이는 설치 명령을 실행하지 않음');
+      assert.match(JSON.parse(r.body).error, /같은 이름의 다른 스킬/);
+
+      writeFileSync(join(dir, 'SKILL.md'), raw);
+      assert.equal((await preview()).existing.same, true, '같은 SKILL.md면 다시 설치');
+    } finally {
+      await srv.close();
+    }
+  });
+});

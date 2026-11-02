@@ -6,7 +6,7 @@ import { z } from 'zod';
 import type { AppContext } from '../context.ts';
 import { buildSteps, planInstall } from '../install/plan.ts';
 import { executeInstall } from '../install/run.ts';
-import { forgetPlugins, installedPluginCommits, listInstalledPlugins, pluginCommitKey, pluginIndexInfo, scanInstalledSkills } from '../install/installed.ts';
+import { existingSkillFolder, forgetPlugins, installedPluginCommits, listInstalledPlugins, pluginCommitKey, pluginIndexInfo, scanInstalledSkills } from '../install/installed.ts';
 import { uninstallPlugin, uninstallSkill } from '../install/uninstall.ts';
 import { isProjectDir } from '../install/validate.ts';
 import { getSettings } from '../settings.ts';
@@ -18,6 +18,8 @@ const Body = z.object({
   id: z.string().min(1).max(500),
   scope: z.enum(['user', 'project', 'local']),
   projectPath: z.string().max(1000).optional(),
+  /** The confirm dialog showed that a same-name folder from another (or an unknown) source will be replaced. */
+  overwrite: z.boolean().optional(),
 });
 
 const UninstallBody = z.object({
@@ -80,6 +82,13 @@ export function installRouter(ctx: AppContext): Router {
     if (scope !== 'user' && !isProjectDir(projectPath)) {
       res.status(400).json({ error: '프로젝트 경로는 존재하는 디렉터리의 절대경로여야 합니다' });
       return;
+    }
+    if (plan.method === 'skills-cli' && scope !== 'local' && !parsed.data.overwrite) {
+      const existing = await existingSkillFolder(store, skill.id, plan.skillName!, scope, projectPath);
+      if (existing && existing.same !== true) {
+        res.status(409).json({ error: `${existing.path}에 같은 이름의 다른 스킬이 있습니다. 설치 확인 창에서 덮어쓰기를 확인한 뒤 다시 설치하세요.` });
+        return;
+      }
     }
     if (installing) {
       res.status(409).json({ error: '다른 설치가 진행 중입니다' });

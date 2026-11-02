@@ -3,7 +3,7 @@ import { apiGet, streamNdjson } from '../api.ts';
 import { forgetInstalled } from '../installed.ts';
 import { HELP, METHOD, RISK_FLAGS, RISK_LEVEL, RISK_RANK, SCOPE } from '../labels.ts';
 import { HelpTip } from './HelpTip.tsx';
-import type { InstallPlan, InstallPreview, InstallScope, RiskLevel, SkillDetail } from '../types.ts';
+import type { ExistingSkill, InstallPlan, InstallPreview, InstallScope, RiskLevel, SkillDetail } from '../types.ts';
 import { RiskBadge, RiskFlags, RiskSummary } from './Badges.tsx';
 import { FolderInput, rememberProject } from './FolderInput.tsx';
 
@@ -19,6 +19,32 @@ export function riskierSiblings(skill: SkillDetail): PluginSkill[] {
   return skill.plugin.skills
     .filter((s) => s.id !== skill.id && RISK_RANK[s.riskLevel] > RISK_RANK[skill.riskLevel])
     .sort((a, b) => RISK_RANK[b.riskLevel] - RISK_RANK[a.riskLevel] || a.name.localeCompare(b.name));
+}
+
+/**
+ * A same-name skill folder the install replaces (the skills CLI runs with -y, D-5). Another or an unknown skill
+ * needs a deliberate tick (project review 2026-11-02 #9); the same skill again is a plain reinstall.
+ */
+export function needsOverwriteCheck(existing: ExistingSkill | null | undefined): boolean {
+  return !!existing && existing.same !== true;
+}
+
+export function OverwriteNote({ existing }: { existing: ExistingSkill | null | undefined }) {
+  if (!existing) return null;
+  if (existing.same) {
+    return (
+      <p className="note">
+        이미 설치되어 있습니다{existing.change === 'changed' ? '(색인의 내용과 다름)' : ''}. 다시 설치하면 <code>{existing.path}</code>를 새 파일로 바꿉니다. 그 폴더에서
+        고친 내용은 사라집니다.
+      </p>
+    );
+  }
+  return (
+    <p className="warn-box">
+      같은 이름의 {existing.same === false ? '다른 스킬' : '출처를 알 수 없는 스킬'}
+      {existing.name ? `(${existing.name})` : ''}이 이미 <code>{existing.path}</code>에 있습니다. 설치하면 그 폴더를 덮어씁니다.
+    </p>
+  );
 }
 
 /** `here`: shown above the plugin's own skill list, so no pointer to it. */
@@ -110,7 +136,8 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
     setLog([]);
     setResult(null);
     try {
-      await streamNdjson<InstallEvent>('/install', { id: skill.id, scope, projectPath: scope === 'user' ? undefined : projectPath }, (e) => {
+      const body = { id: skill.id, scope, projectPath: scope === 'user' ? undefined : projectPath, overwrite: !!preview?.existing };
+      await streamNdjson<InstallEvent>('/install', body, (e) => {
         if (e.type === 'log') setLog((l) => [...l, { line: e.line, stream: e.stream }]);
         else {
           setResult({ ok: e.ok, message: e.message });
@@ -173,6 +200,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
             {preview.createsLockFile && <> · 프로젝트 루트에 <code>skills-lock.json</code>이 생깁니다</>}
           </div>
           {version && <div className="muted small">{version}</div>}
+          <OverwriteNote existing={preview.existing} />
         </div>
       )}
       {/* what is being installed, right above the button (UI debate 2-5) */}
@@ -180,7 +208,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
         <RiskSummary level={skill.riskLevel} flags={skill.riskFlags} />
       </div>
       <button type="button" className="primary" disabled={!ready || running} onClick={() => setConfirming(true)}>
-        {running ? '설치 중…' : '설치…'}
+        {running ? '설치 중…' : preview?.existing?.same ? '다시 설치…' : '설치…'}
       </button>
       {(log.length > 0 || result) && (
         <div className="install-log">
@@ -225,6 +253,8 @@ function ConfirmDialog(props: {
   // skills, so the extra step is rare.
   const high = props.riskLevel === 'high' || props.siblings.some((s) => s.riskLevel === 'high');
   const [checked, setChecked] = useState(false);
+  const overwrite = needsOverwriteCheck(props.preview.existing);
+  const [overwriteChecked, setOverwriteChecked] = useState(false);
   useEffect(() => {
     const d = ref.current;
     if (d && !d.open) d.showModal();
@@ -251,6 +281,13 @@ function ConfirmDialog(props: {
         <RiskFlags flags={props.riskFlags} />
       </div>
       <SiblingRiskNote skills={props.siblings} />
+      <OverwriteNote existing={props.preview.existing} />
+      {overwrite && (
+        <label className="confirm-check">
+          <input type="checkbox" checked={overwriteChecked} onChange={(e) => setOverwriteChecked(e.target.checked)} />
+          기존 폴더를 덮어쓰는 것을 확인했습니다
+        </label>
+      )}
       {high && (
         <label className="confirm-check">
           <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />위 명령과 위험 신호를 확인했습니다
@@ -261,8 +298,8 @@ function ConfirmDialog(props: {
         <button type="button" className="ghost" onClick={props.onCancel} autoFocus>
           취소
         </button>
-        <button type="button" className="primary" onClick={props.onConfirm} disabled={high && !checked}>
-          설치
+        <button type="button" className="primary" onClick={props.onConfirm} disabled={(high && !checked) || (overwrite && !overwriteChecked)}>
+          {props.preview.existing?.same ? '다시 설치' : '설치'}
         </button>
       </div>
     </dialog>

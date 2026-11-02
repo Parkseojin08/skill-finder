@@ -11,6 +11,7 @@ import { METHOD } from '../labels.ts';
 import type { InstallPreview, RepoResult, SettingsResponse } from '../types.ts';
 import { RiskBadge, RiskSummary } from './Badges.tsx';
 import { FolderInput } from './FolderInput.tsx';
+import { needsOverwriteCheck, OverwriteNote } from './InstallPanel.tsx';
 
 type Step = 'select' | 'confirm' | 'run';
 type Status = 'wait' | 'run' | 'ok' | 'fail';
@@ -34,6 +35,8 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
   const [log, setLog] = useState<string[]>([]);
   /** A chosen skill is high risk: one deliberate tick before installing, as in the single-skill dialog (2-9). */
   const [highChecked, setHighChecked] = useState(false);
+  /** A chosen skill would replace another skill's folder of the same name: also one tick. */
+  const [overwriteChecked, setOverwriteChecked] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
@@ -57,6 +60,7 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
 
   const chosen = installable.filter((s) => selected.has(s.id));
   const chosenHigh = chosen.filter((s) => s.riskLevel === 'high');
+  const toOverwrite = chosen.filter((s) => needsOverwriteCheck(previews[s.id]?.existing));
   const toggle = (id: string, on: boolean) =>
     setSelected((cur) => {
       const next = new Set(cur);
@@ -67,6 +71,7 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
 
   const review = async () => {
     setHighChecked(false); // the choice may have changed since the last review
+    setOverwriteChecked(false);
     setBusy(true);
     setError(null);
     try {
@@ -93,7 +98,8 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
       setLog((l) => [...l, `── ${s.name}`]);
       let ok = false;
       try {
-        await streamNdjson<InstallEvent>('/install', { id: s.id, scope, projectPath: scope === 'user' ? undefined : projectPath }, (e) => {
+        const body = { id: s.id, scope, projectPath: scope === 'user' ? undefined : projectPath, overwrite: !!previews[s.id]?.existing };
+        await streamNdjson<InstallEvent>('/install', body, (e) => {
           if (e.type === 'log') setLog((l) => [...l, e.line]);
           else {
             ok = e.ok;
@@ -169,6 +175,7 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
                     <span className="muted small">작업 폴더: {st.cwd}</span>
                   </div>
                 ))}
+                <OverwriteNote existing={previews[s.id]?.existing} />
               </li>
             ))}
           </ol>
@@ -177,6 +184,13 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
           <Label className="flex items-center gap-2">
             <Checkbox checked={highChecked} onCheckedChange={(on) => setHighChecked(on === true)} />
             위험 높음 {chosenHigh.length}개({chosenHigh.map((s) => s.name).join(', ')})의 명령과 위험 신호를 확인했습니다
+          </Label>
+        )}
+
+        {step === 'confirm' && toOverwrite.length > 0 && (
+          <Label className="flex items-center gap-2">
+            <Checkbox checked={overwriteChecked} onCheckedChange={(on) => setOverwriteChecked(on === true)} />
+            같은 이름의 기존 폴더 {toOverwrite.length}개({toOverwrite.map((s) => s.name).join(', ')})를 덮어쓰는 것을 확인했습니다
           </Label>
         )}
 
@@ -209,7 +223,7 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
               <Button variant="ghost" onClick={() => setStep('select')}>
                 뒤로
               </Button>
-              <Button onClick={() => void run()} disabled={chosenHigh.length > 0 && !highChecked}>
+              <Button onClick={() => void run()} disabled={(chosenHigh.length > 0 && !highChecked) || (toOverwrite.length > 0 && !overwriteChecked)}>
                 <DownloadSimpleIcon data-icon="inline-start" />
                 {chosen.length}개 설치
               </Button>

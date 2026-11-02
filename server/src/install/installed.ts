@@ -1,6 +1,6 @@
 // What is installed on this PC and how it matches the index (UI debate stage 3: shown only, nothing is run).
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, posix } from 'node:path';
@@ -72,11 +72,17 @@ function readLock(file: string): Map<string, string> {
   return byFolder;
 }
 
+/** The folder the skills CLI installs a skill into (its `sanitizeName`, skills@1.7.4). */
+export function skillFolderName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9._]+/g, '-').replace(/^[.\-]+|[.\-]+$/g, '').slice(0, 255) || 'unnamed-skill';
+}
+
 /**
  * Installed skill folders of one scope, each matched to the index by, in order: the skills CLI lock file
- * (source + path), the app's own install log (same name), or an identical SKILL.md (hash).
+ * (source + path), the app's own install log (same name), or an identical SKILL.md (hash). `onlyFolder` limits
+ * the scan to that folder.
  */
-export async function scanInstalledSkills(store: Store, scope: 'user' | 'project', projectPath: string | null): Promise<InstalledSkill[]> {
+export async function scanInstalledSkills(store: Store, scope: 'user' | 'project', projectPath: string | null, onlyFolder?: string): Promise<InstalledSkill[]> {
   const root = scope === 'user' ? homedir() : projectPath!;
   const dir = join(root, '.claude', 'skills');
   const lock = readLock(scope === 'user' ? join(homedir(), '.agents', '.skill-lock.json') : join(root, 'skills-lock.json'));
@@ -94,6 +100,7 @@ export async function scanInstalledSkills(store: Store, scope: 'user' | 'project
   }
   const out: InstalledSkill[] = [];
   for (const folder of entries.sort()) {
+    if (onlyFolder && folder.toLowerCase() !== onlyFolder.toLowerCase()) continue;
     const path = join(dir, folder);
     let raw: string;
     try {
@@ -122,6 +129,25 @@ export async function scanInstalledSkills(store: Store, scope: 'user' | 'project
     });
   }
   return out;
+}
+
+/** A folder the skills CLI would overwrite (it installs with `-y`, D-5): who it is, as far as the app can tell. */
+export type ExistingSkill = {
+  path: string;
+  name: string;
+  /** true: this indexed skill again (a reinstall); false: another one; null: cannot tell (no SKILL.md, or not indexed). */
+  same: boolean | null;
+  change: Change;
+};
+
+export async function existingSkillFolder(store: Store, skillId: string, skillName: string, scope: 'user' | 'project', projectPath: string | null): Promise<ExistingSkill | null> {
+  const folder = skillFolderName(skillName);
+  const path = join(scope === 'user' ? homedir() : projectPath!, '.claude', 'skills', folder);
+  if (!existsSync(path)) return null;
+  const [hit] = await scanInstalledSkills(store, scope, projectPath, folder);
+  if (!hit) return { path, name: folder, same: null, change: 'unknown' };
+  const same = hit.skillId == null ? null : hit.skillId === skillId;
+  return { path: hit.path, name: hit.name, same, change: same ? hit.change : 'unknown' };
 }
 
 export type InstalledPlugin = {
