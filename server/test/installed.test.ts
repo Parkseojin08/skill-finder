@@ -137,6 +137,8 @@ describe('같은 이름 스킬 덮어쓰기 확인 (전체 점검 2026-11-02 #9)
       srv.ctx.store.logInstall({ skill_id: row.id, plugin_id: null, method: 'skills-cli', scope: 'project', project_path: project, argv: [], exit_code: 0, output: '' });
       srv.ctx.store.logInstall({ skill_id: row.id, plugin_id: null, method: 'skills-cli', scope: 'project', project_path: join(project, 'failed'), argv: [], exit_code: 1, output: '' });
       assert.deepEqual(srv.ctx.store.listInstalledProjects(), [project], '실패한 설치는 넣지 않음');
+      const log = JSON.parse((await rawRequest({ port: srv.port, path: '/api/install/log', headers })).body) as { entries: Array<{ target: string; ok: boolean; projectPath: string }> };
+      assert.deepEqual(log.entries.map((e) => [e.target, e.ok]), [[row.id, false], [row.id, true]], '설치 기록은 최신 먼저, 성공·실패와 함께');
       const status = await rawRequest({ port: srv.port, path: '/api/install/status', headers });
       assert.deepEqual(JSON.parse(status.body), { installing: false });
     } finally {

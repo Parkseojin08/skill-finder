@@ -10,19 +10,10 @@ import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { useInstalled } from '../installed.ts';
 import { jobLine, RISK_RANK, STAGES } from '../labels.ts';
 import { fileStem, resultsJson, resultsMarkdown, saveFile } from '../lib/exportList.ts';
+import { readPageSize, savePageSize } from '../lib/prefs.ts';
 import { byPopular, foldResults, nameMatches, navigationalWord, SORTS, type SortKey } from '../lib/resultOrder.ts';
 import type { Health, Job, OpenedFrom, ResultItem, RiskLevel, SearchEvent, SearchSource, SettingsResponse, SourceKind, SourceProgress } from '../types.ts';
 
-/** Results per page, remembered in this browser. */
-const PAGE_SIZE_KEY = 'skill-finder-page-size';
-function readPageSize(): number {
-  try {
-    const n = Number(localStorage.getItem(PAGE_SIZE_KEY));
-    return [5, 10, 20].includes(n) ? n : 5;
-  } catch {
-    return 5;
-  }
-}
 
 /** Below this many indexed skills the index is probably still being built (first run). */
 const FEW_SKILLS = 1000;
@@ -713,11 +704,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                       onChange={(e) => {
                         setPageSize(Number(e.target.value));
                         setPage(1);
-                        try {
-                          localStorage.setItem(PAGE_SIZE_KEY, e.target.value);
-                        } catch {
-                          // not remembered; nothing else changes
-                        }
+                        savePageSize(Number(e.target.value));
                       }}
                       aria-label="페이지당 개수"
                     >

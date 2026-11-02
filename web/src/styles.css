@@ -2381,3 +2381,30 @@ kbd {
     white-space: nowrap;
   }
 }
+
+/* README 추천 matched words, 설치 기록 (review 2026-11-02) */
+@layer app {
+  .matched-terms {
+    margin: 4px 0 10px 4px;
+  }
+  .install-history > summary {
+    cursor: pointer;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .install-history > summary h2 {
+    display: inline;
+    margin: 0;
+  }
+  .history-output {
+    max-height: 200px;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    padding: 8px;
+    margin: 4px 0 0;
+  }
+}

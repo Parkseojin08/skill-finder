@@ -10,6 +10,7 @@ import { existingSkillFolder, forgetPlugins, installedPluginCommits, listInstall
 import { uninstallPlugin, uninstallSkill } from '../install/uninstall.ts';
 import { isProjectDir } from '../install/validate.ts';
 import { getSettings } from '../settings.ts';
+import { maskSecrets } from '../util/log.ts';
 import { FolderPickerUnavailable, pickFolder } from '../util/folderPicker.ts';
 import { ndjson } from '../util/ndjson.ts';
 import { isPlainFolderName, resolveDroppedFolder } from '../util/resolveFolder.ts';
@@ -134,6 +135,23 @@ export function installRouter(ctx: AppContext): Router {
       installing = false;
       out.end();
     }
+  });
+
+  // What the app ran: installs and removals with their result and output (review 2026-11-02), to find why one
+  // failed without the console. Output masked like the log file and cut to 4,000 characters.
+  r.get('/install/log', (_req, res) => {
+    res.json({
+      entries: store.listInstallLog(50).map((e) => ({
+        id: e.id,
+        at: e.created_at,
+        method: e.method,
+        scope: e.scope,
+        projectPath: e.project_path,
+        target: e.plugin_id ?? e.skill_id,
+        ok: e.exit_code === 0,
+        output: maskSecrets(e.output ?? '').slice(-4000),
+      })),
+    });
   });
 
   // Whether an install or removal is running: the page asks when its result stream ended without a result

@@ -8,6 +8,7 @@ import { RiskBadge, RiskSummary } from '../components/Badges.tsx';
 import { RISK_LEVEL } from '../labels.ts';
 import type { InstallChange, InstalledResponse, SettingsResponse } from '../types.ts';
 import { installedMarkdown, saveFile } from '../lib/exportList.ts';
+import { InstallHistory } from '../components/InstallHistory.tsx';
 
 /** How an install compares with the index (UI debate 3-3); shown only, nothing is updated from here. */
 const CHANGE: Record<InstallChange, string | null> = {
@@ -342,6 +343,9 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
                 )}
               </tbody>
             </table>
+          </section>
+          <section>
+            <InstallHistory />
           </section>
         </>
       )}

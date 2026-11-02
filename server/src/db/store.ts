@@ -595,6 +595,14 @@ export class Store {
   }
 
   /** Skills the app installed into a skills folder (skills CLI), newest first, to match those folders to the index. */
+  /** The latest installs and removals, newest first (the 설치됨 screen's history). */
+  listInstallLog(limit = 50): Array<{ id: number; created_at: string; method: string; scope: string; project_path: string | null; skill_id: string | null; plugin_id: string | null; exit_code: number | null; output: string | null }> {
+    return this.all(
+      'SELECT id, created_at, method, scope, project_path, skill_id, plugin_id, exit_code, output FROM install_log ORDER BY id DESC LIMIT ?',
+      limit,
+    );
+  }
+
   /** Project folders the app installed into (newest first), for the 설치됨 screen's shortcuts; gone ones left out. */
   listInstalledProjects(limit = 8): string[] {
     return this.all<{ project_path: string }>(

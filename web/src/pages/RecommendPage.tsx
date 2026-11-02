@@ -6,12 +6,13 @@ import { ResultCard, skillHref } from '../components/ResultCard.tsx';
 import { useInstalled } from '../installed.ts';
 import { Translated } from '../components/Translated.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
+import { readPageSize, savePageSize } from '../lib/prefs.ts';
 import type { RecommendResult, ResultItem, SettingsResponse } from '../types.ts';
 
 /** What to do next, per error status of POST /readme-skills. */
 const ERROR_HINT: Record<number, string> = {
   400: '폴더의 전체 경로(예: C:\\Users\\me\\project)를 입력하거나 "폴더 선택"으로 고르세요.',
-  404: '이 폴더 바로 아래에 README(README.md 등)가 없습니다. 프로젝트 루트 폴더를 골랐는지 확인하세요.',
+  404: '프로젝트 루트 폴더를 골랐는지 확인하세요. 아래에 이 프로젝트를 나타내는 영어 단어를 넣어 직접 찾을 수도 있습니다.',
   413: 'README가 1MB를 넘어 읽지 않았습니다.',
 };
 
@@ -20,9 +21,12 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
   const [projectPath, setProjectPath] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<RecommendResult | null>(null);
-  const [error, setError] = useState<{ message: string; hint?: string } | null>(null);
+  const [error, setError] = useState<{ message: string; hint?: string; status?: number } | null>(null);
+  /** Why a word was not added ("이미 있음", not an English word): said instead of ignoring it (review 2026-11-02). */
+  const [wordMsg, setWordMsg] = useState<string | null>(null);
+  const [manualWords, setManualWords] = useState('');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(5);
+  const [pageSize, setPageSize] = useState(readPageSize);
   /** High-risk skills are hidden like in search (project review 2026-11-02: a curl|sh skill ranked 10th). */
   const [showRisky, setShowRisky] = useState(false);
   /** The keywords shown as chips (the first analysis's, plus added words), and the ones turned off. */
@@ -57,7 +61,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
     } catch (e) {
       setResult(null);
       const status = e instanceof ApiError ? e.status : 0;
-      setError({ message: String((e as Error).message ?? e), hint: ERROR_HINT[status] });
+      setError({ message: String((e as Error).message ?? e), hint: ERROR_HINT[status], status });
     } finally {
       setBusy(false);
     }
@@ -74,7 +78,9 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
   };
   const addWord = () => {
     const w = newWord.trim().toLowerCase();
-    if (!/^[a-z][a-z0-9-]{1,40}$/.test(w) || terms.includes(w)) return;
+    setWordMsg(null);
+    if (terms.includes(w)) return setWordMsg('이미 있는 단어입니다.');
+    if (!/^[a-z][a-z0-9-]{1,40}$/.test(w)) return setWordMsg('스킬 설명이 영어라 영어 단어만 더할 수 있습니다(영문·숫자·-, 2~41자). 예: typescript, nextjs');
     const nextAdded = [...added, w];
     setTerms([w, ...terms]);
     setAdded(nextAdded);
@@ -124,11 +130,31 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
           {error.hint && <div className="small">{error.hint}</div>}
         </div>
       )}
+      {error?.status === 404 && (
+        // no README or package file: the project described in a few English words instead (local, no AI)
+        <form
+          className="row add-word"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const words = [...new Set(manualWords.toLowerCase().split(/[\s,]+/).filter((w) => /^[a-z][a-z0-9-]{1,40}$/.test(w)))].slice(0, 20);
+            if (!words.length) return;
+            setTerms(words);
+            setOff(new Set());
+            setAdded(words);
+            void analyze(projectPath, { off: new Set(), added: words });
+          }}
+        >
+          <input value={manualWords} onChange={(e) => setManualWords(e.target.value)} placeholder="예: react dashboard charts" aria-label="이 프로젝트를 나타내는 영어 단어" />
+          <button type="submit" className="ghost" disabled={busy || !manualWords.trim()}>
+            단어로 찾기
+          </button>
+        </form>
+      )}
 
       {result && (
         <>
           <section className="readme-summary">
-            <h2>{/package\.json$|pyproject\.toml$|Cargo\.toml$/i.test(result.readmePath) ? `${result.readmePath.split(/[\\/]/).pop()} 요약 (README 없음)` : 'README 요약'}</h2>
+            <h2>{!result.readmePath ? '넣은 단어로 찾은 결과' : /package\.json$|pyproject\.toml$|Cargo\.toml$/i.test(result.readmePath) ? `${result.readmePath.split(/[\\/]/).pop()} 요약 (README 없음)` : 'README 요약'}</h2>
             <h3 className="summary-title">{result.summary.title}</h3>
             {result.summary.intro ? <Translated className="summary" text={result.summary.intro} /> : <p className="muted">소개 문단이 없습니다.</p>}
             {result.summary.features.length > 0 && (
@@ -167,6 +193,11 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
                 </button>
               </form>
             </div>
+            {wordMsg && (
+              <p className="warn-text small" role="status">
+                {wordMsg}
+              </p>
+            )}
           </section>
 
           {skills.length === 0 ? (
@@ -210,6 +241,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
                     onChange={(e) => {
                       setPageSize(Number(e.target.value));
                       setPage(1);
+                      savePageSize(Number(e.target.value));
                     }}
                     aria-label="페이지당 개수"
                   >
@@ -223,8 +255,9 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
               </div>
               <div className="results">
                 {pageItems.map((m, i) => (
-                  <div key={m.item.id} title={`README와 겹친 단어: ${m.matchedTerms.join(', ')}`}>
+                  <div key={m.item.id}>
                     <ResultCard item={m.item} position={i} href={skillHref(m.item.id)} installed={installedAs(m.item)} onSelect={() => onOpen(m.item)} />
+                    <p className="muted small matched-terms">겹친 단어: {m.matchedTerms.join(', ')}</p>
                   </div>
                 ))}
               </div>

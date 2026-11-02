@@ -444,12 +444,15 @@ export function recommendForProject(store: Store, projectPath: unknown, weights:
   } catch (err) {
     if (!(err instanceof ReadmeError) || err.code !== 'README_NOT_FOUND') throw err;
     const manifest = manifestAsReadme(projectPath as string);
-    if (!manifest) throw new ReadmeError('README_NOT_FOUND', '폴더 바로 아래에 README도, 설명이 있는 package.json·pyproject.toml·Cargo.toml도 없습니다.');
-    source = manifest;
+    // nothing to read: the words typed on the page are the whole description (readmePath '' says so)
+    if (manifest) source = manifest;
+    else if (opts.extra?.length) source = { path: '', md: '' };
+    else throw new ReadmeError('README_NOT_FOUND', '폴더 바로 아래에 README도, 설명이 있는 package.json·pyproject.toml·Cargo.toml도 없습니다.');
   }
   const info = extractReadme(source.md, basename(projectPath as string));
   const off = new Set((opts.exclude ?? []).map((t) => t.toLowerCase()));
-  let keywords = termWeights(info).filter((k) => !off.has(k.term.toLowerCase()));
+  // words only: the folder name shown as the title is not a keyword ("skill finder" made "finder" one)
+  let keywords = termWeights(source.path ? info : { ...info, title: '' }).filter((k) => !off.has(k.term.toLowerCase()));
   const top = keywords[0]?.weight ?? CONFIG.weights.title;
   for (const word of opts.extra ?? []) {
     for (const term of processTerm(word.trim()) ?? []) {

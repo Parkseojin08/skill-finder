@@ -270,6 +270,10 @@ describe('README 추천 단어 조절·README 없는 프로젝트 (전체 점검
     assert.equal(recommendForProject(srv.ctx.store, dir, DEFAULT_SETTINGS.weights).summary.title, 'sheets');
     rmSync(join(dir, 'pyproject.toml'));
     assert.throws(() => recommendForProject(srv.ctx.store, dir, DEFAULT_SETTINGS.weights), /package\.json/);
+    // nothing to read, but words typed on the page: those words alone
+    const typed = recommendForProject(srv.ctx.store, dir, DEFAULT_SETTINGS.weights, { extra: ['pdf', 'tables'] });
+    assert.equal(typed.readmePath, '');
+    assert.equal(typed.skills[0]?.item.name, 'pdf-tools');
     rmSync(dir, { recursive: true, force: true });
   });
 });

@@ -10,7 +10,7 @@ import { forgetInstalled } from '../installed.ts';
 import { METHOD } from '../labels.ts';
 import type { InstallPreview, InstallScan, RepoResult, SettingsResponse } from '../types.ts';
 import { RiskBadge, RiskSummary } from './Badges.tsx';
-import { FolderInput } from './FolderInput.tsx';
+import { FolderInput, rememberProject } from './FolderInput.tsx';
 import { needsOverwriteCheck, OverwriteNote } from './InstallPanel.tsx';
 import { CopyButton } from './CopyButton.tsx';
 import { InstallScanView, scanIsHigh } from './InstallScan.tsx';
@@ -111,11 +111,13 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
       setStatus((cur) => ({ ...cur, [s.id]: 'run' }));
       setLog((l) => [...l, `── ${s.name}`]);
       let ok = false;
+      let answered = false;
       try {
         const body = { id: s.id, scope, projectPath: scope === 'user' ? undefined : projectPath, overwrite: previews[s.id]?.existing?.path };
         await streamNdjson<InstallEvent>('/install', body, (e) => {
           if (e.type === 'log') setLog((l) => [...l, e.line]);
           else {
+            answered = true;
             ok = e.ok;
             setLog((l) => [...l, e.message]);
           }
@@ -123,7 +125,19 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
       } catch (e) {
         setLog((l) => [...l, String((e as Error).message ?? e)]);
       }
+      // cut off without a result, as in the single install (F4): wait for it to finish before the next one, which
+      // the server would otherwise refuse as "다른 설치가 진행 중"
+      if (!answered) {
+        let st = await apiGet<{ installing: boolean }>('/install/status').catch(() => null);
+        if (st?.installing) setLog((l) => [...l, '응답이 끊겼지만 설치는 아직 진행 중입니다. 끝나기를 기다립니다…']);
+        for (let i = 0; st?.installing && i < 120; i++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          st = await apiGet<{ installing: boolean }>('/install/status').catch(() => null);
+        }
+        setLog((l) => [...l, '설치 결과를 받지 못했습니다. 설치됨 화면에서 설치됐는지 확인하세요.']);
+      }
       setStatus((cur) => ({ ...cur, [s.id]: ok ? 'ok' : 'fail' }));
+      if (ok && scope === 'project') rememberProject(projectPath);
     }
     forgetInstalled();
     setBusy(false);
@@ -142,7 +156,7 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
           <DialogDescription>
             {step === 'select' && '설치할 스킬과 범위를 고르세요. 스킬마다 따로 설치되며, 다음 단계에서 실행할 명령을 확인합니다.'}
             {step === 'confirm' && '아래 명령을 이 순서대로 실행합니다. 스킬은 에이전트 권한으로 실행되니 내용을 확인한 출처만 설치하세요.'}
-            {step === 'run' && (busy ? `설치 중… ${done + failedCount}/${chosen.length}` : `완료: 성공 ${done}개${failedCount ? `, 실패 ${failedCount}개` : ''}. 다음 Claude Code 세션부터 반영됩니다.`)}
+            {step === 'run' && (busy ? `설치 중… ${done + failedCount}/${chosen.length}` : `완료: 성공 ${done}개${failedCount ? `, 실패 ${failedCount}개` : ''}. 다음 Claude Code 세션부터 반영되고, 설명과 맞는 일을 시키거나 /이름으로 부르면 씁니다.`)}
           </DialogDescription>
           {/* the description changes in place, which is not announced: the same progress in a live region */}
           <p className="sr-only" role="status">
