@@ -49,3 +49,50 @@ describe('검색 쿼리 (1단계)', () => {
     assert.equal(c.store.searchSkillsFts('"widget"', 4, ['anything']).length, 4);
   });
 });
+
+describe('데이터 백업·손상 복구 (전체 점검 #4)', () => {
+  it('예전 형식의 데이터를 바꾸기 전에 앱 버전 이름으로 백업한다', async () => {
+    const { existsSync } = await import('node:fs');
+    const { DatabaseSync } = await import('node:sqlite');
+    const { MIGRATIONS } = await import('../src/db/schema.ts');
+    const path = join(mkdtempSync(join(tmpdir(), 'sf-bak-')), 'skill-finder.db');
+    const old = new DatabaseSync(path);
+    old.exec(MIGRATIONS[0]);
+    old.exec('PRAGMA user_version = 1');
+    old.close();
+    openDb(path, { backupLabel: '9.9.9' }).close();
+    const bak = `${path}.before-9.9.9.bak`;
+    assert.ok(existsSync(bak));
+    const copy = new DatabaseSync(bak, { readOnly: true });
+    assert.equal((copy.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 1, '바꾸기 전 형식 그대로');
+    copy.close();
+    openDb(path, { backupLabel: '9.9.10' }).close();
+    assert.ok(!existsSync(`${path}.before-9.9.10.bak`), '이미 최신 형식이면 백업하지 않음');
+  });
+
+  it('손상된 데이터 파일은 옮겨 두고 백업으로 되살리며, 백업이 없으면 새로 시작한다', async () => {
+    const { copyFileSync, readdirSync, rmSync, writeFileSync } = await import('node:fs');
+    const { openContext } = await import('../src/bootstrap.ts');
+    const dir = mkdtempSync(join(tmpdir(), 'sf-corrupt-'));
+    const config = { port: 0, dev: false, dataDir: dir, githubToken: null };
+    const path = join(dir, 'skill-finder.db');
+    const good = createContext(config, path);
+    good.store.upsertSkill(
+      buildSkillRow({ repo: 'a/b', sha: '0'.repeat(40), dirPath: 'skills/x', raw: '---\nname: x\ndescription: X.\n---\n', tree: new TreeIndex([]), origin: 'generic', pluginId: null, extraFlags: [], install: null, lastCommitAt: null }),
+      '',
+    );
+    good.store.db.close();
+    copyFileSync(path, `${path}.before-0.0.1.bak`);
+    writeFileSync(path, 'this is not a database '.repeat(200));
+    const restored = openContext(config);
+    assert.equal(restored.store.countSkills(), 1, '백업의 스킬이 돌아옴');
+    restored.store.db.close();
+    assert.ok(readdirSync(dir).some((f) => f.startsWith('skill-finder.db.corrupt-')), '손상된 파일은 지우지 않고 옮겨 둠');
+
+    for (const f of readdirSync(dir)) if (f.endsWith('.bak')) rmSync(join(dir, f));
+    writeFileSync(path, 'still not a database '.repeat(200));
+    const fresh = openContext(config);
+    assert.equal(fresh.store.countSkills(), 0);
+    fresh.store.db.close();
+  });
+});

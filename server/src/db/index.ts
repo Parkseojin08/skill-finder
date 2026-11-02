@@ -1,3 +1,5 @@
+import { existsSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { MIGRATIONS } from './schema.ts';
 
@@ -26,22 +28,34 @@ export function mmapBytesFor(path: string, env: NodeJS.ProcessEnv = process.env)
   return MMAP_BYTES;
 }
 
-export function openDb(path: string): Db {
+/**
+ * `backupLabel`: names the copy made before a migration (`<db>.before-<label>.bak`, the app version), which the
+ * launcher puts back when a new version fails to start (project review #4).
+ */
+export function openDb(path: string, opts: { backupLabel?: string | null } = {}): Db {
   const db = new DatabaseSync(path);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF; PRAGMA busy_timeout = 5000;');
-  const mmap = mmapBytesFor(path);
-  if (mmap > 0) {
-    db.exec(`PRAGMA mmap_size = ${mmap}`);
-    const got = (db.prepare('PRAGMA mmap_size').get() as { mmap_size: number } | undefined)?.mmap_size ?? 0;
-    if (got === 0) console.warn('[db] mmap을 쓸 수 없어 일반 읽기로 엽니다');
+  try {
+    db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = OFF; PRAGMA busy_timeout = 5000;');
+    const mmap = mmapBytesFor(path);
+    if (mmap > 0) {
+      db.exec(`PRAGMA mmap_size = ${mmap}`);
+      const got = (db.prepare('PRAGMA mmap_size').get() as { mmap_size: number } | undefined)?.mmap_size ?? 0;
+      if (got === 0) console.warn('[db] mmap을 쓸 수 없어 일반 읽기로 엽니다');
+    }
+    migrate(db, path === ':memory:' ? undefined : (from) => backupBeforeMigration(db, path, opts.backupLabel || `v${from}`));
+  } catch (err) {
+    // let go of the file, so a damaged one can be moved aside (Windows refuses to rename an open file)
+    db.close();
+    throw err;
   }
-  migrate(db);
   return db;
 }
 
-export function migrate(db: Db): void {
+/** `beforeMigrating`: called once, with the stored version, when an existing database is about to change. */
+export function migrate(db: Db, beforeMigrating?: (from: number) => void): void {
   const row = db.prepare('PRAGMA user_version').get() as { user_version: number };
   if (row.user_version > MIGRATIONS.length) throw new DataTooNewError(row.user_version, MIGRATIONS.length);
+  if (row.user_version > 0 && row.user_version < MIGRATIONS.length) beforeMigrating?.(row.user_version);
   for (let v = row.user_version; v < MIGRATIONS.length; v++) {
     db.exec('BEGIN');
     try {
@@ -53,6 +67,55 @@ export function migrate(db: Db): void {
       throw err;
     }
   }
+}
+
+const BACKUPS_KEPT = 2;
+const backupsOf = (path: string) => {
+  const dir = dirname(path);
+  const prefix = `${basename(path)}.before-`;
+  return readdirSync(dir)
+    .filter((f) => f.startsWith(prefix) && f.endsWith('.bak'))
+    .map((f) => ({ path: join(dir, f), at: statSync(join(dir, f)).mtimeMs }))
+    .sort((a, b) => b.at - a.at);
+};
+
+/** A copy of the database as it was before a newer version changes its tables; the two newest are kept. */
+export function backupBeforeMigration(db: Db, path: string, label: string): string | null {
+  const target = `${path}.before-${label.replace(/[^0-9A-Za-z._-]/g, '_')}.bak`;
+  try {
+    rmSync(target, { force: true });
+    db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
+    for (const old of backupsOf(path).slice(BACKUPS_KEPT)) rmSync(old.path, { force: true });
+    console.log(`[db] 데이터 형식을 바꾸기 전에 백업했습니다: ${target}`);
+    return target;
+  } catch (err) {
+    // a full disk must not stop the app from starting; the migration itself still runs in a transaction
+    console.warn('[db] 데이터 형식을 바꾸기 전 백업을 만들지 못했습니다:', err);
+    return null;
+  }
+}
+
+/** The newest backup made before a migration, if any. */
+export function latestBackup(path: string): string | null {
+  try {
+    return backupsOf(path)[0]?.path ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** SQLite cannot read the file as a database (damaged, or not one). */
+export function isCorruptDb(err: unknown): boolean {
+  const e = err as { code?: unknown; errcode?: unknown; message?: unknown } | null;
+  return e?.errcode === 11 || e?.errcode === 26 || /malformed|not a database|SQLITE_CORRUPT|SQLITE_NOTADB/i.test(`${e?.code ?? ''} ${e?.message ?? ''}`);
+}
+
+/** Moves a damaged database and its -wal/-shm aside as `<db>.corrupt-<time>`, kept for a look; returns that name. */
+export function setAsideCorrupt(path: string): string {
+  const target = `${path}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  renameSync(path, target);
+  for (const ext of ['-wal', '-shm']) if (existsSync(path + ext)) renameSync(path + ext, target + ext);
+  return target;
 }
 
 export function tx<T>(db: Db, fn: () => T): T {

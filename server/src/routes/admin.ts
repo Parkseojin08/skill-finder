@@ -11,7 +11,7 @@ import { parseGithubRepo } from '../sources/pluginSource.ts';
 import { popularState } from '../sources/popularRepos.ts';
 import { startCollect, startPopularCollect, startSync } from '../tasks.ts';
 import { addSecret, logFilePath, logTail, maskSecrets } from '../util/log.ts';
-import { APP_VERSION } from './health.ts';
+import { APP_VERSION } from '../version.ts';
 
 const SettingsPut = z.object({
   settings: SettingsSchema.partial().optional(),

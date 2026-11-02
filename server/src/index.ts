@@ -1,6 +1,6 @@
 import { config, ensureDataDirs } from './config.ts';
 import { createApp } from './app.ts';
-import { createContext } from './bootstrap.ts';
+import { openContext } from './bootstrap.ts';
 import { DataTooNewError } from './db/index.ts';
 import { startUpdateChecks } from './update.ts';
 import { startLogFile } from './util/log.ts';
@@ -19,7 +19,7 @@ process.on('uncaughtException', (err) => {
 });
 const ctx = (() => {
   try {
-    return createContext(config);
+    return openContext(config);
   } catch (err) {
     if (!(err instanceof DataTooNewError)) throw err;
     console.error(err.message);
