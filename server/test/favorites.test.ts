@@ -22,9 +22,15 @@ describe('즐겨찾기 (계정 없이, 사용자 결정 2026-11-02)', () => {
 
       assert.equal((await call('POST', '/api/favorites', { id: row.id })).status, 200);
       assert.equal((await call('POST', '/api/favorites', { id: row.id })).status, 200, '두 번 눌러도 하나');
-      assert.equal((await call('POST', '/api/favorites', { id: 'gh:no/such:x' })).status, 404);
+      assert.equal((await call('POST', '/api/favorites', { id: 'gh:no/such:x' })).status, 404, '색인에 없고 이름도 없음');
+      assert.equal((await call('POST', '/api/favorites', {})).status, 400);
       assert.deepEqual(JSON.parse((await call('GET', '/api/favorites/ids')).body).ids, [row.id]);
       assert.equal(JSON.parse((await call('GET', '/api/favorites')).body).items[0].name, 'pdf');
+
+      // a result still being checked is not in the index yet: kept by its name, a card once it is indexed
+      assert.equal((await call('POST', '/api/favorites', { id: 'gh:new/one:skills/xlsx', name: 'xlsx' })).status, 200);
+      assert.deepEqual(JSON.parse((await call('GET', '/api/favorites')).body).gone, [{ id: 'gh:new/one:skills/xlsx', name: 'xlsx' }]);
+      assert.equal((await call('DELETE', `/api/favorites?id=${encodeURIComponent('gh:new/one:skills/xlsx')}`)).status, 200);
 
       store.deleteSkill(row.id);
       assert.deepEqual(JSON.parse((await call('GET', '/api/favorites')).body).gone, [{ id: row.id, name: 'pdf' }]);

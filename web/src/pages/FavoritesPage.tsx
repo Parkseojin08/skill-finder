@@ -46,7 +46,8 @@ export function FavoritesPage({ onOpen }: { onOpen: (item: ResultItem) => void }
       )}
       {data && data.gone.length > 0 && (
         <section>
-          <h2>{t('색인에서 사라진 스킬')}</h2>
+          <h2>{t('색인에 없는 스킬')}</h2>
+          <p className="muted small">{t('검색 중에 별을 눌러 아직 확인 중이던 결과이거나, 색인에서 빠진 스킬입니다. 색인에 들어오면 위에 카드로 나옵니다.')}</p>
           <ul className="explain">
             {data.gone.map((g) => (
               <li key={g.id}>

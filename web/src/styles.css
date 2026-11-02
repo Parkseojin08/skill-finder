@@ -2457,6 +2457,27 @@ kbd {
     position: relative;
     z-index: 2;
   }
+  .fav-wrap {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+  /* why a change was refused, under the star for a few seconds */
+  .fav-error {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 3;
+    width: max-content;
+    max-width: 260px;
+    margin-top: 4px;
+    padding: 6px 8px;
+    border: 1px solid var(--danger);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.4;
+  }
 }
 
 /* the new version's signed change notes, under the menu-bar badge (user decision 2026-11-02) */

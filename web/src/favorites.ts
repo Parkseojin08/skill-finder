@@ -19,15 +19,18 @@ export async function refreshFavorites(): Promise<void> {
   }
 }
 
-/** Adds or removes a favorite; the star changes at once and goes back if the server refuses. */
-export async function toggleFavorite(id: string): Promise<void> {
+/**
+ * Adds or removes a favorite; the star changes at once and goes back if the server refuses. `name` keeps a result
+ * the index does not have yet (still being checked) until it does.
+ */
+export async function toggleFavorite(id: string, name?: string): Promise<void> {
   const on = !favorites.has(id);
   const next = new Set(favorites);
   if (on) next.add(id);
   else next.delete(id);
   set(next);
   try {
-    if (on) await apiSend('POST', '/favorites', { id });
+    if (on) await apiSend('POST', '/favorites', { id, name });
     else await apiSend('DELETE', `/favorites?id=${encodeURIComponent(id)}`);
   } catch (e) {
     await refreshFavorites();
