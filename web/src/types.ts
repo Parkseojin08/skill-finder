@@ -103,6 +103,8 @@ export type SkillDetail = {
   name: string;
   description: string | null;
   whenToUse: string | null;
+  /** Context it takes, estimated: name + description with every request once installed; SKILL.md when used. */
+  tokens: { perTurn: number; onUse: number | null };
   origin: 'plugin' | 'generic' | 'wellknown';
   repo: string | null;
   ref: string | null;
@@ -253,6 +255,7 @@ export type InstalledResponse = {
     risk: { level: RiskLevel; flags: string[] };
     installedRisk: RiskLevel | null;
     change: InstallChange;
+    tokens: { perTurn: number; onUse: number | null };
   }>;
 };
 

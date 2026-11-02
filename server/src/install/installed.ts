@@ -10,6 +10,7 @@ import { runClaude } from '../claude/cli.ts';
 import { SKILLS_CLI_VERSION } from '../config.ts';
 import type { Store } from '../db/store.ts';
 import { truncate } from '../util/sanitize.ts';
+import { skillTokens } from '../util/tokens.ts';
 import { parseJsonArray } from './run.ts';
 
 /** `same`: the installed SKILL.md is the indexed one; `changed`: the index holds different text (newer or edited). */
@@ -29,6 +30,8 @@ export type InstalledSkill = {
   /** Its level when the app installed it, if the app did. */
   installedRisk: RiskLevel | null;
   change: Change;
+  /** Context it takes (estimate): with every request, and when used. */
+  tokens: { perTurn: number; onUse: number | null };
 };
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -126,6 +129,7 @@ export async function scanInstalledSkills(store: Store, scope: 'user' | 'project
       risk: { level: riskLevel(flags), flags },
       installedRisk: (log?.id === skillId ? (log?.risk as RiskLevel | null) : null) ?? null,
       change: !indexed?.skill_md_sha256 ? 'unknown' : indexed.skill_md_sha256 === hash ? 'same' : 'changed',
+      tokens: skillTokens(meta.name, meta.description, raw),
     });
   }
   return out;

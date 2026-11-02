@@ -11,6 +11,7 @@ import { getSettings } from '../settings.ts';
 import { looksBinary } from '../util/http.ts';
 import { sanitizeText } from '../util/sanitize.ts';
 import { isTextPath, MAX_FILE_BYTES } from '../util/textFiles.ts';
+import { skillTokens } from '../util/tokens.ts';
 
 /**
  * Where an opened result was in its search (U5-2): the search's `sid`, its 1-based place in the list, the page,
@@ -71,6 +72,8 @@ export function skillsRouter(ctx: AppContext): Router {
       name: skill.name,
       description: skill.description,
       whenToUse: skill.when_to_use,
+      // context taken: name and description with every request once installed, SKILL.md when used (estimate)
+      tokens: skillTokens(skill.name, skill.description, skillMd),
       origin: skill.origin,
       repo: skill.repo,
       ref: skill.ref,

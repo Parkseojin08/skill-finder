@@ -274,6 +274,11 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
           </section>
           <section>
             <h2>스킬 ({data.skills.length})</h2>
+            {data.skills.length > 0 && (
+              <p className="muted small" title="설치된 스킬마다 이름과 설명이 매 요청에 들어갑니다. 글자 수로 센 추정치입니다.">
+                이 스킬들이 매 요청에 차지하는 컨텍스트: 약 {data.skills.reduce((n, s) => n + s.tokens.perTurn, 0).toLocaleString()} 토큰(이름·설명)
+              </p>
+            )}
             {unindexedSkills > 0 && (
               <p className="muted small">
                 색인에 없는 스킬 {unindexedSkills}개(앱 밖에서 설치했거나 아직 모으지 않은 스킬)는 상세 화면이 없고, 설치된 파일에 지금 규칙을 돌린 위험 등급만 보입니다.

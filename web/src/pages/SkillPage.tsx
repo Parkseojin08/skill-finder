@@ -178,6 +178,13 @@ export function SkillPage({
               <span className="stat"><Icon name="star" size={14} /> {formatCount(item?.stars ?? detail.stars)}</span>
               <span className="stat"><Icon name="clock" size={14} /> {formatAgo(detail.lastCommitAt)}</span>
               {detail.license && <span className="stat">{detail.license}</span>}
+              <span
+                className="stat"
+                title="설치하면 이름과 설명이 매 요청마다 Claude의 컨텍스트에 들어가고, 쓸 때는 SKILL.md 전체를 읽습니다. 글자 수로 센 추정치입니다."
+              >
+                컨텍스트 매 턴 약 {detail.tokens.perTurn.toLocaleString()}
+                {detail.tokens.onUse != null && ` · 쓸 때 약 ${detail.tokens.onUse.toLocaleString()}`} 토큰
+              </span>
               {detail.archived && <span className="badge risk-medium">보관된 저장소</span>}
               {detail.url && (
                 <a className="stat" href={detail.url} target="_blank" rel="noopener noreferrer">
