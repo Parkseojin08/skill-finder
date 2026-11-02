@@ -101,36 +101,9 @@ export function CopiesBadge({ copies }: { copies?: SourceRef[] }) {
   );
 }
 
-/** The server's fixed weights (settings.ts; no longer a setting, UI debate D-1). */
+/** The server's fixed weights (settings.ts; no longer a setting, UI debate D-1). The score is shown on the detail
+ * page only: results are ordered by name match, downloads and stars, so a bar on each card read as the order. */
 const WEIGHTS: Breakdown = { R: 0.55, P: 0.2, F: 0.1, T: 0.15 };
-const ORDER_NOTE = '결과 순서는 이름 일치 → 다운로드 → 스타 기준이라 이 점수 순서와 다를 수 있습니다';
-
-export function ScoreBar({ score, breakdown }: { score: number; breakdown: Breakdown }) {
-  const w = WEIGHTS;
-  return (
-    <span className="score" role="img" tabIndex={0} aria-label={`점수 ${Math.round(score * 100)}. ${ORDER_NOTE}`}>
-      <span className="score-bar">
-        <span className="score-fill" style={{ width: `${Math.round(score * 100)}%` }} />
-      </span>
-      <span className="score-num">{Math.round(score * 100)}</span>
-      <span className="score-tip" role="tooltip">
-        {(Object.keys(BREAKDOWN) as Array<keyof Breakdown>).map((k) => (
-          <span key={k} className="tip-row">
-            <span>{BREAKDOWN[k]}</span>
-            <span className="tip-bar">
-              <span style={{ width: `${Math.round(breakdown[k] * 100)}%` }} />
-            </span>
-            <span className="mono">
-              {breakdown[k].toFixed(2)} × {w[k]}
-            </span>
-          </span>
-        ))}
-        <span className="tip-note">관련도는 키워드 일치와 검색 순위로 계산</span>
-        <span className="tip-note">{ORDER_NOTE}</span>
-      </span>
-    </span>
-  );
-}
 
 export function BreakdownTable({ breakdown }: { breakdown: Partial<Breakdown> }) {
   const w = WEIGHTS;

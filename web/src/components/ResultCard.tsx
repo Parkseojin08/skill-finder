@@ -4,7 +4,7 @@ import { CATEGORY, formatAgo, formatCount } from '../labels.ts';
 import { useKorean } from '../translate.ts';
 import type { OpenedFrom, ResultItem } from '../types.ts';
 import { repoOf } from '../lib/resultOrder.ts';
-import { CopiesBadge, RiskSummary, ScoreBar, SourceBadges } from './Badges.tsx';
+import { CopiesBadge, RiskSummary, SourceBadges } from './Badges.tsx';
 
 
 /** The skill page's address; `from` (where in a search it was) rides along so a new tab still logs the view. */
@@ -78,7 +78,6 @@ export function ResultCard({
             </span>
           )}
         </div>
-        <ScoreBar score={item.score} breakdown={item.breakdown} />
       </div>
       <p className="summary clamp" title={ko ? item.description : undefined} lang={ko ? 'ko' : 'en'}>
         {waiting && <span className="translating">번역 중 · </span>}
