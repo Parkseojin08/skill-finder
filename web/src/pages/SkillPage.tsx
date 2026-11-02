@@ -166,9 +166,33 @@ export function SkillPage({
         </div>
       </header>
 
-      <div className="tabs page-tabs" role="tablist">
+      <div
+        className="tabs page-tabs"
+        role="tablist"
+        aria-label="스킬 정보"
+        // arrow keys move between tabs, as screen readers expect of a tab list (review 2026-11-02)
+        onKeyDown={(e) => {
+          const at = tabs.findIndex((t) => t.key === tab);
+          const next = e.key === 'ArrowRight' ? at + 1 : e.key === 'ArrowLeft' ? at - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : null;
+          if (next === null) return;
+          e.preventDefault();
+          const t = tabs[(next + tabs.length) % tabs.length];
+          setTab(t.key);
+          document.getElementById(`tab-${t.key}`)?.focus();
+        }}
+      >
         {tabs.map((t) => (
-          <button key={t.key} id={`tab-${t.key}`} type="button" role="tab" aria-selected={tab === t.key} className={tab === t.key ? 'active' : ''} onClick={() => setTab(t.key)}>
+          <button
+            key={t.key}
+            id={`tab-${t.key}`}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.key}
+            aria-controls="tab-panel"
+            tabIndex={tab === t.key ? 0 : -1}
+            className={tab === t.key ? 'active' : ''}
+            onClick={() => setTab(t.key)}
+          >
             {t.label}
           </button>
         ))}
@@ -197,7 +221,7 @@ export function SkillPage({
       {!detail && !error && <p className="muted">불러오는 중…</p>}
 
       {detail && tab === 'overview' && (
-        <div className="tab-body">
+        <div className="tab-body" role="tabpanel" id="tab-panel" aria-labelledby="tab-overview">
           <TranslationNotice />
           <section>
             <h2>설명</h2>
@@ -319,7 +343,7 @@ export function SkillPage({
       )}
 
       {detail && tab === 'install' && (
-        <div className="tab-body">
+        <div className="tab-body" role="tabpanel" id="tab-panel" aria-labelledby="tab-install">
           <section>
             <InstallPanel skill={detail} defaultScope={settings?.settings.defaultScope ?? 'user'} defaultProjectPath={settings?.settings.defaultProjectPath ?? ''} />
           </section>
@@ -327,7 +351,7 @@ export function SkillPage({
       )}
 
       {detail && tab === 'skill' && (
-        <div className="tab-body">
+        <div className="tab-body" role="tabpanel" id="tab-panel" aria-labelledby="tab-skill">
           <section>
             <p className="muted small">SKILL.md는 원문(영어) 그대로 보여 줍니다. 요약은 개요 탭의 설명을 보세요.</p>
             {detail.origin === 'wellknown' && <p className="muted">well-known 출처라 미리보기를 제공하지 않습니다.</p>}
@@ -356,7 +380,7 @@ export function SkillPage({
       )}
 
       {detail && tab === 'files' && (
-        <div className="tab-body files-layout">
+        <div className="tab-body files-layout" role="tabpanel" id="tab-panel" aria-labelledby="tab-files">
           <section>
             <ul className="file-list">
               {detail.files.map((f) => (

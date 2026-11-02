@@ -99,7 +99,9 @@ export function MarketplacesPage() {
                 <th>색인 방식</th>
                 <th>플러그인</th>
                 <th>동기화</th>
-                <th />
+                <th>
+                    <span className="sr-only">작업</span>
+                  </th>
               </tr>
             </thead>
             <tbody>

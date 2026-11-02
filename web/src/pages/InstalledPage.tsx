@@ -207,7 +207,9 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
                   <th>범위</th>
                   <th>상태</th>
                   <th>위험</th>
-                  <th />
+                  <th>
+                    <span className="sr-only">작업</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -298,7 +300,9 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
                   <th>범위</th>
                   <th>설명</th>
                   <th>위험</th>
-                  <th />
+                  <th>
+                    <span className="sr-only">작업</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>

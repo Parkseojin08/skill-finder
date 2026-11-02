@@ -108,7 +108,7 @@ const ORDER_NOTE = '결과 순서는 이름 일치 → 다운로드 → 스타 �
 export function ScoreBar({ score, breakdown }: { score: number; breakdown: Breakdown }) {
   const w = WEIGHTS;
   return (
-    <span className="score" tabIndex={0} aria-label={`점수 ${Math.round(score * 100)}. ${ORDER_NOTE}`}>
+    <span className="score" role="img" tabIndex={0} aria-label={`점수 ${Math.round(score * 100)}. ${ORDER_NOTE}`}>
       <span className="score-bar">
         <span className="score-fill" style={{ width: `${Math.round(score * 100)}%` }} />
       </span>

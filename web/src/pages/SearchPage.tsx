@@ -461,6 +461,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
 
   return (
     <div className="page search-page">
+      {/* headings for screen readers: the search screen had none to jump to (review 2026-11-02) */}
+      <h1 className="sr-only">스킬 검색</h1>
       <div className="search-hero">
         <form
           className="search-box"
@@ -776,6 +778,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             </div>
           )}
 
+          {items.length > 0 && <h2 className="sr-only">검색 결과</h2>}
           <div className="results">
             {pageItems.map(({ item: it, more, same, copyOf }, i) => (
               <Fragment key={it.id}>
