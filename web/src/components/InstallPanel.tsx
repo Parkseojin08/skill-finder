@@ -120,6 +120,11 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
     if (plan.method === 'manual-only') return;
     let alive = true;
     const key = `${scope}|${scope === 'user' ? '' : projectPath}`;
+    // no folder yet: nothing to ask (an empty path used to show "절대경로여야 합니다" before anything was typed)
+    if (scope !== 'user' && !projectPath.trim()) {
+      setPreview(null);
+      return;
+    }
     const t = setTimeout(() => {
       apiGet<InstallPreview>('/install/preview', { id: skill.id, scope, projectPath: scope === 'user' ? undefined : projectPath })
         .then((p) => alive && setPreview({ ...p, key }))
@@ -203,7 +208,8 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
   // (review 2026-11-02: it could open on the previous folder's preview, or before the check said "download and run")
   const current = preview && preview.key === inputKey ? preview : null;
   const ready = !!current && !current.error && current.steps.length > 0 && (scan !== null || scanError !== null);
-  const waiting = !running && (!current ? '확인 중…' : scan === null && scanError === null ? '파일 검사 중…' : null);
+  const noFolder = scope !== 'user' && !projectPath.trim();
+  const waiting = !running && (noFolder ? '폴더를 고른 뒤 설치' : !current ? '확인 중…' : scan === null && scanError === null ? '파일 검사 중…' : null);
   const siblings = riskierSiblings(skill);
   const version = versionNote(plan);
 

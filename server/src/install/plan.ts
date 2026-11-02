@@ -1,9 +1,10 @@
 import { homedir } from 'node:os';
-import { relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { ROOT_DIR, SKILLS_CLI_PATH, SKILLS_CLI_VERSION } from '../config.ts';
 import type { MarketplaceRow, PluginRow, SkillRow } from '../db/store.ts';
 import type { RepoInstallInfo } from '../indexer.ts';
 import { formatCommand } from '../claude/cli.ts';
+import { skillFolderName } from './installed.ts';
 import { isCommitSha, isPluginName, isRepo, isRepoDir, isSkillName } from './validate.ts';
 
 export type InstallScope = 'user' | 'project' | 'local';
@@ -138,12 +139,14 @@ export function buildSteps(plan: InstallPlan, scope: InstallScope, projectPath: 
 
 export function installLocation(plan: InstallPlan, scope: InstallScope, projectPath: string | null): string {
   if (plan.method === 'skills-cli') {
-    return scope === 'user' ? `~/.claude/skills/${plan.skillName}/` : `${projectPath}/.claude/skills/${plan.skillName}/ (+ skills-lock.json)`;
+    // the folder the CLI writes (its own name rule), in the system's path style (review 2026-11-02: "\" and "/" mixed)
+    const folder = skillFolderName(plan.skillName!);
+    return scope === 'user' ? `~/.claude/skills/${folder}/` : `${join(projectPath!, '.claude', 'skills', folder)}${sep} (+ skills-lock.json)`;
   }
   if (plan.method === 'plugin') {
     if (scope === 'user') return '~/.claude/settings.json (enabledPlugins), 플러그인 캐시';
-    if (scope === 'project') return `${projectPath}/.claude/settings.json (enabledPlugins)`;
-    return `${projectPath}/.claude/settings.local.json (enabledPlugins)`;
+    if (scope === 'project') return `${join(projectPath!, '.claude', 'settings.json')} (enabledPlugins)`;
+    return `${join(projectPath!, '.claude', 'settings.local.json')} (enabledPlugins)`;
   }
   return '';
 }

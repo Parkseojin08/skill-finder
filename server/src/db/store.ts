@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import type { SQLInputValue, StatementSync } from 'node:sqlite';
 import type { Db } from './index.ts';
 import { tx } from './index.ts';
@@ -594,14 +595,17 @@ export class Store {
   }
 
   /** Skills the app installed into a skills folder (skills CLI), newest first, to match those folders to the index. */
-  /** Project folders the app installed into (newest first), for the 설치됨 screen's shortcuts. */
+  /** Project folders the app installed into (newest first), for the 설치됨 screen's shortcuts; gone ones left out. */
   listInstalledProjects(limit = 8): string[] {
     return this.all<{ project_path: string }>(
       `SELECT project_path, MAX(id) AS last FROM install_log
         WHERE project_path IS NOT NULL AND exit_code = 0 AND method NOT LIKE 'uninstall-%'
         GROUP BY lower(project_path) ORDER BY last DESC LIMIT ?`,
-      limit,
-    ).map((r) => r.project_path);
+      limit * 3,
+    )
+      .map((r) => r.project_path)
+      .filter((p) => existsSync(p))
+      .slice(0, limit);
   }
 
   listInstalledSkillLog(): Array<{ skill_id: string; scope: string; project_path: string | null; risk_level: string | null; created_at: string }> {

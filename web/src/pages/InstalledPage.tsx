@@ -35,6 +35,14 @@ function Description({ text }: { text: string }) {
   );
 }
 
+/** A project folder's chip: its name, or with its parent when another chip has the same name. */
+function chipLabel(path: string, all: string[]): string {
+  const parts = (p: string) => p.split(/[\\/]/).filter(Boolean);
+  const name = parts(path).pop() ?? path;
+  const twin = all.some((o) => o !== path && (parts(o).pop() ?? '').toLowerCase() === name.toLowerCase());
+  return twin ? parts(path).slice(-2).join('\\') : name;
+}
+
 export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => void }) {
   const [projectPath, setProjectPath] = useState('');
   const [data, setData] = useState<InstalledResponse | null>(null);
@@ -50,6 +58,11 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
   const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const load = useCallback((path: string) => {
     const id = ++seq.current;
+    // the folder goes in the address, so coming back from a skill page shows the same list (review 2026-11-02)
+    if (window.location.pathname === '/installed') {
+      const p = path.trim();
+      window.history.replaceState(window.history.state, '', p ? `/installed?project=${encodeURIComponent(p)}` : '/installed');
+    }
     setLoading(true);
     setError(null);
     apiGet<InstalledResponse>('/installed', { projectPath: path.trim() || undefined })
@@ -63,7 +76,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
       .then((s) => {
         // Don't overwrite a folder the user already typed or picked while settings were loading.
         setProjectPath((cur) => {
-          const path = cur || s.settings.defaultProjectPath;
+          const path = cur || new URLSearchParams(window.location.search).get('project') || s.settings.defaultProjectPath;
           load(path);
           return path;
         });
@@ -154,7 +167,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
                 load(p);
               }}
             >
-              {p.split(/[\\/]/).filter(Boolean).pop() ?? p}
+              {chipLabel(p, data!.projects)}
             </button>
           ))}
         </div>

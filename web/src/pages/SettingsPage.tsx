@@ -47,11 +47,12 @@ export function SettingsPage() {
     pending.current = {};
     if (Object.keys(patch).length) void save({ settings: patch }, 'minStars' in patch ? '저장했습니다 (검색 캐시를 비웠습니다)' : '저장했습니다');
   };
-  const change = (patch: Partial<Settings>, waitMs = 0) => {
+  /** `waitMs`: save after this pause in typing; null: only when the field is left or Enter is pressed. */
+  const change = (patch: Partial<Settings>, waitMs: number | null = 0) => {
     setDraft((d) => (d ? { ...d, ...patch } : d));
     pending.current = { ...pending.current, ...patch };
     clearTimeout(timer.current);
-    timer.current = setTimeout(flush, waitMs);
+    if (waitMs !== null) timer.current = setTimeout(flush, waitMs);
   };
   const flushRef = useRef(flush);
   flushRef.current = flush;
@@ -81,7 +82,7 @@ export function SettingsPage() {
   return (
     <div className="page settings">
       <h1>설정</h1>
-      <p className="muted small">바꾸면 바로 저장됩니다. 숫자와 폴더는 입력을 멈추면 저장됩니다.</p>
+      <p className="muted small">바꾸면 바로 저장됩니다. 숫자는 칸을 떠나거나 Enter를 누를 때, 폴더는 입력을 멈추면 저장됩니다.</p>
       <div role="status">{msg && <p className={msg.ok ? 'ok-box' : 'warn-box'}>{msg.text}</p>}</div>
 
       <section>
@@ -119,8 +120,11 @@ export function SettingsPage() {
             min={0}
             step={500}
             value={draft.minStars}
-            onChange={(e) => change({ minStars: Math.max(0, Math.floor(Number(e.target.value) || 0)) }, 800)}
+            // saved when left or on Enter: typing "5000" used to save 5, 50, 500 on the way, each clearing the
+            // search cache (review 2026-11-02)
+            onChange={(e) => change({ minStars: Math.max(0, Math.floor(Number(e.target.value) || 0)) }, null)}
             onBlur={flush}
+            onKeyDown={(e) => e.key === 'Enter' && flush()}
           />
         </label>
         <p className="muted small">이 수보다 스타가 적거나 스타 수를 알 수 없는 저장소의 스킬은 검색 결과에서 숨깁니다. 0이면 제한하지 않습니다.</p>

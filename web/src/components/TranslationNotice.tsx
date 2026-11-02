@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { enableTranslation, useTranslateStatus } from '../translate.ts';
 import { Icon } from './Icon.tsx';
 
@@ -12,8 +13,20 @@ const UNSUPPORTED = '이 브라우저에서는 내장 번역 기능을 쓸 수 �
  * Whether descriptions can be shown in Korean, with the one-time model download.
  * `compact` renders a small chip for toolbars; otherwise a full-width notice.
  */
-export function TranslationNotice({ compact = false }: { compact?: boolean }) {
+/** "번역 안 됨" closed once: from then on only the small icon (review 2026-11-02: a yellow strip on every screen). */
+const CLOSED_KEY = 'skill-finder.translation-notice-closed';
+const readClosed = () => {
+  try {
+    return localStorage.getItem(CLOSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+export function TranslationNotice({ compact: compactProp = false }: { compact?: boolean }) {
   const s = useTranslateStatus();
+  const [closed, setClosed] = useState(readClosed);
+  const compact = compactProp || (closed && s.state === 'unsupported');
   if (s.state === 'ready' || s.state === 'checking') {
     return compact && s.state === 'ready' ? (
       // nothing to do here, so only an icon in the toolbar (UI debate 2-4)
@@ -56,6 +69,22 @@ export function TranslationNotice({ compact = false }: { compact?: boolean }) {
       <span className="sr-only">번역은 Chrome 전용이라 설명이 영어로 나옵니다</span>
     </span>
   ) : (
-    <div className="warn-strip">{UNSUPPORTED}</div>
+    <div className="warn-strip">
+      {UNSUPPORTED}{' '}
+      <button
+        type="button"
+        className="linkish"
+        onClick={() => {
+          try {
+            localStorage.setItem(CLOSED_KEY, '1');
+          } catch {
+            // private window: closed for this page only
+          }
+          setClosed(true);
+        }}
+      >
+        닫기
+      </button>
+    </div>
   );
 }
