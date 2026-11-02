@@ -3,12 +3,20 @@ import { createApp } from './app.ts';
 import { createContext } from './bootstrap.ts';
 import { DataTooNewError } from './db/index.ts';
 import { startUpdateChecks } from './update.ts';
+import { startLogFile } from './util/log.ts';
 import { pruneSearchLog, recheckRiskRules, refreshRepoMeta, relevelRisk, REPO_META_EVERY_MS, startSync } from './tasks.ts';
 
 const HOST = '127.0.0.1';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 ensureDataDirs();
+startLogFile(config.dataDir, [config.githubToken]);
+// A background task that fails (a sync, a refresh) is logged, not fatal: Node would otherwise end the server.
+process.on('unhandledRejection', (reason) => console.error('[백그라운드 오류]', reason));
+process.on('uncaughtException', (err) => {
+  console.error('[치명적 오류]', err);
+  process.exit(1);
+});
 const ctx = (() => {
   try {
     return createContext(config);

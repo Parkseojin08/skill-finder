@@ -2219,3 +2219,35 @@ kbd {
     overflow-wrap: anywhere;
   }
 }
+
+/* diagnostics and the screen-error page (project review F2) */
+@layer app {
+  .diagnostics {
+    display: grid;
+    gap: 8px;
+    justify-items: start;
+  }
+  .diagnostics-text {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    color: var(--text-soft);
+    border-radius: var(--corner-sm);
+    padding: 10px;
+    font-size: 12px;
+  }
+  .crash-page {
+    display: grid;
+    gap: 12px;
+  }
+  .crash-detail {
+    background: var(--bg);
+    border: 1px solid var(--danger-soft);
+    color: var(--danger);
+    border-radius: var(--corner-sm);
+    padding: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    margin: 0;
+  }
+}

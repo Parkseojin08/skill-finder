@@ -7,7 +7,7 @@ import type { AppContext } from '../context.ts';
 import { updateInfo } from '../update.ts';
 
 /** The app's version from the root package.json (the release zip writes its own with the same version). */
-const APP_VERSION = (() => {
+export const APP_VERSION = (() => {
   try {
     return String((JSON.parse(readFileSync(join(ROOT_DIR, 'package.json'), 'utf8')) as { version?: unknown }).version ?? '') || null;
   } catch {

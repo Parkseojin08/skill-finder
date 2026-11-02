@@ -1,6 +1,8 @@
+import { arch, platform, release } from 'node:os';
 import { Router } from 'express';
 import { z } from 'zod';
-import { ENV_PATH, saveGithubToken } from '../config.ts';
+import { claudeVersion } from '../claude/cli.ts';
+import { ENV_PATH, saveGithubToken, SKILLS_CLI_VERSION } from '../config.ts';
 import type { AppContext } from '../context.ts';
 import { isPluginName, isRepo } from '../install/validate.ts';
 import { getSettings, saveSettings, SettingsSchema } from '../settings.ts';
@@ -8,13 +10,17 @@ import { fetchMarketplaceManifest } from '../sources/marketplace.ts';
 import { parseGithubRepo } from '../sources/pluginSource.ts';
 import { popularState } from '../sources/popularRepos.ts';
 import { startCollect, startPopularCollect, startSync } from '../tasks.ts';
+import { addSecret, logFilePath, logTail, maskSecrets } from '../util/log.ts';
+import { APP_VERSION } from './health.ts';
 
 const SettingsPut = z.object({
   settings: SettingsSchema.partial().optional(),
   githubToken: z.string().max(400).regex(/^[A-Za-z0-9_\-]*$/, '토큰 형식이 올바르지 않습니다').optional(),
 });
 
-const AddMarketplace = z.object({ repo: z.string().min(3).max(200), indexMode: z.enum(['eager', 'lazy']).default('lazy') });
+const ClientError = z.object({ message: z.string().max(2000), stack: z.string().max(8000).optional() });
+
+const AddMarketplace =z.object({ repo: z.string().min(3).max(200), indexMode: z.enum(['eager', 'lazy']).default('lazy') });
 const PatchMarketplace = z.object({ enabled: z.boolean().optional(), indexMode: z.enum(['eager', 'lazy']).optional() });
 
 export function adminRouter(ctx: AppContext): Router {
@@ -64,10 +70,42 @@ export function adminRouter(ctx: AppContext): Router {
       store.clearSearchCache();
     }
     if (parsed.data.githubToken !== undefined) {
+      addSecret(parsed.data.githubToken);
       saveGithubToken(parsed.data.githubToken || null);
       store.clearSearchCache();
     }
     res.json(settingsResponse());
+  });
+
+  // "진단 정보 복사" in the settings (project review F2): what helps tell a problem, without the token, searches or
+  // the home folder's name (shown as ~). The page copies it to the clipboard; nothing is sent anywhere.
+  r.get('/diagnostics', async (_req, res) => {
+    const s = getSettings(store);
+    const broken = marketplaces().filter((m) => m.error || m.pendingSkillIndex);
+    const lines = [
+      `Skill Finder ${APP_VERSION ?? '?'} · Node ${process.version} · ${platform()} ${release()} ${arch()}`,
+      `Claude Code ${(await claudeVersion()) ?? '찾지 못함'} · skills CLI ${SKILLS_CLI_VERSION}`,
+      `GitHub 토큰 ${ctx.config.githubToken ? '있음' : '없음'} · 포트 ${ctx.config.port}`,
+      `데이터 ${ctx.config.dataDir} · 로그 ${logFilePath() ?? '없음'}`,
+      `색인 플러그인 ${store.countPlugins()} · 스킬 ${store.countSkills()} · 마켓플레이스 ${store.listMarketplaces().length}`,
+      ...broken.map((m) => `  ${m.name}: ${m.error ?? ''}${m.pendingSkillIndex ? ` (색인 대기 ${m.pendingSkillIndex})` : ''}`),
+      `설정 최소 별 ${s.minStars} · 자동 수집 ${s.autoCollect ? '켬' : '끔'} · 기본 범위 ${s.defaultScope} · 검색 기록 ${s.searchLog ? '켬' : '끔'}`,
+      ...jobs
+        .list()
+        .slice(-5)
+        .map((j) => `작업 ${j.kind} ${j.status} ${j.done}/${j.total} ${j.label}${j.errors.length ? ` · 오류 ${j.errors.length} (${j.errors[0]})` : ''}`),
+      '',
+      '최근 로그',
+      logTail(80) || '(없음)',
+    ];
+    res.json({ text: maskSecrets(lines.join('\n')) });
+  });
+
+  // A screen error caught by the page (its ErrorBoundary) goes into the log file, so the diagnostics carry it.
+  r.post('/client-error', (req, res) => {
+    const parsed = ClientError.safeParse(req.body);
+    if (parsed.success) console.error('[화면 오류]', parsed.data.message, parsed.data.stack ?? '');
+    res.status(204).end();
   });
 
   // "기록 지우기" in the settings (U5-2)

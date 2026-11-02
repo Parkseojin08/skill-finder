@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { sanitizeText } from './sanitize.ts';
 
 export type RunOptions = {
@@ -22,6 +22,19 @@ export function run(file: string, args: string[], opts: RunOptions = {}): Promis
   return hook ? hook(file, args, opts, spawnRun) : spawnRun(file, args, opts);
 }
 
+/**
+ * Ends a process and the ones it started (node → skills CLI → git). On Windows child.kill() ends only the first,
+ * which left git clones running after a timeout (project review F2).
+ */
+export function killTree(child: ChildProcess): void {
+  if (process.platform === 'win32' && child.pid) {
+    const k = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    k.on('error', () => child.kill());
+  } else {
+    child.kill();
+  }
+}
+
 function spawnRun(file: string, args: string[], opts: RunOptions): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, {
@@ -38,7 +51,7 @@ function spawnRun(file: string, args: string[], opts: RunOptions): Promise<RunRe
     const timer = opts.timeoutMs
       ? setTimeout(() => {
           timedOut = true;
-          child.kill();
+          killTree(child);
         }, opts.timeoutMs)
       : null;
 

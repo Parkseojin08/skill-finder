@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiGet, apiSend } from '../api.ts';
 import { searchLogChanged } from './SearchPage.tsx';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
+import { DiagnosticsButton } from '../components/Diagnostics.tsx';
 import { FolderInput } from '../components/FolderInput.tsx';
 import type { Settings, SettingsResponse } from '../types.ts';
 
@@ -166,6 +167,15 @@ export function SettingsPage() {
           <dt>토큰</dt>
           <dd className="mono">{data.envPath}</dd>
         </dl>
+      </section>
+
+      <section>
+        <h2>문제 알리기</h2>
+        <p className="muted small">
+          버전·색인 개수·설정·최근 로그를 복사합니다. 토큰, 검색어, 사용자 폴더 이름은 넣지 않고 밖으로 보내지도 않습니다. 문제를 알릴 때 붙여 넣으세요. 로그 파일은 위
+          색인·기록 폴더의 logs 안에 있습니다.
+        </p>
+        <DiagnosticsButton />
       </section>
 
       <div className="row">
