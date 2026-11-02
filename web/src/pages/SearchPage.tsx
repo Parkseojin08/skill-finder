@@ -3,6 +3,8 @@ import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } fr
 import { apiGet, streamNdjson } from '../api.ts';
 import { FacetPanel, facetCount, matchFacets, NO_FACETS, type Facets } from '../components/FacetPanel.tsx';
 import { RepoCard } from '../components/RepoCard.tsx';
+import { NoResults } from '../components/search/NoResults.tsx';
+import { SearchIntro } from '../components/search/SearchIntro.tsx';
 import { ResultCard, skillHref } from '../components/ResultCard.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { useInstalled } from '../installed.ts';
@@ -461,43 +463,15 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       </div>
 
       {status === 'idle' && (
-        <div className="empty">
-          <p>원하는 기능을 영어로 적으면 공식·커뮤니티 마켓플레이스, skills.sh, GitHub에서 Claude Code 스킬을 찾아 점수와 위험 신호를 붙여 보여 줍니다.</p>
-          <div className="examples">
-            {EXAMPLES.map((ex) => (
-              <button
-                key={ex}
-                type="button"
-                className="chip-btn"
-                onClick={() => {
-                  setQuery(ex);
-                  run(ex);
-                }}
-              >
-                {ex}
-              </button>
-            ))}
-          </div>
-          {health && (
-            <p className="sysline">
-              {health.appVersion && <span>skill-finder {health.appVersion}</span>}
-              <span className={health.claudeVersion ? '' : 'warn-text'}>claude-code {health.claudeVersion ?? '없음'}</span>
-              <span>skills-cli {health.skillsCli}</span>
-              <span>
-                색인 스킬 {health.skills.toLocaleString()} · 플러그인 {health.plugins.toLocaleString()}
-              </span>
-            </p>
-          )}
-          {health && !health.claudeVersion && <p className="warn-text small">Claude Code를 찾지 못해 플러그인 설치가 되지 않습니다.</p>}
-          {githubToken === false && (
-            // before the first search only (UI debate D-4); in results it stays in the folded notices (D:48)
-            <p className="muted small">
-              GitHub 토큰 없음 · GitHub 코드 검색을 건너뛰고 스킬 목록도 느리게 모읍니다.{' '}
-              <a href="/settings">설정에서 넣기</a>
-            </p>
-          )}
-          <TranslationNotice />
-        </div>
+        <SearchIntro
+          examples={EXAMPLES}
+          onExample={(ex) => {
+            setQuery(ex);
+            run(ex);
+          }}
+          health={health}
+          githubToken={githubToken}
+        />
       )}
 
       <div className={showFacets ? 'results-layout' : undefined}>
@@ -706,51 +680,25 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
               </Fragment>
             ))}
             {status === 'done' && items.length === 0 && (
-              <div className="empty">
-                <p>
-                  결과가 없습니다.
-                  {hiddenUnknownStars > 0 && hiddenUnknownStars >= hiddenLowStars
-                    ? ` 저장소 별 수를 아직 몰라서 ${hiddenUnknownStars}개를 숨겼습니다${gathering ? ' (처음 실행이라 정보를 모으는 중입니다)' : ''}. 아래에서 이번만 풀고 보세요.${health?.githubToken ? '' : ' 설정에서 GitHub 토큰을 넣으면 별 수가 빨리 채워집니다.'}`
-                    : gathering
-                      ? ' 아직 스킬 목록을 모으는 중이라 결과가 적을 수 있습니다. 잠시 뒤 다시 검색해 보세요.'
-                      : ' 다른 영어 표현으로 검색해 보세요.'}
-                </p>
-                {(sources.length < 3 || maxRisk !== 'high' || (final?.minStars ?? 0) > 0) && (
-                  <div className="examples">
-                    <span className="muted small">걸려 있는 조건:</span>
-                    {sources.length < 3 && (
-                      <button
-                        type="button"
-                        className="chip-btn"
-                        onClick={() => {
-                          const all: SourceKind[] = ['marketplace', 'skillssh', 'github'];
-                          setSources(all);
-                          run(lastQuery, maxRisk, liftedStars, all);
-                        }}
-                      >
-                        출처 {3 - sources.length}곳 꺼짐 · 모두 켜고 다시 찾기
-                      </button>
-                    )}
-                    {maxRisk !== 'high' && (
-                      <button
-                        type="button"
-                        className="chip-btn"
-                        onClick={() => {
-                          setMaxRisk('high');
-                          run(lastQuery, 'high', liftedStars);
-                        }}
-                      >
-                        위험 {maxRisk === 'low' ? '낮음만' : '주의까지'} · 모두 보고 다시 찾기
-                      </button>
-                    )}
-                    {(final?.minStars ?? 0) > 0 && (
-                      <button type="button" className="chip-btn" onClick={() => run(lastQuery, maxRisk, final!.minStars!)}>
-                        별 {final!.minStars!.toLocaleString()} 이상만 · 이번만 풀고 다시 찾기
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
+              <NoResults
+                hiddenUnknownStars={hiddenUnknownStars}
+                hiddenLowStars={hiddenLowStars}
+                gathering={gathering}
+                hasToken={!!health?.githubToken}
+                sourcesOff={3 - sources.length}
+                maxRisk={maxRisk}
+                minStars={final?.minStars ?? 0}
+                onAllSources={() => {
+                  const all: SourceKind[] = ['marketplace', 'skillssh', 'github'];
+                  setSources(all);
+                  run(lastQuery, maxRisk, liftedStars, all);
+                }}
+                onAllRisk={() => {
+                  setMaxRisk('high');
+                  run(lastQuery, 'high', liftedStars);
+                }}
+                onLiftStars={() => run(lastQuery, maxRisk, final!.minStars!)}
+              />
             )}
             {items.length > 0 && sorted.length === 0 && (
               <p className="empty">
