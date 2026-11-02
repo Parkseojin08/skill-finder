@@ -9,42 +9,46 @@ import { TreeIndex } from '../src/discovery/tree.ts';
 import { buildSkillRow, pluginFtsText } from '../src/indexer.ts';
 import { byNameThenPopularity, ftsAllQuery, ftsQuery, nameMatches, navigationalWord, queryKeywords, runSearch, type SearchDeps, type SearchEvent } from '../src/search/pipeline.ts';
 
+/** A plugin skill (the plugin and its marketplace entry too). */
+function addPluginSkill(ctx: AppContext, plugin: string, mp: string, repo: string, dir: string, name: string, description: string, extra = ''): string {
+  const id = `${plugin}@${mp}`;
+  if (!ctx.store.getPlugin(id)) {
+    ctx.store.upsertPlugin({
+      id,
+      marketplace: mp,
+      name: plugin,
+      display_name: null,
+      description: `${plugin} plugin`,
+      category: null,
+      keywords: null,
+      source_json: '"./"',
+      source_kind: 'relative',
+      repo,
+      path: null,
+      ref: null,
+      sha: 'a'.repeat(40),
+      strict: null,
+      entry_json: null,
+    });
+    ctx.store.markPluginIndexed(id, 'a'.repeat(40), { hooks: false, mcp: false, bin: false, monitors: false }, null);
+  }
+  const tree = new TreeIndex([{ path: `${dir}/SKILL.md` }]);
+  const raw = `---\nname: ${name}\ndescription: ${description}\n${extra}---\nBody\n`;
+  const row = buildSkillRow({ repo, sha: 'a'.repeat(40), dirPath: dir, raw, tree, origin: 'plugin', pluginId: id, extraFlags: [], install: null, lastCommitAt: new Date().toISOString() });
+  ctx.store.upsertSkill(row, pluginFtsText(ctx.store.getPlugin(id)!));
+  return row.id;
+}
+
 function ctxWithSkills(): AppContext {
   const dataDir = mkdtempSync(join(tmpdir(), 'sf-pipe-'));
   const ctx = createContext({ port: 0, dev: false, dataDir, githubToken: null }, ':memory:');
   ctx.github.getRepoMeta = async () => null; // keep unit tests offline
   ctx.github.searchRepos = async () => [];
   ctx.store.setSetting('app', { minStars: 0 }); // fixture repos have no star counts; the filter has its own test
-  const add =(plugin: string, mp: string, repo: string, dir: string, name: string, description: string, extra = '') => {
-    const id = `${plugin}@${mp}`;
-    if (!ctx.store.getPlugin(id)) {
-      ctx.store.upsertPlugin({
-        id,
-        marketplace: mp,
-        name: plugin,
-        display_name: null,
-        description: `${plugin} plugin`,
-        category: null,
-        keywords: null,
-        source_json: '"./"',
-        source_kind: 'relative',
-        repo,
-        path: null,
-        ref: null,
-        sha: 'a'.repeat(40),
-        strict: null,
-        entry_json: null,
-      });
-      ctx.store.markPluginIndexed(id, 'a'.repeat(40), { hooks: false, mcp: false, bin: false, monitors: false }, null);
-    }
-    const tree = new TreeIndex([{ path: `${dir}/SKILL.md` }]);
-    const raw = `---\nname: ${name}\ndescription: ${description}\n${extra}---\nBody\n`;
-    const row = buildSkillRow({ repo, sha: 'a'.repeat(40), dirPath: dir, raw, tree, origin: 'plugin', pluginId: id, extraFlags: [], install: null, lastCommitAt: new Date().toISOString() });
-    ctx.store.upsertSkill(row, pluginFtsText(ctx.store.getPlugin(id)!));
-    return row.id;
-  };
+  const add = (plugin: string, mp: string, repo: string, dir: string, name: string, description: string, extra = '') => addPluginSkill(ctx, plugin, mp, repo, dir, name, description, extra);
   add('document-skills', 'anthropic-agent-skills', 'anthropics/skills', 'skills/pdf', 'pdf', 'Extract text and tables from PDF files, fill PDF forms.');
-  add('pr-tools', 'claude-plugins-official', 'acme/pr-tools', 'skills/pr-review', 'pr-review', 'Automate pull request review comments.');
+  // a third-party marketplace: official and partner skills skip the star minimum (U1), this one does not
+  add('pr-tools', 'acme-market', 'acme/pr-tools', 'skills/pr-review', 'pr-review', 'Automate pull request review comments.');
   add('risky', 'claude-community', 'evil/risky', 'skills/pdf-magic', 'pdf-magic', 'PDF table extraction with installer.', 'allowed-tools: Bash\n');
   // a high-risk skill (curl | sh in the body is detected from raw)
   const tree = new TreeIndex([{ path: 'skills/pdf-dl/SKILL.md' }]);
@@ -273,6 +277,23 @@ describe('최소 GitHub 스타', () => {
     // "별 수 모름" is counted apart from "5,000 미만" (project review 2026-11-02)
     assert.ok((results.hiddenLowStars ?? 0) >= 1, 'pr-review');
     assert.ok((results.hiddenUnknownStars ?? 0) >= 1, 'pdf-magic');
+  });
+
+  it('공식·파트너 스킬은 별 기준과 상관없이 보인다 (U1)', async () => {
+    const ctx = ctxWithSkills();
+    ctx.store.setSetting('app', {}); // default minimum
+    // a partner marketplace plugin from a 10-star repo, an Anthropic repo whose stars are unknown, a third-party one
+    addPluginSkill(ctx, 'invoices', 'claude-plugins-official', 'tiny/invoices', 'skills/invoice-maker', 'invoice-maker', 'Create invoice documents for clients.');
+    addPluginSkill(ctx, 'billing', 'anthropic-agent-skills', 'anthropics/billing', 'skills/invoice-check', 'invoice-check', 'Check invoice totals against orders.');
+    addPluginSkill(ctx, 'bills', 'acme-market', 'tiny/bills', 'skills/invoice-lite', 'invoice-lite', 'Create invoice documents quickly.');
+    const stars: Record<string, number> = { 'tiny/invoices': 10, 'tiny/bills': 10 };
+    ctx.github.getRepoMeta = async (repo) => (repo in stars ? ({ full_name: repo, stars: stars[repo] } as never) : null);
+    const results = resultsOf(await collect(deps(ctx), 'invoice'));
+    const names = results.items.map((i) => i.name);
+    assert.ok(names.includes('invoice-maker'), `파트너: ${names.join(',')}`);
+    assert.ok(names.includes('invoice-check'), '공식: 별 수를 몰라도 보임');
+    assert.ok(!names.includes('invoice-lite'), '다른 마켓은 그대로 숨김');
+    assert.equal(results.hiddenLowStars, 1);
   });
 
   it('GitHub 저장소에서 바로 색인한 스킬도 로컬 검색 결과에 나온다', async () => {
@@ -611,7 +632,7 @@ describe('검색 순서 (1단계 속도)', () => {
 
   it('여러 플러그인의 일치 스킬을 한 번에 찾아도 플러그인별로 찾은 것과 같다', () => {
     const ctx = ctxWithSkills();
-    const ids = ['document-skills@anthropic-agent-skills', 'risky@claude-community', 'pr-tools@claude-plugins-official'];
+    const ids = ['document-skills@anthropic-agent-skills', 'risky@claude-community', 'pr-tools@acme-market'];
     const all = ctx.store.searchSkillsInPlugins('"pdf" OR "review"', ids, 3);
     for (const id of ids) {
       const one = ctx.store.searchSkillsInPlugin('"pdf" OR "review"', id, 3).map((h) => h.skill.id);
@@ -670,7 +691,7 @@ describe('캐시에 남는 검색의 모양 (전체 점검 #12)', () => {
 
   it('결과·항목·경고의 필드가 정해 둔 것뿐이고, 버전은 18이다', async () => {
     const { RESULTS_VERSION } = await import('../src/search/pipeline.ts');
-    assert.equal(RESULTS_VERSION, 19, '버전을 올렸으면 이 테스트의 필드 목록도 맞추세요');
+    assert.equal(RESULTS_VERSION, 20, '버전을 올렸으면 이 테스트의 필드 목록도 맞추세요');
     const ctx = ctxWithSkills();
     for (const q of ['pdf tables', 'PDF에서 표 추출', 'pdf']) {
       const events = await collect(deps(ctx), q);

@@ -24,6 +24,7 @@ import {
   trustTier,
   type Breakdown,
   type LexicalMatch,
+  type TrustTier,
 } from './rank.ts';
 import {
   buildResultItem,
@@ -48,7 +49,7 @@ export type SourceState = 'running' | 'done' | 'failed' | 'timeout' | 'skipped';
  * Part of the search cache key: bump it whenever what a cached search replays changes shape (results fields,
  * warning fields) or meaning, so older cached searches are not shown. test/pipeline.test.ts pins the shape.
  */
-export const RESULTS_VERSION = 19;
+export const RESULTS_VERSION = 20;
 
 const SOURCE_NAME_KO: Record<SourceName, string> = { local: '내 PC 색인', skillssh: 'skills.sh', github: 'GitHub', repos: '같은 이름 저장소' };
 
@@ -339,8 +340,14 @@ export async function runSearch(
     }
     return storedStars.get(k)!;
   };
+  // Official and partner skills skip the star minimum (U1): Anthropic chose them, and most come from plugin
+  // repos with few stars or none counted (1,115 of 1,158 official marketplace skills were hidden).
+  const starsExempt = (c: Candidate): boolean => {
+    const tier = c.skill ? trustTier(c.skill, lookup.plugin(c.skill.plugin_id)) : pendingTier(c);
+    return tier === 'official' || tier === 'partner';
+  };
   const belowMinStars = (c: Candidate, share: number): boolean => {
-    const repo = minStars > 0 ? candidateRepo(c) : null;
+    const repo = minStars > 0 && !starsExempt(c) ? candidateRepo(c) : null;
     const st = repo ? storedStarsOf(repo) : null;
     return st != null && st < minStars * share;
   };
@@ -400,7 +407,7 @@ export async function runSearch(
       return 'missing';
     };
     // A repo never seen before: one metadata call (cached a day) is cheaper than reading its tree and SKILL.md.
-    const repo = minStars > 0 ? candidateRepo(c) : null;
+    const repo = minStars > 0 && !starsExempt(c) ? candidateRepo(c) : null;
     if (repo && storedStarsOf(repo) == null) {
       const meta = await withTimeout(github.getRepoMeta(repo), Math.max(0, deadline - Date.now()), 'timeout').catch(() => null);
       // other candidates from this repo are then decided in startLookup without waiting for a slot
@@ -635,7 +642,7 @@ export async function runSearch(
       if (!c.skill?.description || tooRisky(c.skill)) return false;
       // stars unknown is hidden in the end ("모르면 숨김"), so not shown early either
       const repo = c.skill.repo;
-      if (minStars > 0 && (repo ? storedStarsOf(repo) : null) == null) return false;
+      if (minStars > 0 && !starsExempt(c) && (repo ? storedStarsOf(repo) : null) == null) return false;
       return !belowMinStars(c, 1) && !noQueryWord(c, matchOf(c));
     });
     const items: ResultItem[] = [];
@@ -795,7 +802,7 @@ export async function runSearch(
 
     // Minimum GitHub stars (user setting, default 5,000). An unknown count does not pass: it may be below.
     const starsPass = (c: Candidate) => {
-      if (minStars <= 0) return true;
+      if (minStars <= 0 || starsExempt(c)) return true;
       const st = starsOf(c);
       return st != null && st >= minStars;
     };
@@ -934,6 +941,14 @@ export function byNameThenPopularity(query: string): (a: ResultItem, b: ResultIt
 }
 
 /** The GitHub repo a candidate's skill lives in, known before its lookup (null for well-known sites). */
+/** The trust tier of a candidate not read yet, from what its source says (the repo, the plugin's marketplace). */
+function pendingTier(c: Candidate): TrustTier | null {
+  const p = c.pending;
+  if (p?.type === 'plugin') return trustTier({ repo: p.plugin.repo, dir_path: p.plugin.path }, p.plugin);
+  const repo = candidateRepo(c);
+  return repo ? trustTier({ repo, dir_path: p?.type === 'github' ? p.path : null }, null) : null;
+}
+
 function candidateRepo(c: Candidate): string | null {
   if (c.skill) return c.skill.repo;
   const p = c.pending;

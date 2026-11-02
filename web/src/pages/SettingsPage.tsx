@@ -127,7 +127,7 @@ export function SettingsPage() {
             onKeyDown={(e) => e.key === 'Enter' && flush()}
           />
         </label>
-        <p className="muted small">이 수보다 스타가 적거나 스타 수를 알 수 없는 저장소의 스킬은 검색 결과에서 숨깁니다. 0이면 제한하지 않습니다.</p>
+        <p className="muted small">이 수보다 스타가 적거나 스타 수를 알 수 없는 저장소의 스킬은 검색 결과에서 숨깁니다. Anthropic 공식·파트너 스킬은 이 기준과 상관없이 보입니다. 0이면 제한하지 않습니다.</p>
       </section>
 
       <section>
