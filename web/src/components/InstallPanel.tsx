@@ -48,6 +48,21 @@ export function OverwriteNote({ existing }: { existing: ExistingSkill | null | u
   );
 }
 
+/** The folder the skills CLI installs into (its sanitizeName; server install/installed.ts skillFolderName). */
+const folderName = (name: string) => name.toLowerCase().replace(/[^a-z0-9._]+/g, '-').replace(/^[.-]+|[.-]+$/g, '').slice(0, 255) || 'unnamed-skill';
+
+/** After an install: when it takes effect, where, and how to call it (project review F4). */
+function UsageNote({ plan, skillName, pluginName, scope, projectPath }: { plan: InstallPlan; skillName: string; pluginName: string | null; scope: InstallScope; projectPath: string }) {
+  const command = plan.method === 'plugin' ? `/${plan.pluginName ?? pluginName ?? 'plugin'}:${folderName(skillName)}` : `/${folderName(skillName)}`;
+  const where = scope === 'user' ? '모든 프로젝트' : scope === 'project' ? `${projectPath} 폴더에서 연 Claude Code` : `${projectPath} 폴더에서 연 Claude Code(나만)`;
+  return (
+    <div className="note small usage-note">
+      <b>사용법</b> · 다음 Claude Code 세션부터 {where}에서 쓸 수 있습니다. 설명과 맞는 일을 시키면 Claude가 알아서 쓰고, 직접 부르려면 <code>{command}</code>를
+      입력하세요. 지우려면 설치됨 화면에서 삭제합니다.
+    </div>
+  );
+}
+
 /** `here`: shown above the plugin's own skill list, so no pointer to it. */
 export function SiblingRiskNote({ skills, here = false }: { skills: PluginSkill[]; here?: boolean }) {
   if (skills.length === 0) return null;
@@ -151,21 +166,33 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
     setRunning(true);
     setLog([]);
     setResult(null);
+    let answered = false;
+    let failure: string | null = null;
     try {
       const body = { id: skill.id, scope, projectPath: scope === 'user' ? undefined : projectPath, overwrite: !!preview?.existing };
       await streamNdjson<InstallEvent>('/install', body, (e) => {
         if (e.type === 'log') setLog((l) => [...l, { line: e.line, stream: e.stream }]);
         else {
+          answered = true;
           setResult({ ok: e.ok, message: e.message });
           if (e.ok) forgetInstalled();
           if (e.ok && scope !== 'user') rememberProject(projectPath);
         }
       });
     } catch (e) {
-      setResult({ ok: false, message: String((e as Error).message ?? e) });
-    } finally {
-      setRunning(false);
+      failure = String((e as Error).message ?? e);
     }
+    // The answer stopped without a result (a dropped connection, a closed tab): say whether it is still running
+    // rather than leaving the log hanging (project review F4).
+    if (!answered) {
+      const status = await apiGet<{ installing: boolean }>('/install/status').catch(() => null);
+      const where = '설치됨 화면에서 설치됐는지 확인하세요.';
+      setResult({
+        ok: false,
+        message: status?.installing ? `응답이 끊겼지만 설치는 아직 진행 중입니다. 잠시 뒤 ${where}` : `${failure ? `${failure}. ` : ''}설치 결과를 받지 못했습니다. ${where}`,
+      });
+    }
+    setRunning(false);
   };
 
   const ready = preview && !preview.error && preview.steps.length > 0;
@@ -237,6 +264,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
             ))}
           </pre>
           {result && <p className={result.ok ? 'ok-box' : 'warn-box'}>{result.message}</p>}
+          {result?.ok && <UsageNote plan={plan} skillName={skill.name} pluginName={skill.plugin?.name ?? null} scope={scope} projectPath={projectPath} />}
         </div>
       )}
       {confirming && preview && (

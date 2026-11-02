@@ -233,8 +233,12 @@ export type InstalledResponse = {
     indexed: boolean;
     topRisk: RiskLevel | null;
     change: InstallChange;
+    /** Indexed skills the plugin brought in. */
+    skills: Array<{ id: string; name: string; riskLevel: RiskLevel }>;
   }>;
   pluginError: string | null;
+  /** Project folders the app installed into, newest first. */
+  projects: string[];
   skills: Array<{
     scope: 'user' | 'project';
     path: string;

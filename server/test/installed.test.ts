@@ -129,6 +129,13 @@ describe('같은 이름 스킬 덮어쓰기 확인 (전체 점검 2026-11-02 #9)
 
       writeFileSync(join(dir, 'SKILL.md'), raw);
       assert.equal((await preview()).existing.same, true, '같은 SKILL.md면 다시 설치');
+
+      // the 설치됨 screen's project shortcuts and the status the page asks when an install answer is cut off
+      srv.ctx.store.logInstall({ skill_id: row.id, plugin_id: null, method: 'skills-cli', scope: 'project', project_path: project, argv: [], exit_code: 0, output: '' });
+      srv.ctx.store.logInstall({ skill_id: row.id, plugin_id: null, method: 'skills-cli', scope: 'project', project_path: join(project, 'failed'), argv: [], exit_code: 1, output: '' });
+      assert.deepEqual(srv.ctx.store.listInstalledProjects(), [project], '실패한 설치는 넣지 않음');
+      const status = await rawRequest({ port: srv.port, path: '/api/install/status', headers });
+      assert.deepEqual(JSON.parse(status.body), { installing: false });
     } finally {
       await srv.close();
     }

@@ -2265,3 +2265,20 @@ kbd {
     white-space: nowrap;
   }
 }
+
+/* 설치됨: the skills a plugin brought in, the projects the app installed into (project review 2026-11-02) */
+@layer app {
+  .plugin-skills ul {
+    margin: 4px 0 0;
+    padding-left: 16px;
+    display: grid;
+    gap: 2px;
+  }
+  .chip-btn.current {
+    border-color: var(--neon);
+    color: var(--text);
+  }
+  .usage-note code {
+    color: var(--text);
+  }
+}

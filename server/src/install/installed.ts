@@ -216,6 +216,13 @@ const pathKey = (p: string) => p.replace(/\//g, '\\').replace(/\\+$/, '').toLowe
 export const pluginCommitKey = (id: string, scope: string, projectPath: string | null) => `${id}|${scope}|${scope === 'user' ? '' : pathKey(projectPath ?? '')}`;
 
 /** How a plugin install compares with the index: its skills' top risk and whether it came from the indexed commit. */
+/** The indexed skills a plugin install brought in (its own, or those whose install plan names it), for the 설치됨 screen. */
+export function pluginSkills(store: Store, id: string): Array<{ id: string; name: string; riskLevel: RiskLevel }> {
+  const at = id.lastIndexOf('@');
+  const rows = store.getPlugin(id) ? store.listSkillsByPlugin(id) : at > 0 ? store.listSkillsByInstallPlugin(id.slice(at + 1), id.slice(0, at)) : [];
+  return rows.map((s) => ({ id: s.id, name: s.name, riskLevel: (s.risk_level ?? 'low') as RiskLevel }));
+}
+
 export function pluginIndexInfo(store: Store, id: string, commit: string | undefined): { indexed: boolean; topRisk: RiskLevel | null; change: Change } {
   const rank: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2 };
   const top = (skills: Array<{ risk_level: string | null }>) => skills.reduce<RiskLevel>((t, s) => (rank[s.risk_level as RiskLevel] > rank[t] ? (s.risk_level as RiskLevel) : t), 'low');

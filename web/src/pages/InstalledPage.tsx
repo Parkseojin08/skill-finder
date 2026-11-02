@@ -106,6 +106,9 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
   // Plugins this app can remove vs. ones synced from the Claude app account (managed there).
   const managed = (data?.plugins ?? []).filter((p) => p.scope === 'user' || p.scope === 'project' || p.scope === 'local');
   const synced = (data?.plugins ?? []).filter((p) => !managed.includes(p));
+  // said once above each table instead of on every row (project review 2026-11-02)
+  const unindexedPlugins = managed.filter((p) => !p.topRisk).length;
+  const unindexedSkills = (data?.skills ?? []).filter((s) => !s.skillId).length;
 
   return (
     <div className="page">
@@ -136,6 +139,26 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
           {loading ? '불러오는 중…' : '새로 고침'}
         </button>
       </form>
+      {(data?.projects.length ?? 0) > 0 && (
+        <div className="examples">
+          <span className="muted small">앱으로 설치한 프로젝트:</span>
+          {data!.projects.map((p) => (
+            <button
+              key={p}
+              type="button"
+              className={`chip-btn mono${p.toLowerCase() === projectPath.trim().toLowerCase() ? ' current' : ''}`}
+              title={p}
+              onClick={() => {
+                clearTimeout(typingTimer.current);
+                setProjectPath(p);
+                load(p);
+              }}
+            >
+              {p.split(/[\\/]/).filter(Boolean).pop() ?? p}
+            </button>
+          ))}
+        </div>
+      )}
       <div role="status">{msg && <p className={msg.ok ? 'ok-box' : 'warn-box'}>{msg.text}</p>}</div>
       {confirming && (
         <ConfirmDialog title={`${confirming.label} 삭제`} confirmLabel="삭제" danger onConfirm={() => remove(confirming)} onCancel={() => setConfirming(null)}>
@@ -149,7 +172,10 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
           <section>
             <h2>플러그인 ({managed.length})</h2>
             {data.pluginError && <p className="warn-box">{data.pluginError}</p>}
-            <p className="muted small">플러그인을 지우면 그 안의 스킬·훅·MCP 서버가 함께 제거됩니다. 다음 Claude Code 세션부터 반영됩니다.</p>
+            <p className="muted small">
+              플러그인을 지우면 그 안의 스킬·훅·MCP 서버가 함께 제거됩니다. 다음 Claude Code 세션부터 반영됩니다.
+              {unindexedPlugins > 0 && ` 색인에 없는 플러그인 ${unindexedPlugins}개는 위험 등급을 알 수 없습니다.`}
+            </p>
             {managed.length === 0 ? (
               !data.pluginError && <p className="muted small">설치한 플러그인이 없습니다.</p>
             ) : (
@@ -172,6 +198,21 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
                       <td>
                         <b className="mono">{p.id}</b>
                         {p.projectPath && <div className="muted small">{p.projectPath}</div>}
+                        {p.skills.length > 0 && (
+                          <details className="plugin-skills">
+                            <summary className="muted small">스킬 {p.skills.length}개</summary>
+                            <ul>
+                              {p.skills.map((s) => (
+                                <li key={s.id}>
+                                  <button type="button" className="linkish mono" onClick={() => onOpenSkill(s.id)}>
+                                    {s.name}
+                                  </button>{' '}
+                                  <RiskBadge level={s.riskLevel} />
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
                       </td>
                       <td>{p.version ?? '–'}</td>
                       <td>{SCOPE_LABEL[p.scope] ?? p.scope}</td>
@@ -186,7 +227,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
                             <div className="muted small">안의 스킬 중 가장 높은 등급</div>
                           </>
                         ) : (
-                          <span className="muted small">색인에 없음</span>
+                          <span className="muted small">–</span>
                         )}
                         {p.change === 'changed' && <div className="warn-text small">설치된 커밋이 색인한 커밋과 다름</div>}
                       </td>
@@ -220,6 +261,11 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
           </section>
           <section>
             <h2>스킬 ({data.skills.length})</h2>
+            {unindexedSkills > 0 && (
+              <p className="muted small">
+                색인에 없는 스킬 {unindexedSkills}개(앱 밖에서 설치했거나 아직 모으지 않은 스킬)는 상세 화면이 없고, 설치된 파일에 지금 규칙을 돌린 위험 등급만 보입니다.
+              </p>
+            )}
             <table className="table">
               <thead>
                 <tr>
@@ -244,7 +290,6 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string) => vo
                           <b className="mono">{s.name}</b>
                         )}
                         <div className="muted small">{s.path}</div>
-                        {!s.skillId && <div className="muted small">색인에 없음 (앱 밖에서 설치했거나 아직 모으지 않은 스킬)</div>}
                       </td>
                       <td>{s.scope === 'user' ? '개인' : '프로젝트'}</td>
                       <td className="small">

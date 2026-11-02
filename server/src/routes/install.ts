@@ -6,7 +6,7 @@ import { z } from 'zod';
 import type { AppContext } from '../context.ts';
 import { buildSteps, planInstall } from '../install/plan.ts';
 import { executeInstall } from '../install/run.ts';
-import { existingSkillFolder, forgetPlugins, installedPluginCommits, listInstalledPlugins, pluginCommitKey, pluginIndexInfo, scanInstalledSkills } from '../install/installed.ts';
+import { existingSkillFolder, forgetPlugins, installedPluginCommits, listInstalledPlugins, pluginCommitKey, pluginIndexInfo, pluginSkills, scanInstalledSkills } from '../install/installed.ts';
 import { uninstallPlugin, uninstallSkill } from '../install/uninstall.ts';
 import { isProjectDir } from '../install/validate.ts';
 import { getSettings } from '../settings.ts';
@@ -133,6 +133,12 @@ export function installRouter(ctx: AppContext): Router {
     }
   });
 
+  // Whether an install or removal is running: the page asks when its result stream ended without a result
+  // (project review F4), to say "still installing" or "check the 설치됨 screen".
+  r.get('/install/status', (_req, res) => {
+    res.json({ installing });
+  });
+
   r.post('/uninstall', async (req, res) => {
     const parsed = UninstallBody.safeParse(req.body);
     if (!parsed.success) {
@@ -233,13 +239,14 @@ export function installRouter(ctx: AppContext): Router {
         projectPath: ownProject,
         removeCommand: ['user', 'project', 'local'].includes(scope) ? `claude plugin uninstall ${pid} --scope ${scope}` : null,
         ...pluginIndexInfo(store, pid, commits.get(pluginCommitKey(pid, scope, ownProject))),
+        skills: pluginSkills(store, pid),
       };
     });
     const skills = [
       ...(await scanInstalledSkills(store, 'user', null)),
       ...(projectPath ? await scanInstalledSkills(store, 'project', projectPath) : []),
     ];
-    res.json({ plugins, pluginError: listed.error, skills });
+    res.json({ plugins, pluginError: listed.error, skills, projects: store.listInstalledProjects() });
   });
 
   // What is installed, by index id, for the "설치됨" badges on results (UI debate 3-1). Project skills are those of
