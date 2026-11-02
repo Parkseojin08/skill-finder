@@ -18,6 +18,8 @@ svg.icon { display: inline-block; }
   --text-muted: #8a979d;
   --line: #1a2327;
   --line-strong: #2a363b;
+  /* borders of inputs and buttons: 3:1 against the panels (WCAG 1.4.11; --line-strong was about 1.6:1) */
+  --line-control: #5a686e;
   --neon: #ff2e55;
   --neon-strong: #e6244a;
   --neon-text: #1a0006;
@@ -38,7 +40,8 @@ svg.icon { display: inline-block; }
   --danger-soft: rgba(255, 92, 122, 0.1);
   --violet: #f472d0;
   --violet-soft: rgba(244, 114, 208, 0.1);
-  --focus: #ff2e55;
+  /* not the accent red: on an active tab, chip or menu item a red focus ring did not show (review 2026-11-02) */
+  --focus: #fcee0a;
   --glow: 0 0 0 1px var(--neon-soft), 0 0 16px -4px var(--neon-glow);
   --shadow: none;
   --corner: 6px;
@@ -159,7 +162,7 @@ input,
 select {
   min-height: 40px;
   background: var(--bg-elev);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line-control);
   border-radius: var(--corner-sm);
   padding: 8px 12px;
   min-width: 0;
@@ -205,7 +208,7 @@ button {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--line-control);
   background: var(--surface);
   border-radius: var(--corner-sm);
   padding: 8px 16px;
@@ -649,7 +652,7 @@ p.status-line {
   color: var(--line-strong);
 }
 .source-progress .pending {
-  opacity: 0.6;
+  color: var(--text-muted);
 }
 .fold-more {
   justify-self: start;
@@ -997,8 +1000,9 @@ button.status-chip.action:hover:not(:disabled) {
 .card-owner {
   overflow-wrap: anywhere;
 }
+/* an early card: dimmed by colour, not opacity, so its text keeps its contrast */
 .card.provisional {
-  opacity: 0.7;
+  filter: saturate(0.45);
 }
 .card-head {
   display: flex;
@@ -2293,7 +2297,8 @@ kbd {
   }
   .chip-btn.off {
     text-decoration: line-through;
-    opacity: 0.55;
+    color: var(--text-muted);
+    border-style: dashed;
   }
   .add-word {
     display: inline-flex;
