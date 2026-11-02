@@ -207,7 +207,7 @@ export function skillsRouter(ctx: AppContext): Router {
     const steps = buildSteps(plan, scope, projectPath);
     res.json({
       plan,
-      steps: steps.map((s) => ({ display: s.display, cwd: s.cwd })),
+      steps: steps.map((s) => ({ display: s.display, cwd: s.cwd, note: s.note })),
       location: installLocation(plan, scope, projectPath),
       createsLockFile: plan.method === 'skills-cli' && scope === 'project',
       // the skills CLI replaces a folder of the same name without asking (-y, D-5): say so before the install

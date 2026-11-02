@@ -48,7 +48,7 @@ export async function executeInstall(
   };
   const exec = async (step: InstallStep) => {
     argv.push([step.file, ...step.args]);
-    log(`$ ${step.display.replace(/\s+# .*$/, '')}`, 'info');
+    log(`$ ${step.display}`, 'info');
     if (step.file === 'claude') return runClaude(step.args, { cwd: step.cwd, env, timeoutMs: 5 * 60_000, onLine });
     return run(process.execPath, step.args, { cwd: step.cwd, env, timeoutMs: 5 * 60_000, onLine });
   };

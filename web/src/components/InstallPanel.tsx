@@ -253,6 +253,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
           {current.steps.map((s, i) => (
             <div key={i} className="cmd">
               <code>{s.display}</code>
+              {s.note && <span className="muted small">{serverText(s.note)}</span>}
               <CopyButton text={s.display} />
             </div>
           ))}
@@ -347,7 +348,10 @@ function ConfirmDialog(props: {
       {props.preview.steps.map((s, i) => (
         <div key={i} className="cmd cmd-stacked">
           <code>{s.display}</code>
-          <span className="muted small">{t('작업 폴더: {0}', s.cwd)}</span>
+          <span className="muted small">
+            {t('작업 폴더: {0}', s.cwd)}
+            {s.note && ` · ${serverText(s.note)}`}
+          </span>
         </div>
       ))}
       <div className="muted small">{t('설치 위치')}</div>

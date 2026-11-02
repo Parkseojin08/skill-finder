@@ -165,7 +165,8 @@ export type InstallScan =
 
 export type InstallPreview = {
   plan: InstallPlan;
-  steps: Array<{ display: string; cwd: string }>;
+  /** `note`: when or how it runs, in the server's Korean (serverText) */
+  steps: Array<{ display: string; cwd: string; note?: string }>;
   location: string;
   createsLockFile?: boolean;
   existing?: ExistingSkill | null;

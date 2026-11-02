@@ -222,7 +222,8 @@ export function RepoInstallDialog({
                   <div key={i} className="cmd cmd-stacked">
                     <code>{st.display}</code>
                     <span className="muted small">
-                      {t('작업 폴더: {0}', st.cwd)}{' '}<CopyButton text={st.display} className="linkish small" />
+                      {t('작업 폴더: {0}', st.cwd)}
+                      {st.note && ` · ${serverText(st.note)}`}{' '}<CopyButton text={st.display} className="linkish small" />
                     </span>
                   </div>
                 ))}

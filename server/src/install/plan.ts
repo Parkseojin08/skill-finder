@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
-import { join, relative, sep } from 'node:path';
-import { ROOT_DIR, SKILLS_CLI_PATH, SKILLS_CLI_VERSION } from '../config.ts';
+import { join, sep } from 'node:path';
+import { SKILLS_CLI_PATH, SKILLS_CLI_VERSION } from '../config.ts';
 import type { MarketplaceRow, PluginRow, SkillRow } from '../db/store.ts';
 import type { RepoInstallInfo } from '../indexer.ts';
 import { formatCommand } from '../claude/cli.ts';
@@ -118,8 +118,10 @@ export type InstallStep = {
   file: 'claude' | 'node';
   args: string[];
   cwd: string;
-  /** Exact command line shown in the confirmation dialog. */
+  /** Command line shown in the confirmation dialog, as it would run in a terminal. */
   display: string;
+  /** When or how it runs, beside the command (the screen translates it; not part of what is copied). */
+  note?: string;
 };
 
 export function buildSteps(plan: InstallPlan, scope: InstallScope, projectPath: string | null): InstallStep[] {
@@ -129,14 +131,15 @@ export function buildSteps(plan: InstallPlan, scope: InstallScope, projectPath: 
     const installArgs = ['plugin', 'install', `${plan.pluginName}@${mp.name}`, '--scope', scope, '--json'];
     const addArgs = ['plugin', 'marketplace', 'add', mp.repo, '--json'];
     return [
-      { kind: 'ensure-marketplace', file: 'claude', args: addArgs, cwd: homedir(), display: `${formatCommand('claude', addArgs)}   # 마켓플레이스 미등록 시에만` },
+      { kind: 'ensure-marketplace', file: 'claude', args: addArgs, cwd: homedir(), display: formatCommand('claude', addArgs), note: '마켓플레이스 미등록 시에만' },
       { kind: 'plugin-install', file: 'claude', args: installArgs, cwd, display: formatCommand('claude', installArgs) },
     ];
   }
   if (plan.method === 'skills-cli') {
     const args = [SKILLS_CLI_PATH, ...skillsCliArgs(plan.source ?? plan.repo!, plan.skillName!, scope)];
-    const shown = ['node', relative(ROOT_DIR, SKILLS_CLI_PATH).replace(/\\/g, '/'), ...args.slice(1)];
-    return [{ kind: 'skills-add', file: 'node', args, cwd, display: formatCommand(shown[0], shown.slice(1)) }];
+    // The app runs its own copy of the CLI, whose path depends on how the app was installed (under npx it was
+    // "../skills/bin/cli.mjs"); the same version through npx reads the same anywhere.
+    return [{ kind: 'skills-add', file: 'node', args, cwd, display: formatCommand('npx', [`skills@${SKILLS_CLI_VERSION}`, ...args.slice(1)]), note: '앱에 들어 있는 같은 버전으로 실행' }];
   }
   return [];
 }
