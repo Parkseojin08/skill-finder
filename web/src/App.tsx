@@ -11,11 +11,12 @@ import type { Health, OpenedFrom, ResultItem } from './types.ts';
 type Path = '/' | '/recommend' | '/skill' | '/installed' | '/marketplaces' | '/settings';
 type Route = { path: Path; skillId: string | null };
 
-const NAV: Array<{ path: Path; label: string }> = [
+/** `short`: the label on a phone-width window, where the five did not fit (review 2026-11-02). */
+const NAV: Array<{ path: Path; label: string; short?: string }> = [
   { path: '/', label: '검색' },
-  { path: '/recommend', label: 'README 추천' },
+  { path: '/recommend', label: 'README 추천', short: '추천' },
   { path: '/installed', label: '설치됨' },
-  { path: '/marketplaces', label: '마켓플레이스' },
+  { path: '/marketplaces', label: '마켓플레이스', short: '마켓' },
   { path: '/settings', label: '설정' },
 ];
 const PATHS: Path[] = ['/', '/recommend', '/skill', '/installed', '/marketplaces', '/settings'];
@@ -157,7 +158,16 @@ export function App() {
                 go(r.path);
               }}
             >
-              {r.label}
+              {r.short ? (
+                <>
+                  <span className="nav-long">{r.label}</span>
+                  <span className="nav-short" aria-hidden="true">
+                    {r.short}
+                  </span>
+                </>
+              ) : (
+                r.label
+              )}
             </a>
           ))}
         </nav>

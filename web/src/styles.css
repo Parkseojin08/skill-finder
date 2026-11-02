@@ -2413,3 +2413,56 @@ kbd {
     margin: 4px 0 0;
   }
 }
+
+/* phone-width windows (review 2026-11-02: at 375px the menu was cut off, the skill page's install button broke
+   into one letter per line, tables and chips pushed the page sideways) */
+@layer app {
+  .nav-short {
+    display: none;
+  }
+  @media (max-width: 640px) {
+    .nav-long {
+      display: none;
+    }
+    .nav-short {
+      display: inline;
+    }
+    .skill-head {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 12px;
+    }
+    .skill-side {
+      width: 100%;
+      min-width: 0;
+    }
+    .status-chip {
+      white-space: normal;
+      text-align: left;
+    }
+    .row {
+      flex-wrap: wrap;
+    }
+    /* the topbar wraps to two lines here */
+    .results-toolbar {
+      scroll-margin-top: 120px;
+    }
+  }
+  /* grid and flex children would otherwise grow to their widest table */
+  .page,
+  .page > section,
+  .results-main {
+    min-width: 0;
+  }
+}
+
+/* Tailwind's `.table` utility (display: table) sits in a later layer than this sheet and won over the narrow
+   rule above, so wide tables pushed the 설치됨 and 마켓플레이스 pages sideways; !important flips the layer order. */
+@layer app {
+  @media (max-width: 900px) {
+    .table {
+      display: block !important;
+      overflow-x: auto;
+    }
+  }
+}
