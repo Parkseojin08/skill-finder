@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { TreeIndex } from '../src/discovery/tree.ts';
@@ -276,6 +276,57 @@ describe('README 추천 단어 조절·README 없는 프로젝트 (전체 점검
     const typed = recommendForProject(srv.ctx.store, dir, DEFAULT_SETTINGS.weights, { extra: ['pdf', 'tables'] });
     assert.equal(typed.readmePath, '');
     assert.equal(typed.skills[0]?.item.name, 'pdf-tools');
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('README 대신 CLAUDE.md·AGENTS.md (사용자 결정 2026-11-02)', () => {
+  // the shape `/init` writes: boilerplate first line, commands in inline code, stock headings
+  const INIT = [
+    '# CLAUDE.md',
+    '',
+    'This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.',
+    '',
+    '## Project Overview',
+    '',
+    'A tool that extracts tables and text from PDF files and writes them as spreadsheets.',
+    '',
+    '## Commands',
+    '',
+    '- `pnpm build-artifacts` builds it',
+    '',
+    '## Commit & Pull Request Guidelines',
+    '',
+    'Keep it short.',
+  ].join('\n');
+
+  it('README도 설명 파일도 없으면 CLAUDE.md를 읽되, 명령·첫 줄 문구·제목은 키워드에 넣지 않는다', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sf-agent-'));
+    writeFileSync(join(dir, 'CLAUDE.md'), INIT);
+    const r = recommendForProject(srv.ctx.store, dir, DEFAULT_SETTINGS.weights);
+    assert.equal(r.readmePath, join(dir, 'CLAUDE.md'));
+    assert.equal(r.summary.title, basename(dir), '"# CLAUDE.md"는 프로젝트 이름이 아님');
+    assert.match(r.summary.intro, /extracts tables/);
+    const terms = r.keywords.map((k) => k.term);
+    assert.ok(terms.includes('pdf') && terms.includes('tables'), terms.join(','));
+    for (const noise of ['guidance', 'repository', 'artifacts', 'commit', 'pull', 'request']) assert.ok(!terms.includes(noise), `${noise}: ${terms.join(',')}`);
+    assert.equal(r.skills[0]?.item.name, 'pdf-tools');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('package.json이 있으면 그 이름·설명이 앞서고 AGENTS.md를 함께 읽는다; README가 있으면 README만 읽는다', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sf-agent-'));
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'sheet-lab', description: 'Spreadsheet reports with formulas.' }));
+    writeFileSync(join(dir, 'AGENTS.md'), '# Sheet Lab\n\nReads PDF tables into the reports.\n');
+    const r = recommendForProject(srv.ctx.store, dir, DEFAULT_SETTINGS.weights);
+    assert.equal(r.readmePath, join(dir, 'package.json'));
+    assert.deepEqual(r.alsoRead, [join(dir, 'AGENTS.md')]);
+    assert.equal(r.summary.title, 'sheet-lab');
+    assert.ok(r.keywords.some((k) => k.term === 'pdf'), 'AGENTS.md의 단어도 들어감');
+    writeFileSync(join(dir, 'README.md'), '# Sheet Lab\n\nSpreadsheet reports with formulas and charts.\n');
+    const withReadme = recommendForProject(srv.ctx.store, dir, DEFAULT_SETTINGS.weights);
+    assert.equal(withReadme.readmePath, join(dir, 'README.md'));
+    assert.equal(withReadme.alsoRead, undefined);
     rmSync(dir, { recursive: true, force: true });
   });
 });

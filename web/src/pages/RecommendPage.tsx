@@ -16,6 +16,13 @@ const ERROR_HINT: Record<number, string> = {
   413: 'README가 1MB를 넘어 읽지 않았습니다.',
 };
 
+/** The summary's heading: what was read ("package.json + CLAUDE.md 요약 (README 없음)"), or the typed words. */
+function readFrom(result: RecommendResult): string {
+  if (!result.readmePath) return '넣은 단어로 찾은 결과';
+  const files = [result.readmePath, ...(result.alsoRead ?? [])].map((p) => p.split(/[\\/]/).pop()!);
+  return /^readme/i.test(files[0]) ? 'README 요약' : `${files.join(' + ')} 요약 (README 없음)`;
+}
+
 export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }) {
   const installedAs = useInstalled();
   const [projectPath, setProjectPath] = useState('');
@@ -104,7 +111,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
       <h1>README 추천</h1>
       <p className="muted">
         프로젝트 폴더를 고르면 맨 위의 README를 읽고, 이 프로젝트와 비슷한 스킬을 다운로드·인기 순으로 보여 줍니다. AI 없이 README의 단어로만
-        찾습니다.
+        찾습니다. README가 없으면 package.json 같은 설명 파일과 CLAUDE.md·AGENTS.md를 읽습니다.
       </p>
       <form
         className="row"
@@ -154,7 +161,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
       {result && (
         <>
           <section className="readme-summary">
-            <h2>{!result.readmePath ? '넣은 단어로 찾은 결과' : /package\.json$|pyproject\.toml$|Cargo\.toml$/i.test(result.readmePath) ? `${result.readmePath.split(/[\\/]/).pop()} 요약 (README 없음)` : 'README 요약'}</h2>
+            <h2>{readFrom(result)}</h2>
             <h3 className="summary-title">{result.summary.title}</h3>
             {result.summary.intro ? <Translated className="summary" text={result.summary.intro} /> : <p className="muted">소개 문단이 없습니다.</p>}
             {result.summary.features.length > 0 && (

@@ -45,6 +45,8 @@ export type SkillMatch ={ item: ResultItem; score: number; matchedTerms: string[
 
 export type RecommendResult = {
   readmePath: string;
+  /** Read along with it when there is no README (an agent file next to package.json). */
+  alsoRead?: string[];
   summary: { title: string; intro: string; features: string[] };
   keywords: Array<{ term: string; weight: number }>;
   /** Similar skills, most downloaded first (then stars). */

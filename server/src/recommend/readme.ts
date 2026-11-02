@@ -51,7 +51,7 @@ const STOP = new Set(
   include includes including example examples see install installation installing usage license licensed mit apache
   contributing contribute contributors getting started quick quickstart npm yarn pnpm bun npx run running requirements
   prerequisites copyright table contents toc badge badges readme click here link links please thanks changelog
-  feature features overview introduction intro about faq support`.split(/\s+/),
+  feature features overview introduction intro about faq support through within without`.split(/\s+/),
 );
 
 /** Code-block languages of install/run snippets: every README has them, they say nothing about the project. */
@@ -293,6 +293,8 @@ export type SkillMatch = { item: ResultItem; score: number; matchedTerms: string
 
 export type RecommendResult = {
   readmePath: string;
+  /** Other files read along with it (an agent file next to package.json, when there is no README). */
+  alsoRead?: string[];
   summary: { title: string; intro: string; features: string[] };
   keywords: Array<{ term: string; weight: number }>;
   /** Skills similar to the README, most downloaded first (then stars). Empty when nothing is similar. */
@@ -432,22 +434,68 @@ export function manifestAsReadme(projectPath: string): { path: string; md: strin
   return null;
 }
 
+/** Agent instruction files, read when there is no README (user decision 2026-11-02). */
+const AGENT_FILES = ['CLAUDE.md', 'AGENTS.md', join('.claude', 'CLAUDE.md')];
+// the first line `/init` writes: "This file provides guidance to Claude Code (claude.ai/code) when working with…"
+const BOILERPLATE = /^.*\bthis file provides guidance to\b.*$/gim;
+const GENERIC_TITLE = /^(?:claude|agents)(?:\.md)?$|^(?:repository|project|contributor|agent)s?\s+(?:guidelines|guide|instructions)$|^instructions$/i;
+
+/**
+ * An agent instructions file as README text. It is mostly commands, paths and rules, so inline code, `/init`'s
+ * first line and the headings ("Build, Test, and Development Commands", "Commit & Pull Request Guidelines", which
+ * as headings would weigh 3 and bring in git skills) are left out, and what is left counts as plain text. Its
+ * title is kept when it names the project, not the file ("# CLAUDE.md", "# Repository Guidelines").
+ */
+export function agentFileAsReadme(projectPath: string): { path: string; md: string; title: string | null } | null {
+  for (const name of AGENT_FILES) {
+    const path = join(projectPath, name);
+    let text: string;
+    try {
+      if (statSync(path).size > CONFIG.maxReadmeBytes) continue;
+      text = readFileSync(path, 'utf8');
+    } catch {
+      continue;
+    }
+    let title: string | null = null;
+    const md = text
+      .replace(/\r\n?/g, '\n')
+      .replace(BOILERPLATE, '')
+      .replace(/`[^`\n]*`/g, ' ')
+      .split('\n')
+      .map((line) => {
+        const h = line.match(ATX);
+        if (!h) return line;
+        const t = atxText(h[2]).trim();
+        if (h[1].length === 1 && title == null && t && !GENERIC_TITLE.test(t)) title = t;
+        return ''; // a heading still ends the paragraph above it
+      })
+      .join('\n')
+      .trim();
+    if (md) return { path, md, title };
+  }
+  return null;
+}
+
 /**
  * `exclude`: keywords turned off on the page (their surface form); `extra`: words added there, weighted like the
  * strongest keyword so they count (project review 2026-11-02).
  */
 export function recommendForProject(store: Store, projectPath: unknown, weights: Settings['weights'], opts: { exclude?: string[]; extra?: string[] } = {}): RecommendResult {
-  let source: { path: string; md: string };
+  let source: { path: string; md: string; also?: string[] };
   try {
     const readmePath = findReadme(projectPath);
     source = { path: readmePath, md: readFileSync(readmePath, 'utf8') };
   } catch (err) {
     if (!(err instanceof ReadmeError) || err.code !== 'README_NOT_FOUND') throw err;
+    // no README: the manifest's name, description and keywords lead, the agent file adds the rest as plain text
     const manifest = manifestAsReadme(projectPath as string);
+    const agent = agentFileAsReadme(projectPath as string);
+    if (manifest && agent) source = { path: manifest.path, md: `${manifest.md}\n\n${agent.md}`, also: [agent.path] };
+    else if (manifest) source = manifest;
+    else if (agent) source = { path: agent.path, md: agent.title ? `# ${agent.title}\n\n${agent.md}` : agent.md };
     // nothing to read: the words typed on the page are the whole description (readmePath '' says so)
-    if (manifest) source = manifest;
     else if (opts.extra?.length) source = { path: '', md: '' };
-    else throw new ReadmeError('README_NOT_FOUND', '폴더 바로 아래에 README도, 설명이 있는 package.json·pyproject.toml·Cargo.toml도 없습니다.');
+    else throw new ReadmeError('README_NOT_FOUND', '폴더 바로 아래에 README도, 설명이 있는 package.json·pyproject.toml·Cargo.toml도, CLAUDE.md·AGENTS.md도 없습니다.');
   }
   const info = extractReadme(source.md, basename(projectPath as string));
   const off = new Set((opts.exclude ?? []).map((t) => t.toLowerCase()));
@@ -465,6 +513,7 @@ export function recommendForProject(store: Store, projectPath: unknown, weights:
   keywords = keywords.slice(0, CONFIG.maxQueryTerms);
   return {
     readmePath: source.path,
+    ...(source.also ? { alsoRead: source.also } : {}),
     summary: { title: info.title, intro: info.intro, features: info.features },
     keywords: keywords.slice(0, 10).map(({ term, weight }) => ({ term, weight })),
     skills: matchSkills(store, keywords, weights),
