@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AccountMenu } from './components/AccountMenu.tsx';
 import { FavoritesPage } from './pages/FavoritesPage.tsx';
 import { InstalledPage } from './pages/InstalledPage.tsx';
 import { MarketplacesPage } from './pages/MarketplacesPage.tsx';
@@ -19,6 +18,7 @@ const NAV: Array<{ path: Path; label: string; short?: string }> = [
   { path: '/', label: t('검색') },
   { path: '/recommend', label: t('README 추천'), short: t('추천') },
   { path: '/installed', label: t('설치됨') },
+  { path: '/favorites', label: t('즐겨찾기'), short: '★' },
   { path: '/marketplaces', label: t('마켓플레이스'), short: t('마켓') },
   { path: '/settings', label: t('설정') },
 ];
@@ -77,7 +77,7 @@ export function App() {
   const lastOpened = useRef<string | null>(null);
   const firstRoute = useRef(true);
   useEffect(() => {
-    const label = route.path === '/favorites' ? t('즐겨찾기') : NAV.find((n) => n.path === route.path)?.label;
+    const label = NAV.find((n) => n.path === route.path)?.label;
     if (route.path !== '/skill') document.title = route.path === '/' || !label ? 'Skill Finder' : `${label} · Skill Finder`;
     if (firstRoute.current) {
       firstRoute.current = false;
@@ -194,7 +194,6 @@ export function App() {
             </div>
           </details>
         )}
-        <AccountMenu onFavorites={() => go('/favorites')} />
       </header>
       <main>
         {/* Search stays mounted so results survive opening a skill or visiting other pages. */}

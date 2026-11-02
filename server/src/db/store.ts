@@ -67,8 +67,6 @@ export type SkillRow = {
   install_json: string | null;
 };
 
-export type UserRow = { id: number; username: string; password_hash: string; created_at: string };
-
 export type RepoRow = {
   full_name: string;
   stars: number | null;
@@ -624,32 +622,19 @@ export class Store {
       .slice(0, limit);
   }
 
-  // ── accounts and favorites (user decision 2026-11-02) ──
+  // ── favorites: this PC's, no accounts (user decision 2026-11-02) ──
 
-  createUser(username: string, passwordHash: string): UserRow {
-    const r = this.run('INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)', username, passwordHash, now());
-    return this.getUser(Number(r.lastInsertRowid))!;
+  addFavorite(skillId: string, skillName: string): void {
+    this.run('INSERT INTO favorites (skill_id, skill_name, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING', skillId, skillName, now());
   }
 
-  getUser(id: number): UserRow | undefined {
-    return this.get('SELECT id, username, password_hash, created_at FROM users WHERE id = ?', id);
-  }
-
-  getUserByName(username: string): UserRow | undefined {
-    return this.get('SELECT id, username, password_hash, created_at FROM users WHERE username = ?', username);
-  }
-
-  addFavorite(userId: number, skillId: string, skillName: string): void {
-    this.run('INSERT INTO favorites (user_id, skill_id, skill_name, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING', userId, skillId, skillName, now());
-  }
-
-  removeFavorite(userId: number, skillId: string): void {
-    this.run('DELETE FROM favorites WHERE user_id = ? AND skill_id = ?', userId, skillId);
+  removeFavorite(skillId: string): void {
+    this.run('DELETE FROM favorites WHERE skill_id = ?', skillId);
   }
 
   /** Newest first. */
-  listFavorites(userId: number): Array<{ skill_id: string; skill_name: string; created_at: string }> {
-    return this.all('SELECT skill_id, skill_name, created_at FROM favorites WHERE user_id = ? ORDER BY created_at DESC, rowid DESC', userId);
+  listFavorites(): Array<{ skill_id: string; skill_name: string; created_at: string }> {
+    return this.all('SELECT skill_id, skill_name, created_at FROM favorites ORDER BY created_at DESC, rowid DESC');
   }
 
   /** Skills the app installed into a skills folder (skills CLI), newest first, to match those folders to the index. */

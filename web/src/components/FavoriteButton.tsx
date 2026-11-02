@@ -1,21 +1,19 @@
 import { StarIcon } from '@phosphor-icons/react';
-import { askLogin, toggleFavorite, useAccount } from '../account.ts';
+import { toggleFavorite, useFavorites } from '../favorites.ts';
 import { t } from '../i18n.ts';
 
-/** The star on a result card and a skill page; signed out, it opens the login dialog (favorites need an account). */
+/** The star on a result card and a skill page: this PC's favorites, no account (user decision 2026-11-02). */
 export function FavoriteButton({ id, name, className = '' }: { id: string; name: string; className?: string }) {
-  const { user, favorites } = useAccount();
-  const on = favorites.has(id);
+  const on = useFavorites().has(id);
   return (
     <button
       type="button"
       className={`fav-btn ${on ? 'on' : ''} ${className}`}
-      aria-pressed={user ? on : undefined}
+      aria-pressed={on}
       aria-label={on ? t('{0} 즐겨찾기에서 빼기', name) : t('{0} 즐겨찾기에 넣기', name)}
-      title={user ? (on ? t('즐겨찾기에서 빼기') : t('즐겨찾기에 넣기')) : t('즐겨찾기는 로그인 후 쓸 수 있습니다')}
+      title={on ? t('즐겨찾기에서 빼기') : t('즐겨찾기에 넣기')}
       onClick={(e) => {
         e.stopPropagation();
-        if (!user) return askLogin(t('즐겨찾기는 로그인한 뒤에 쓸 수 있습니다.'));
         void toggleFavorite(id).catch(() => {});
       }}
     >

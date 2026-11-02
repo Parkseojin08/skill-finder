@@ -76,4 +76,20 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (user_id, skill_id)
   );
   `,
+  // Favorites without accounts (user decision 2026-11-02): accounts kept only on this PC protected nothing, so the
+  // favorites of every account made so far become this PC's favorites (the earliest star of each skill), and the
+  // users table and the session key go.
+  `
+  CREATE TABLE favorites_local (
+    skill_id TEXT PRIMARY KEY,
+    skill_name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  INSERT INTO favorites_local (skill_id, skill_name, created_at)
+    SELECT skill_id, MIN(skill_name), MIN(created_at) FROM favorites GROUP BY skill_id;
+  DROP TABLE favorites;
+  DROP TABLE users;
+  ALTER TABLE favorites_local RENAME TO favorites;
+  DELETE FROM settings WHERE key = 'sessionKey';
+  `,
 ];
