@@ -82,4 +82,6 @@ npm run typecheck
 
 ## 라이선스
 
-[MIT](LICENSE)
+[MIT](LICENSE) © 2026 Parkseojin08. 누구나 쓰고 고치고 배포할 수 있으며, 복사본에는 저작권 표시와 라이선스 문구를 함께 두면 됩니다(보증 없음).
+
+웹 화면에 함께 묶이는 오픈소스(React, Base UI, react-markdown 등)의 라이선스는 빌드할 때 `web/dist/THIRD-PARTY-LICENSES.txt`로 만들어지고, 앱의 설정 화면 "라이선스"에서 볼 수 있습니다.
