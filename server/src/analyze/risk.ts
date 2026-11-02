@@ -130,8 +130,10 @@ export function pluginRiskFlags(signals: PluginSignals | null | undefined, sourc
 }
 
 // Shown, but they do not raise the level: rm -rf is common cleanup, and pluginRootDependency says how the skill must
-// be installed (as a plugin), not that it is dangerous (UI debate D-3).
-const INFO_ONLY = new Set<RiskFlag>(['rmRf', 'pluginRootDependency']);
+// be installed (as a plugin), not that it is dangerous (UI debate D-3). Scripts and a plugin's bin run only through
+// Bash, which Claude Code asks about first; what runs without asking (hooks, MCP servers, monitors, pre-approved
+// Bash, shell injection) stays "주의" (user decision 2026-11-02: 60% of skills were "주의", official pdf too).
+const INFO_ONLY = new Set<RiskFlag>(['rmRf', 'pluginRootDependency', 'scripts', 'pluginBin']);
 
 export function riskLevel(flags: readonly RiskFlag[]): RiskLevel {
   const has = (f: RiskFlag) => flags.includes(f);

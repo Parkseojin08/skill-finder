@@ -165,8 +165,14 @@ describe('§6.3 위험 신호', () => {
     assert.equal(riskLevel([]), 'low');
     assert.equal(riskLevel(['rmRf']), 'low');
     assert.equal(riskLevel(['pluginRootDependency', 'rmRf']), 'low', '설치 방식 정보일 뿐 (D-3)');
-    assert.equal(riskLevel(['pluginRootDependency', 'scripts']), 'medium');
-    assert.equal(riskLevel(['scripts']), 'medium');
+    // run only through Bash, which Claude Code asks about first (user decision 2026-11-02)
+    assert.equal(riskLevel(['pluginRootDependency', 'scripts']), 'low');
+    assert.equal(riskLevel(['scripts']), 'low');
+    assert.equal(riskLevel(['scripts', 'pluginBin']), 'low');
+    // what runs without asking keeps it "주의"
+    for (const f of ['preapprovedBash', 'pluginHooks', 'pluginMcp', 'pluginMonitors', 'skillHooks', 'shellInjection'] as const) {
+      assert.equal(riskLevel(['scripts', f]), 'medium', f);
+    }
     assert.equal(riskLevel(['shellInjection', 'preapprovedBash']), 'medium');
     assert.equal(riskLevel(['shellInjection', 'unscopedBash', 'preapprovedBash']), 'high');
     assert.equal(riskLevel(['curlPipeShell']), 'high');

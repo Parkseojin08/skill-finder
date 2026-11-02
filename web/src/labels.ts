@@ -1,7 +1,7 @@
 import type { InstallMethod, Job, RiskLevel, TrustTier } from './types.ts';
 
 export const RISK_FLAGS: Record<string, { label: string; meaning: string; info?: boolean }> = {
-  scripts: { label: '스크립트 포함', meaning: '실행 가능한 코드(.sh, .py, .js 등)가 들어 있습니다.' },
+  scripts: { label: '스크립트 포함', meaning: '실행 가능한 코드(.sh, .py, .js 등)가 들어 있습니다(정보). Bash로만 실행되고, 그 전에 Claude Code가 허락을 묻습니다.', info: true },
   preapprovedBash: { label: 'Bash 사전 승인', meaning: '이 스킬이 쓰이는 동안 Bash가 승인 없이 실행될 수 있습니다.' },
   unscopedBash: { label: 'Bash 무제한', meaning: 'Bash 사전 승인에 명령 제한도 없습니다.' },
   shellInjection: { label: '셸 명령 주입', meaning: '스킬이 호출되면 Claude가 내용을 보기 전에 셸 명령이 실행됩니다.' },
@@ -9,7 +9,7 @@ export const RISK_FLAGS: Record<string, { label: string; meaning: string; info?:
   pluginRootDependency: { label: '플러그인 전용', meaning: '플러그인으로 설치해야 동작합니다. 폴더만 복사하면 깨집니다. 위험 신호가 아니라 설치 방식 정보입니다.', info: true },
   pluginHooks: { label: '플러그인 훅', meaning: '플러그인을 설치하면 훅이 함께 설치·실행됩니다.' },
   pluginMcp: { label: 'MCP 서버', meaning: '플러그인을 설치하면 MCP 서버가 함께 설치·실행됩니다.' },
-  pluginBin: { label: '실행 파일(bin)', meaning: '플러그인이 활성화되면 실행 파일이 Bash PATH에 올라갑니다.' },
+  pluginBin: { label: '실행 파일(bin)', meaning: '플러그인이 활성화되면 실행 파일이 Bash PATH에 올라갑니다(정보). Bash로만 실행되고, 그 전에 Claude Code가 허락을 묻습니다.', info: true },
   pluginMonitors: { label: '모니터', meaning: '플러그인을 설치하면 모니터가 함께 설치·실행됩니다.' },
   curlPipeShell: { label: '원격 스크립트 실행', meaning: '원격 스크립트를 내려받아 바로 실행하는 명령(curl | sh)이 있습니다.' },
   rmRf: { label: 'rm -rf', meaning: '강제 삭제 명령이 들어 있습니다(정보).', info: true },
