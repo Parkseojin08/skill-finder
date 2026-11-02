@@ -1,0 +1,20 @@
+name: 기능 제안
+description: 있으면 좋겠는 기능이나 바꾸고 싶은 점
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: 어떤 상황에서 필요한가요
+      description: 지금 무엇이 불편한지, 어떤 스킬을 찾거나 설치하다가 생긴 일인지 적어 주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 생각해 둔 방법
+  - type: textarea
+    id: example
+    attributes:
+      label: 예시 검색어·스킬
+      description: 결과 순위나 위험 판정에 관한 제안이면 검색어와 스킬 이름을 적어 주세요.

@@ -143,7 +143,7 @@
 ---
 
 ## 근거 파일 위치
-모두 `<임시 폴더>\scratchpad\debate\` 아래에 있다.
+모두 작업 세션의 임시 폴더(`scratchpad\debate\`) 아래에 있었다(저장소에는 없음).
 - 공통 안내: `BRIEF.md`
 - 패널 글: `p1\round1.md`·`round2.md` … `p5\round1.md`·`round2.md`
 - 패널 집계 스크립트: `p2\q.mjs`·`q2.mjs`(위험 집계), `p3\linkcheck.mjs`(설치 연결, 해시를 줄바꿈 정리 없이 계산함), `p5\log.mjs`·`log2.mjs`(검색 기록)
