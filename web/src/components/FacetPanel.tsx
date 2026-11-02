@@ -36,13 +36,39 @@ function options(group: Group, counts: Map<string, number>, selected: string[]):
 }
 
 /** Sidebar that narrows the current results by provider, category and install method, with live counts. */
+export const facetLabel = (g: Group, k: string) => (g === 'trust' ? TRUST[k as keyof typeof TRUST].label : g === 'method' ? METHOD[k as keyof typeof METHOD] : (CATEGORY[k] ?? k));
+
+/**
+ * The side filters in force, as chips in the results toolbar ("Anthropic 공식 ×"): a filter kept from the last
+ * search used to empty a new one with the reason only in the side panel (review 2026-11-02).
+ */
+export function ActiveFacets({ value, onChange }: { value: Facets; onChange: (f: Facets) => void }) {
+  const on = GROUPS.flatMap((g) => value[g].map((k) => [g, k] as const));
+  if (!on.length) return null;
+  return (
+    <>
+      {on.map(([g, k]) => (
+        <button
+          key={`${g}:${k}`}
+          type="button"
+          className="status-chip action"
+          aria-label={`필터 ${facetLabel(g, k)} 끄기`}
+          onClick={() => onChange({ ...value, [g]: value[g].filter((x) => x !== k) })}
+        >
+          필터 {facetLabel(g, k)} ×
+        </button>
+      ))}
+    </>
+  );
+}
+
 export function FacetPanel({ items, value, onChange }: { items: ResultItem[]; value: Facets; onChange: (f: Facets) => void }) {
   const [open, setOpen] = useState(false); // narrow screens only; always shown on desktop
   const active = facetCount(value);
   const toggle = (g: Group, v: string) => onChange({ ...value, [g]: value[g].includes(v) ? value[g].filter((x) => x !== v) : [...value[g], v] });
 
   const title: Record<Group, string> = { trust: '제공자', category: '카테고리', method: '설치 방식' };
-  const label = (g: Group, k: string) => (g === 'trust' ? TRUST[k as keyof typeof TRUST].label : g === 'method' ? METHOD[k as keyof typeof METHOD] : (CATEGORY[k] ?? k));
+  const label = facetLabel;
 
   return (
     <aside className={`facets ${open ? 'open' : ''}`} aria-label="결과 분류 필터">

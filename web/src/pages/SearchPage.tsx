@@ -1,7 +1,7 @@
 import { Icon } from '../components/Icon.tsx';
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { apiGet, streamNdjson } from '../api.ts';
-import { FacetPanel, facetCount, matchFacets, NO_FACETS, type Facets } from '../components/FacetPanel.tsx';
+import { ActiveFacets, FacetPanel, facetCount, matchFacets, NO_FACETS, type Facets } from '../components/FacetPanel.tsx';
 import { RepoCard } from '../components/RepoCard.tsx';
 import { NoResults } from '../components/search/NoResults.tsx';
 import { SearchIntro } from '../components/search/SearchIntro.tsx';
@@ -142,14 +142,18 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   const noticesRef = useRef<HTMLDetailsElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Settings and running jobs are read again whenever the search page comes back into view (it stays mounted while
+  // hidden): a token added in the settings, or a collection started on the marketplace screen, used to go unseen
+  // until a reload (review 2026-11-02).
   useEffect(() => {
-    apiGet<SettingsResponse>('/settings')
-      .then((s) => {
-        setGithubToken(s.githubToken);
-        setLogOn(s.settings.searchLog);
-      })
-      .catch(() => {});
     let timer: ReturnType<typeof setTimeout>;
+    const readSettings = () =>
+      apiGet<SettingsResponse>('/settings')
+        .then((s) => {
+          setGithubToken(s.githubToken);
+          setLogOn(s.settings.searchLog);
+        })
+        .catch(() => {});
     const poll = async () => {
       try {
         const [h, j] = await Promise.all([apiGet<Health>('/health'), apiGet<{ jobs: Job[] }>('/jobs')]);
@@ -163,8 +167,25 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
         timer = setTimeout(poll, 5000);
       }
     };
-    poll();
-    return () => clearTimeout(timer);
+    const refresh = () => {
+      clearTimeout(timer);
+      void readSettings();
+      void poll();
+    };
+    // once at start (an observer does not fire while the tab is not drawn), then on each return into view
+    refresh();
+    let seen = true;
+    const watch = new IntersectionObserver(([e]) => {
+      if (e?.isIntersecting && !seen) refresh();
+      seen = !!e?.isIntersecting;
+    });
+    // the whole page, not the search box: scrolling the results down must not count as leaving
+    const page = inputRef.current?.closest('.search-page');
+    if (page) watch.observe(page);
+    return () => {
+      clearTimeout(timer);
+      watch.disconnect();
+    };
   }, []);
 
   // "/" jumps to the search box, j / k move between result cards, "?" lists these (unless typing somewhere).
@@ -466,10 +487,20 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
         )}
         <div className="filters" role="group" aria-label="검색 조건">
           {(Object.keys(SOURCE_LABEL) as SourceKind[]).map((s) => (
+            // GitHub here is its code search, which needs a token: without one the box did nothing either way
             <label key={s} className="chip" title={s === 'github' && githubToken === false ? '설정에서 GitHub 토큰을 넣으면 사용됩니다' : undefined}>
-              <input type="checkbox" checked={sources.includes(s)} onChange={() => toggleSource(s)} />
+              <input
+                type="checkbox"
+                checked={sources.includes(s) && !(s === 'github' && githubToken === false)}
+                disabled={s === 'github' && githubToken === false}
+                onChange={() => toggleSource(s)}
+              />
               {SOURCE_LABEL[s]}
-              {s === 'github' && githubToken === false && <span className="muted small">(토큰 없음)</span>}
+              {s === 'github' && githubToken === false && (
+                <a className="muted small" href="/settings">
+                  (토큰 넣기)
+                </a>
+              )}
             </label>
           ))}
           <label className="select-inline">
@@ -535,6 +566,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                     {doneInfo && <span className="muted small"> · {doneInfo.cached ? '저장된 결과' : `${(doneInfo.elapsedMs / 1000).toFixed(1)}초`}</span>}
                   </span>
                 )}
+                <ActiveFacets value={facets} onChange={changeFacets} />
                 {hiddenRisky > 0 && (
                   <button
                     type="button"
