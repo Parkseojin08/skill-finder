@@ -221,7 +221,7 @@ export type Job = {
   finishedAt: string | null;
 };
 
-export type Health = { ok: boolean; appVersion: string | null; update: { version: string } | null; node: string; claudeVersion: string | null; skillsCli: string; githubToken: boolean; plugins: number; skills: number };
+export type Health = { ok: boolean; appVersion: string | null; update: { version: string; notes?: string[] } | null; node: string; claudeVersion: string | null; skillsCli: string; githubToken: boolean; plugins: number; skills: number };
 
 /** `same`: what is installed is what the index holds; `changed`: the index holds different text or a different commit. */
 export type InstallChange = 'same' | 'changed' | 'unknown';

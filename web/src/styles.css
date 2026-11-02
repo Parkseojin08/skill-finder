@@ -2499,3 +2499,34 @@ kbd {
     z-index: 2;
   }
 }
+
+/* the new version's signed change notes, under the menu-bar badge (user decision 2026-11-02) */
+@layer app {
+  details.update-badge {
+    position: relative;
+  }
+  details.update-badge > summary {
+    list-style: none;
+    cursor: pointer;
+  }
+  .update-notes {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 8px);
+    z-index: 20;
+    width: min(360px, 90vw);
+    padding: 10px 14px;
+    color: var(--text);
+    background: var(--bg-elev);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--corner);
+    white-space: normal;
+    font-size: 13px;
+  }
+  .update-notes ul {
+    margin: 0 0 8px;
+    padding-left: 18px;
+    display: grid;
+    gap: 4px;
+  }
+}

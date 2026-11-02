@@ -176,9 +176,22 @@ export function App() {
           ))}
         </nav>
         {update && (
-          <span className="update-badge" role="status" title="검은 Skill Finder 창을 닫았다가 바탕화면의 Skill Finder로 다시 켜면 자동으로 업데이트됩니다.">
-            새 버전 {update.version} · 다시 켜면 업데이트
-          </span>
+          // the version's change notes, when they are signed (the server drops unsigned ones)
+          <details className="update-badge" role="status">
+            <summary title="검은 Skill Finder 창을 닫았다가 바탕화면의 Skill Finder로 다시 켜면 자동으로 업데이트됩니다.">새 버전 {update.version} · 다시 켜면 업데이트</summary>
+            <div className="update-notes">
+              {update.notes?.length ? (
+                <ul>
+                  {update.notes.map((n, i) => (
+                    <li key={i}>{n}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="muted small">변경 기록이 없습니다.</p>
+              )}
+              <p className="muted small">검은 Skill Finder 창을 닫았다가 바탕화면의 Skill Finder로 다시 켜면 서명을 확인한 뒤 업데이트됩니다.</p>
+            </div>
+          </details>
         )}
         <AccountMenu onFavorites={() => go('/favorites')} />
       </header>

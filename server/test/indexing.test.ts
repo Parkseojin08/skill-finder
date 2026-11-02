@@ -202,23 +202,48 @@ describe('데이터 버전', () => {
 });
 
 describe('새 버전 알림', () => {
-  it('설치판에서만 내려받기 페이지를 보고, 더 새 버전일 때만 알린다', async () => {
+  it('설치판에서만 내려받기 페이지를 보고, 서명된 더 새 버전일 때만 알린다', async () => {
     const { checkForUpdate, newerVersion, updateInfo } = await import('../src/update.ts');
+    const { notesMessage, releaseMessage, signText } = await import('../src/release.ts');
+    const { generateKeyPairSync } = await import('node:crypto');
+    const key = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const other = generateKeyPairSync('rsa', { modulusLength: 2048 });
     assert.ok(newerVersion('0.10.0', '0.9.9'));
     assert.ok(!newerVersion('0.2.0', '0.2.0'));
     const page = (body: unknown) => (async () => new Response(JSON.stringify(body))) as unknown as typeof fetch;
+    const signed = (version: string, by = key.privateKey, notes = ['검색이 빨라졌습니다']) => {
+      const m = { version, bytes: 1000, sha256: 'a'.repeat(64) };
+      return { ...m, notes, signature: signText(releaseMessage(m), by), notesSignature: signText(notesMessage(version, notes), by) };
+    };
     delete process.env.SKILL_FINDER_UPDATES;
-    assert.equal(await checkForUpdate(page({ version: '9.0.0' })), null, '개발 실행에서는 묻지 않음');
+    assert.equal(await checkForUpdate(page(signed('9.0.0')), key.publicKey), null, '개발 실행에서는 묻지 않음');
     process.env.SKILL_FINDER_UPDATES = '1';
     try {
-      await checkForUpdate(page({ version: 'x; rm' }));
+      await checkForUpdate(page({ version: 'x; rm' }), key.publicKey);
       assert.equal(updateInfo('0.1.0'), null, '형식이 아니면 무시');
-      await checkForUpdate(page({ version: '0.3.0' }));
-      assert.deepEqual(updateInfo('0.2.0'), { version: '0.3.0' });
+      await checkForUpdate(page({ version: '0.3.0', bytes: 1000, sha256: 'a'.repeat(64) }), key.publicKey);
+      assert.equal(updateInfo('0.1.0'), null, '서명이 없으면 무시');
+      await checkForUpdate(page(signed('0.3.0', other.privateKey)), key.publicKey);
+      assert.equal(updateInfo('0.1.0'), null, '다른 키로 서명했으면 무시');
+      await checkForUpdate(page({ ...signed('0.3.0'), sha256: 'b'.repeat(64) }), key.publicKey);
+      assert.equal(updateInfo('0.1.0'), null, '서명 뒤에 바꾼 SHA-256');
+      await checkForUpdate(page(signed('0.3.0')), key.publicKey);
+      assert.deepEqual(updateInfo('0.2.0'), { version: '0.3.0', notes: ['검색이 빨라졌습니다'] });
       assert.equal(updateInfo('0.3.0'), null);
+      // notes changed after signing: the version stands, the notes are not shown
+      await checkForUpdate(page({ ...signed('0.4.0'), notes: ['가짜 안내'] }), key.publicKey);
+      assert.deepEqual(updateInfo('0.2.0'), { version: '0.4.0', notes: [] });
     } finally {
       delete process.env.SKILL_FINDER_UPDATES;
     }
+  });
+
+  it('기본 공개 키는 RSA 3072이고, 서명 메시지는 실행기가 만드는 모양과 같다', async () => {
+    const { UPDATE_PUBLIC_KEY, releaseMessage } = await import('../src/release.ts');
+    const { createPublicKey } = await import('node:crypto');
+    const key = createPublicKey(UPDATE_PUBLIC_KEY);
+    assert.equal(key.asymmetricKeyDetails?.modulusLength, 3072);
+    assert.equal(releaseMessage({ version: '1.2.3', bytes: 10, sha256: 'f'.repeat(64) }), `skill-finder-update v1\n1.2.3\n10\n${'f'.repeat(64)}`);
   });
 });
 
