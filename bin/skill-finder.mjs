@@ -187,7 +187,8 @@ const portFree = (port) =>
 
 /** A running Skill Finder's port, or null. */
 async function findRunning() {
-  const ports = [...new Set([Number(portArg) || 0, Number(process.env.PORT) || 0, DEFAULT_PORT, readPid()?.port ?? 0].filter(Boolean))];
+  // a port given with --port is the only one: another Skill Finder elsewhere is not the one asked for
+  const ports = Number(portArg) ? [Number(portArg)] : [...new Set([Number(process.env.PORT) || 0, DEFAULT_PORT, readPid()?.port ?? 0].filter(Boolean))];
   for (const p of ports) if (await health(p)) return p;
   return null;
 }
