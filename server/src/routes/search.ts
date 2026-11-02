@@ -43,7 +43,7 @@ export function searchRouter(ctx: AppContext, deps: SearchDeps = liveSearchDeps(
       await runSearch(deps, parsed.data.query, filters, send);
     } catch (err) {
       console.error('[search]', err);
-      send({ type: 'warning', source: 'server', message: `검색 중 오류: ${String((err as Error).message ?? err).slice(0, 200)}` });
+      send({ type: 'warning', source: 'server', severity: 'urgent', message: `검색 중 오류: ${String((err as Error).message ?? err).slice(0, 200)}` });
       send({ type: 'results', items: [], hiddenHighRisk: 0, hiddenNoDescription: 0 });
       send({ type: 'done', cached: false, elapsedMs: Date.now() - started });
     } finally {

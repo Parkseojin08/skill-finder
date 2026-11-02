@@ -73,7 +73,7 @@ export function installNet(mode: 'offline' | 'record' | 'replay', rec: Recording
   }
 
   if (mode === 'record') {
-    globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       const r: NetRec = { q: cur, method: init.method ?? 'GET', url, reqBody: typeof init.body === 'string' ? init.body : null, start: clock() };
       net.recs.push(r);
@@ -115,7 +115,7 @@ export function installNet(mode: 'offline' | 'record' | 'replay', rec: Recording
   // replay
   const queues = new Map<string, NetRec[]>();
   for (const r of rec!.recs) queues.set(keyOf(r.method, r.url, r.reqBody), [...(queues.get(keyOf(r.method, r.url, r.reqBody)) ?? []), r]);
-  globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+  globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const method = init.method ?? 'GET';
     const q = queues.get(keyOf(method, url, typeof init.body === 'string' ? init.body : null));

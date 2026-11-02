@@ -44,6 +44,12 @@ export type SearchFilters = { sources?: SourceKind[]; maxRisk?: RiskLevel; marke
 /** local: the marketplace/GitHub index on this PC. repos: the repo-name search for one-word queries. */
 export type SourceName = 'local' | 'skillssh' | 'github' | 'repos';
 export type SourceState = 'running' | 'done' | 'failed' | 'timeout' | 'skipped';
+/**
+ * Part of the search cache key: bump it whenever what a cached search replays changes shape (results fields,
+ * warning fields) or meaning, so older cached searches are not shown. test/pipeline.test.ts pins the shape.
+ */
+export const RESULTS_VERSION = 17;
+
 const SOURCE_NAME_KO: Record<SourceName, string> = { local: '내 PC 색인', skillssh: 'skills.sh', github: 'GitHub', repos: '같은 이름 저장소' };
 
 export type SearchEvent =
@@ -53,7 +59,8 @@ export type SearchEvent =
   /** An English query for a Korean one, offered as a button (dictionary-based, never applied by itself). */
   | { type: 'suggest'; query: string; dropped: string[] }
   | { type: 'candidates'; items: ResultItem[] }
-  | { type: 'warning'; source: string; message: string }
+  /** `urgent`: changes what the results mean (stays on screen); `note`: routine, folds into the "알림" toggle. */
+  | { type: 'warning'; source: string; message: string; severity: 'urgent' | 'note' }
   | {
       type: 'results';
       items: ResultItem[];
@@ -248,7 +255,7 @@ export async function runSearch(
   const sources = new Set<SourceKind>(filters.sources?.length ? filters.sources : ['marketplace', 'skillssh', 'github']);
   const maxRisk: RiskLevel = filters.maxRisk ?? 'medium';
   // `r` is the result-item shape; bump it when items gain fields so cached searches are rebuilt.
-  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: 16, k: RISK_RULES_VERSION });
+  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: RESULTS_VERSION, k: RISK_RULES_VERSION });
 
   // The English query for a Korean one goes out first, cached search or not: it comes from the query alone,
   // and the button helps most exactly when there is little else to show.
@@ -266,8 +273,8 @@ export async function runSearch(
   }
 
   const warnings: CachedSearch['warnings'] = [];
-  const warn = (source: string, message: string) => {
-    const w = { type: 'warning' as const, source, message };
+  const warn = (source: string, message: string, severity: 'urgent' | 'note') => {
+    const w = { type: 'warning' as const, source, message, severity };
     warnings.push(w);
     emit(w);
   };
@@ -278,7 +285,7 @@ export async function runSearch(
   const slow: Array<{ what: string; ms: number; outcome: Outcome }> = [];
 
   if (/\p{Script=Hangul}/u.test(query)) {
-    warn('query', '스킬 설명이 대부분 영어라 한국어 검색어는 결과가 적거나 부정확합니다. 영어로 검색해 보세요 (예: extract tables from pdf).');
+    warn('query', '스킬 설명이 대부분 영어라 한국어 검색어는 결과가 적거나 부정확합니다. 영어로 검색해 보세요 (예: extract tables from pdf).', 'urgent');
   }
   /** Whether the query has an English word at all (a purely Korean one can't match the English descriptions word for word). */
   const latinQuery = queryTokens(query).some((t) => /[a-z0-9]/.test(t));
@@ -550,7 +557,7 @@ export async function runSearch(
     try {
       hits = await withTimeout(deps.skillsSh(query), 6000, 'timeout');
     } catch (err) {
-      warn('skillssh', `skills.sh 검색 실패 (${shortErr(err)})`);
+      warn('skillssh', `skills.sh 검색 실패 (${shortErr(err)})`, 'urgent');
       return { state: shortErr(err) === 'timeout' ? 'timeout' : 'failed', count: 0 };
     }
     await localGate;
@@ -576,7 +583,7 @@ export async function runSearch(
   const collectGithub = async (): Promise<SourceDone> => {
     if (!sources.has('github')) return null;
     if (!github.hasToken) {
-      warn('github', 'GitHub 토큰이 없어 GitHub 코드 검색을 건너뜁니다 (설정에서 토큰을 넣으면 사용됩니다)');
+      warn('github', 'GitHub 토큰이 없어 GitHub 코드 검색을 건너뜁니다 (설정에서 토큰을 넣으면 사용됩니다)', 'note');
       return null;
     }
     try {
@@ -599,7 +606,7 @@ export async function runSearch(
       addLateIndexed(hits);
       return { state: 'done', count: items.length };
     } catch (err) {
-      warn('github', `GitHub 검색 실패 (${shortErr(err)})`);
+      warn('github', `GitHub 검색 실패 (${shortErr(err)})`, 'urgent');
       return { state: shortErr(err) === 'timeout' ? 'timeout' : 'failed', count: 0 };
     }
   };
@@ -610,7 +617,7 @@ export async function runSearch(
     // Never rejects: GitHub and the repo search are awaited much later, and an unhandled rejection would end the process.
     return fn()
       .catch((err): SourceDone => {
-        warn(name, `${SOURCE_NAME_KO[name]} 검색 실패 (${shortErr(err)})`);
+        warn(name, `${SOURCE_NAME_KO[name]} 검색 실패 (${shortErr(err)})`, name === 'repos' ? 'note' : 'urgent');
         return { state: 'failed', count: 0 };
       })
       .then((r) => {
@@ -698,11 +705,11 @@ export async function runSearch(
   if (!allDone) emit(await buildResults([...late], false));
   await settled;
   if (outcomes.timeout > 0) {
-    warn('enrich', `${outcomes.timeout}개 후보는 GitHub 응답이 늦어 이번 결과에서 빠졌습니다. 확인은 계속 진행되니 잠시 뒤 다시 검색하면 포함됩니다.`);
+    warn('enrich', `${outcomes.timeout}개 후보는 GitHub 응답이 늦어 이번 결과에서 빠졌습니다. 확인은 계속 진행되니 잠시 뒤 다시 검색하면 포함됩니다.`, 'urgent');
   }
-  if (outcomes.error > 0) warn('enrich-skip', `GitHub에서 읽지 못한 후보 ${outcomes.error}개는 뺐습니다.`);
+  if (outcomes.error > 0) warn('enrich-skip', `GitHub에서 읽지 못한 후보 ${outcomes.error}개는 뺐습니다.`, 'note');
   if (outcomes.missing > 0) {
-    warn('enrich-skip', `설치할 수 있는 SKILL.md가 없는 후보 ${outcomes.missing}개는 뺐습니다 (예제·템플릿이거나 이름이 바뀐 스킬).`);
+    warn('enrich-skip', `설치할 수 있는 SKILL.md가 없는 후보 ${outcomes.missing}개는 뺐습니다 (예제·템플릿이거나 이름이 바뀐 스킬).`, 'note');
   }
 
   timings.enrich = Date.now() - t0 - timings.collect;

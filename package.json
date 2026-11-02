@@ -9,7 +9,7 @@
     "dev": "node scripts/dev.mjs",
     "build": "npm run build -w web",
     "start": "npm run build && npm start -w server",
-    "test": "npm test -w server",
+    "test": "npm test -w server && npm test -w web",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web"
   }
 }

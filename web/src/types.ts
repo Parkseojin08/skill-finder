@@ -58,7 +58,8 @@ export type SearchEvent =
   /** An English query for a Korean one, sent first (offered as a button). */
   | { type: 'suggest'; query: string; /** Korean words the suggestion leaves out. */ dropped: string[] }
   | { type: 'candidates'; items: ResultItem[] }
-  | { type: 'warning'; source: string; message: string }
+  /** `urgent`: changes what the results mean (stays on screen); `note`: folds into the "알림" toggle. */
+  | { type: 'warning'; source: string; message: string; severity?: 'urgent' | 'note' }
   | {
       type: 'results';
       items: ResultItem[];

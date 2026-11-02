@@ -660,3 +660,27 @@ describe('결과 정리', () => {
     assert.equal(results.hiddenNoDescription, 1);
   });
 });
+
+describe('캐시에 남는 검색의 모양 (전체 점검 #12)', () => {
+  // A cached search replays these objects as they were stored. A field added, removed or changed in meaning here
+  // must bump RESULTS_VERSION (pipeline.ts) so older cached searches are not shown, then this list.
+  const RESULT_FIELDS = ['type', 'items', 'hiddenHighRisk', 'hiddenNoDescription', 'hiddenLowStars', 'hiddenUnknownStars', 'minStars', 'hiddenNoMatch', 'suggestQuery', 'broadQuery', 'repos'];
+  const ITEM_FIELDS = ['id', 'name', 'description', 'sources', 'installs', 'stars', 'lastCommitAt', 'score', 'breakdown', 'riskLevel', 'riskFlags', 'qualityWarnings', 'install', 'plugin', 'trust', 'categories', 'tier'];
+  const WARNING_FIELDS = ['type', 'source', 'message', 'severity'];
+
+  it('결과·항목·경고의 필드가 정해 둔 것뿐이고, 버전은 17이다', async () => {
+    const { RESULTS_VERSION } = await import('../src/search/pipeline.ts');
+    assert.equal(RESULTS_VERSION, 17, '버전을 올렸으면 이 테스트의 필드 목록도 맞추세요');
+    const ctx = ctxWithSkills();
+    for (const q of ['pdf tables', 'PDF에서 표 추출', 'pdf']) {
+      const events = await collect(deps(ctx), q);
+      const results = resultsOf(events);
+      for (const k of Object.keys(results)) assert.ok(RESULT_FIELDS.includes(k), `results.${k}: RESULTS_VERSION을 올리세요`);
+      for (const item of results.items) for (const k of Object.keys(item)) assert.ok(ITEM_FIELDS.includes(k), `item.${k}: RESULTS_VERSION을 올리세요`);
+      for (const w of events.filter((e) => e.type === 'warning')) {
+        assert.deepEqual(Object.keys(w).sort(), [...WARNING_FIELDS].sort());
+        assert.ok(w.severity === 'urgent' || w.severity === 'note');
+      }
+    }
+  });
+});

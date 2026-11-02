@@ -96,7 +96,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   const [maxRisk, setMaxRisk] = useState<RiskLevel>('medium');
   const [status, setStatus] = useState<Status>('idle');
   const [stage, setStage] = useState<string | null>(null);
-  const [warnings, setWarnings] = useState<Array<{ source: string; message: string }>>([]);
+  const [warnings, setWarnings] = useState<Array<{ source: string; message: string; severity?: 'urgent' | 'note' }>>([]);
   const [items, setItems] = useState<ResultItem[]>([]);
   const [provisional, setProvisional] = useState(false);
   const [final, setFinal] = useState<Extract<SearchEvent, { type: 'results' }> | null>(null);
@@ -254,7 +254,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 setProgress((p) => ({ ...p, [e.source]: { state: e.state, count: e.count, ms: e.ms } }));
                 break;
               case 'warning':
-                setWarnings((w) => [...w, { source: e.source, message: e.message }]);
+                setWarnings((w) => [...w, { source: e.source, message: e.message, severity: e.severity }]);
                 break;
               case 'candidates':
                 setItems(e.items);
@@ -277,7 +277,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
         setStatus((s) => (s === 'running' ? 'done' : s));
       } catch (err) {
         if (ac.signal.aborted) return;
-        setWarnings((w) => [...w, { source: 'client', message: String((err as Error).message ?? err) }]);
+        setWarnings((w) => [...w, { source: 'client', message: String((err as Error).message ?? err), severity: 'urgent' }]);
         setStatus('error');
       }
     },
@@ -364,8 +364,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
 
   // Warnings that change what the results mean (failures, incomplete results) stay visible;
   // routine notes (no GitHub token, hidden description-less results) fold into the "알림" toggle.
-  const isUrgent = (w: { source: string; message: string }) =>
-    w.source === 'github' ? w.message.startsWith('GitHub 검색 실패') : ['query', 'server', 'client', 'skillssh', 'enrich', 'local'].includes(w.source);
+  // the server says which is which; the page's own (connection errors) are urgent
+  const isUrgent = (w: { severity?: 'urgent' | 'note' }) => w.severity !== 'note';
   // the Korean-query warning and the English suggestion say one thing: one strip, the warning sentence kept
   const koreanNote = suggest ? warnings.find((w) => w.source === 'query') : undefined;
   const urgent = warnings.filter((w) => isUrgent(w) && w !== koreanNote);
