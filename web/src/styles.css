@@ -2282,3 +2282,24 @@ kbd {
     color: var(--text);
   }
 }
+
+/* README 추천: keywords to turn off or add (project review 2026-11-02) */
+@layer app {
+  .keyword-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  .chip-btn.off {
+    text-decoration: line-through;
+    opacity: 0.55;
+  }
+  .add-word {
+    display: inline-flex;
+    gap: 4px;
+  }
+  .add-word input {
+    width: 150px;
+  }
+}

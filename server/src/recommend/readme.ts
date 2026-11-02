@@ -386,12 +386,80 @@ export function matchSkills(store: Store, keywords: Keyword[], weights: Settings
   });
 }
 
-export function recommendForProject(store: Store, projectPath: unknown, weights: Settings['weights']): RecommendResult {
-  const readmePath = findReadme(projectPath);
-  const info = extractReadme(readFileSync(readmePath, 'utf8'), basename(projectPath as string));
-  const keywords = termWeights(info);
+/** Project description files read when there is no README, in this order (project review 2026-11-02). */
+const MANIFESTS = ['package.json', 'pyproject.toml', 'Cargo.toml'];
+
+/** First `key = "value"` / `key = [ "a", "b" ]` of a TOML file; enough for a description and keywords. */
+function tomlValue(text: string, key: string): string | string[] | null {
+  const m = text.match(new RegExp(`^\\s*${key}\\s*=\\s*(?:"([^"\\n]*)"|\\[([^\\]]*)\\])`, 'm'));
+  if (!m) return null;
+  return m[1] ?? [...(m[2] ?? '').matchAll(/"([^"\n]*)"/g)].map((x) => x[1]);
+}
+
+/**
+ * A project without a README: its name, description and keywords from package.json, pyproject.toml or
+ * Cargo.toml, as a small markdown the README reader understands. Null when none has a description or keywords.
+ */
+export function manifestAsReadme(projectPath: string): { path: string; md: string } | null {
+  for (const name of MANIFESTS) {
+    const path = join(projectPath, name);
+    let text: string;
+    try {
+      if (statSync(path).size > CONFIG.maxReadmeBytes) continue;
+      text = readFileSync(path, 'utf8');
+    } catch {
+      continue;
+    }
+    let title: unknown;
+    let description: unknown;
+    let keywords: unknown;
+    if (name.endsWith('.json')) {
+      try {
+        ({ name: title, description, keywords } = JSON.parse(text) as Record<string, unknown>);
+      } catch {
+        continue;
+      }
+    } else {
+      title = tomlValue(text, 'name');
+      description = tomlValue(text, 'description');
+      keywords = tomlValue(text, 'keywords');
+    }
+    const words = Array.isArray(keywords) ? keywords.filter((k): k is string => typeof k === 'string') : [];
+    if (typeof description !== 'string' && !words.length) continue;
+    const md = [`# ${typeof title === 'string' ? title : basename(projectPath)}`, '', typeof description === 'string' ? description : '', '', ...(words.length ? ['## Features', ...words.map((k) => `- ${k}`)] : [])].join('\n');
+    return { path, md };
+  }
+  return null;
+}
+
+/**
+ * `exclude`: keywords turned off on the page (their surface form); `extra`: words added there, weighted like the
+ * strongest keyword so they count (project review 2026-11-02).
+ */
+export function recommendForProject(store: Store, projectPath: unknown, weights: Settings['weights'], opts: { exclude?: string[]; extra?: string[] } = {}): RecommendResult {
+  let source: { path: string; md: string };
+  try {
+    const readmePath = findReadme(projectPath);
+    source = { path: readmePath, md: readFileSync(readmePath, 'utf8') };
+  } catch (err) {
+    if (!(err instanceof ReadmeError) || err.code !== 'README_NOT_FOUND') throw err;
+    const manifest = manifestAsReadme(projectPath as string);
+    if (!manifest) throw new ReadmeError('README_NOT_FOUND', '폴더 바로 아래에 README도, 설명이 있는 package.json·pyproject.toml·Cargo.toml도 없습니다.');
+    source = manifest;
+  }
+  const info = extractReadme(source.md, basename(projectPath as string));
+  const off = new Set((opts.exclude ?? []).map((t) => t.toLowerCase()));
+  let keywords = termWeights(info).filter((k) => !off.has(k.term.toLowerCase()));
+  const top = keywords[0]?.weight ?? CONFIG.weights.title;
+  for (const word of opts.extra ?? []) {
+    for (const term of processTerm(word.trim()) ?? []) {
+      const key = stem(term);
+      if (!keywords.some((k) => k.key === key)) keywords = [{ key, term, weight: top }, ...keywords];
+    }
+  }
+  keywords = keywords.slice(0, CONFIG.maxQueryTerms);
   return {
-    readmePath,
+    readmePath: source.path,
     summary: { title: info.title, intro: info.intro, features: info.features },
     keywords: keywords.slice(0, 10).map(({ term, weight }) => ({ term, weight })),
     skills: matchSkills(store, keywords, weights),

@@ -4,9 +4,17 @@ import type { AppContext } from '../context.ts';
 import { ReadmeError, recommendForProject } from '../recommend/readme.ts';
 import { getSettings } from '../settings.ts';
 
-const Body = z.object({ projectPath: z.string().trim().min(1).max(1000) });
+const Body = z.object({
+  projectPath: z.string().trim().min(1).max(1000),
+  /** Keywords turned off on the page, and words added there. */
+  exclude: z.array(z.string().max(60)).max(50).optional(),
+  extra: z.array(z.string().max(60)).max(20).optional(),
+});
 
-/** README-based recommendation: reads only `<projectPath>/README*` (≤1MB) and matches the local skill index. */
+/**
+ * README-based recommendation: reads only `<projectPath>/README*` (≤1MB), or without one its package.json,
+ * pyproject.toml or Cargo.toml, and matches the local skill index.
+ */
 export function recommendRouter(ctx: AppContext): Router {
   const r = Router();
   r.post('/readme-skills', (req, res) => {
@@ -16,7 +24,8 @@ export function recommendRouter(ctx: AppContext): Router {
       return;
     }
     try {
-      res.json(recommendForProject(ctx.store, parsed.data.projectPath, getSettings(ctx.store).weights));
+      const { projectPath, exclude, extra } = parsed.data;
+      res.json(recommendForProject(ctx.store, projectPath, getSettings(ctx.store).weights, { exclude, extra }));
     } catch (err) {
       if (err instanceof ReadmeError) {
         res.status(err.status).json({ error: err.message, code: err.code });

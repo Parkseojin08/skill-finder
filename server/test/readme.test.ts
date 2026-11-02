@@ -243,3 +243,33 @@ describe('README 기반 스킬 추천', () => {
     assert.equal(JSON.parse(none.body).code, 'README_NOT_FOUND');
   });
 });
+
+describe('README 추천 단어 조절·README 없는 프로젝트 (전체 점검 2026-11-02)', () => {
+  it('끈 단어는 빼고, 더한 단어는 넣어 다시 계산한다', () => {
+    const base = run('pdf-reader');
+    assert.ok(base.keywords.some((k) => k.term === 'pdf'));
+    const off = recommendForProject(srv.ctx.store, project('pdf-reader'), DEFAULT_SETTINGS.weights, { exclude: ['pdf'] });
+    assert.ok(!off.keywords.some((k) => k.term === 'pdf'), '끈 단어는 키워드에 없음');
+    const added = recommendForProject(srv.ctx.store, project('pdf-reader'), DEFAULT_SETTINGS.weights, { extra: ['spreadsheet'] });
+    assert.equal(added.keywords[0].term, 'spreadsheet', '더한 단어는 가장 무겁게');
+  });
+
+  it('README가 없으면 package.json의 설명·키워드로 추천한다', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sf-manifest-'));
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'pdf-lab', description: 'Extract tables and text from PDF files.', keywords: ['pdf', 'tables'] }));
+    const r = recommendForProject(srv.ctx.store, dir, DEFAULT_SETTINGS.weights);
+    assert.equal(r.readmePath, join(dir, 'package.json'));
+    assert.equal(r.summary.title, 'pdf-lab');
+    assert.equal(r.skills[0]?.item.name, 'pdf-tools');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('pyproject.toml도 읽고, 설명 파일이 하나도 없으면 그렇게 말한다', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sf-manifest-'));
+    writeFileSync(join(dir, 'pyproject.toml'), '[project]\nname = "sheets"\ndescription = "Spreadsheet reports with formulas"\nkeywords = ["excel", "spreadsheet"]\n');
+    assert.equal(recommendForProject(srv.ctx.store, dir, DEFAULT_SETTINGS.weights).summary.title, 'sheets');
+    rmSync(join(dir, 'pyproject.toml'));
+    assert.throws(() => recommendForProject(srv.ctx.store, dir, DEFAULT_SETTINGS.weights), /package\.json/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

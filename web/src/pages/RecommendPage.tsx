@@ -25,6 +25,11 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
   const [pageSize, setPageSize] = useState(5);
   /** High-risk skills are hidden like in search (project review 2026-11-02: a curl|sh skill ranked 10th). */
   const [showRisky, setShowRisky] = useState(false);
+  /** The keywords shown as chips (the first analysis's, plus added words), and the ones turned off. */
+  const [terms, setTerms] = useState<string[]>([]);
+  const [off, setOff] = useState<Set<string>>(new Set());
+  const [added, setAdded] = useState<string[]>([]);
+  const [newWord, setNewWord] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -33,14 +38,22 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
       .catch(() => {});
   }, []);
 
-  const analyze = async (path = projectPath) => {
+  /** `tuning`: the same project again with keywords turned off or added; without it a fresh analysis. */
+  const analyze = async (path = projectPath, tuning?: { off: Set<string>; added: string[] }) => {
     if (!path.trim() || busy) return;
     setBusy(true);
     setError(null);
     try {
-      setResult(await apiSend<RecommendResult>('POST', '/readme-skills', { projectPath: path.trim() }));
+      const body = { projectPath: path.trim(), exclude: tuning ? [...tuning.off] : undefined, extra: tuning?.added };
+      const r = await apiSend<RecommendResult>('POST', '/readme-skills', body);
+      setResult(r);
       setPage(1);
       setShowRisky(false);
+      if (!tuning) {
+        setTerms(r.keywords.map((k) => k.term));
+        setOff(new Set());
+        setAdded([]);
+      }
     } catch (e) {
       setResult(null);
       const status = e instanceof ApiError ? e.status : 0;
@@ -48,6 +61,24 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
     } finally {
       setBusy(false);
     }
+  };
+
+  // Turning a keyword off or adding one recalculates at once (project review 2026-11-02; local only, no AI).
+  const toggleTerm = (t: string) => {
+    const next = new Set(off);
+    if (next.has(t)) next.delete(t);
+    else next.add(t);
+    setOff(next);
+    void analyze(projectPath, { off: next, added });
+  };
+  const addWord = () => {
+    const w = newWord.trim().toLowerCase();
+    if (!/^[a-z][a-z0-9-]{1,40}$/.test(w) || terms.includes(w)) return;
+    const nextAdded = [...added, w];
+    setTerms([w, ...terms]);
+    setAdded(nextAdded);
+    setNewWord('');
+    void analyze(projectPath, { off, added: nextAdded });
   };
 
   const all = result?.skills ?? [];
@@ -96,7 +127,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
       {result && (
         <>
           <section className="readme-summary">
-            <h2>README 요약</h2>
+            <h2>{/package\.json$|pyproject\.toml$|Cargo\.toml$/i.test(result.readmePath) ? `${result.readmePath.split(/[\\/]/).pop()} 요약 (README 없음)` : 'README 요약'}</h2>
             <h3 className="summary-title">{result.summary.title}</h3>
             {result.summary.intro ? <Translated className="summary" text={result.summary.intro} /> : <p className="muted">소개 문단이 없습니다.</p>}
             {result.summary.features.length > 0 && (
@@ -106,14 +137,34 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
                 ))}
               </ul>
             )}
-            <p className="muted small keyword-line">
-              핵심 단어{' '}
-              {result.keywords.map((k) => (
-                <code key={k.term} title={`가중치 ${k.weight}`}>
-                  {k.term}
-                </code>
+            <div className="keyword-line">
+              <span className="muted small">핵심 단어 · 눌러서 빼거나 다시 넣기</span>
+              {terms.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={`chip-btn mono${off.has(t) ? ' off' : ''}`}
+                  aria-pressed={!off.has(t)}
+                  title={off.has(t) ? '빼 둔 단어 · 눌러서 다시 넣기' : '눌러서 이 단어 빼기'}
+                  onClick={() => toggleTerm(t)}
+                  disabled={busy}
+                >
+                  {t}
+                </button>
               ))}
-            </p>
+              <form
+                className="add-word"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  addWord();
+                }}
+              >
+                <input value={newWord} onChange={(e) => setNewWord(e.target.value)} placeholder="단어 더하기 (영어)" aria-label="추천에 더할 단어" maxLength={41} />
+                <button type="submit" className="ghost" disabled={busy || !newWord.trim()}>
+                  더하기
+                </button>
+              </form>
+            </div>
           </section>
 
           {skills.length === 0 ? (

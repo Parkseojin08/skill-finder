@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -44,7 +44,10 @@ export function ensureDataDirs(): void {
   mkdirSync(join(config.dataDir, 'tmp', 'git'), { recursive: true });
 }
 
-/** Writes GITHUB_TOKEN into .env (creating it if needed) and updates the in-memory config. */
+/**
+ * Writes GITHUB_TOKEN into .env (creating it if needed) and updates the in-memory config. Written to a temporary
+ * file first and renamed over .env, so a crash or a full disk mid-write cannot leave a cut-off .env.
+ */
 export function saveGithubToken(token: string | null): void {
   const value = token?.trim() || '';
   const lines = existsSync(ENV_PATH) ? readFileSync(ENV_PATH, 'utf8').split(/\r?\n/) : [];
@@ -57,6 +60,8 @@ export function saveGithubToken(token: string | null): void {
     return line;
   });
   if (!found) next.push(`GITHUB_TOKEN=${value}`);
-  writeFileSync(ENV_PATH, next.join('\n').replace(/\n*$/, '\n'), { encoding: 'utf8', mode: 0o600 });
+  const tmp = `${ENV_PATH}.${process.pid}.tmp`;
+  writeFileSync(tmp, next.join('\n').replace(/\n*$/, '\n'), { encoding: 'utf8', mode: 0o600 });
+  renameSync(tmp, ENV_PATH);
   config.githubToken = value || null;
 }
