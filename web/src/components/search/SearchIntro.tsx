@@ -5,7 +5,10 @@ import { TranslationNotice } from '../TranslationNotice.tsx';
 export function SearchIntro({ examples, onExample, health, githubToken }: { examples: string[]; onExample: (query: string) => void; health: Health | null; githubToken: boolean | null }) {
   return (
     <div className="empty">
-      <p>원하는 기능을 영어로 적으면 공식·커뮤니티 마켓플레이스, skills.sh, GitHub에서 Claude Code 스킬을 찾아 점수와 위험 신호를 붙여 보여 줍니다.</p>
+      <p>
+        원하는 기능을 적으면 공식·커뮤니티 마켓플레이스, skills.sh, GitHub에서 Claude Code 스킬을 찾아 점수와 위험 신호를 붙여 보여 줍니다. 영어로 적을 때
+        가장 정확하고, 한국어로 적으면 영어 검색어를 제안합니다.
+      </p>
       <div className="examples">
         {examples.map((ex) => (
           <button key={ex} type="button" className="chip-btn" onClick={() => onExample(ex)}>
