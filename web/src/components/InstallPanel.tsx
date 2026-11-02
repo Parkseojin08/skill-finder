@@ -3,7 +3,8 @@ import { apiGet, streamNdjson } from '../api.ts';
 import { forgetInstalled } from '../installed.ts';
 import { HELP, METHOD, RISK_FLAGS, RISK_LEVEL, RISK_RANK, SCOPE } from '../labels.ts';
 import { HelpTip } from './HelpTip.tsx';
-import type { ExistingSkill, InstallPlan, InstallPreview, InstallScope, RiskLevel, SkillDetail } from '../types.ts';
+import type { ExistingSkill, InstallPlan, InstallPreview, InstallScan, InstallScope, RiskLevel, SkillDetail } from '../types.ts';
+import { InstallScanView, scanIsHigh } from './InstallScan.tsx';
 import { RiskBadge, RiskFlags, RiskSummary } from './Badges.tsx';
 import { FolderInput, rememberProject } from './FolderInput.tsx';
 
@@ -81,7 +82,22 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
   const [log, setLog] = useState<LogLine[]>([]);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [scan, setScan] = useState<InstallScan | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
   const logRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    if (plan.method === 'manual-only') return;
+    let alive = true;
+    setScan(null);
+    setScanError(null);
+    apiGet<InstallScan>(`/skills/${encodeURIComponent(skill.id)}/install-scan`)
+      .then((s) => alive && setScan(s))
+      .catch((e) => alive && setScanError(String(e.message ?? e)));
+    return () => {
+      alive = false;
+    };
+  }, [skill.id, plan.method]);
 
   useEffect(() => {
     if (plan.method === 'manual-only') return;
@@ -203,6 +219,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
           <OverwriteNote existing={preview.existing} />
         </div>
       )}
+      <InstallScanView scan={scan} error={scanError} />
       {/* what is being installed, right above the button (UI debate 2-5) */}
       <div className="badges">
         <RiskSummary level={skill.riskLevel} flags={skill.riskFlags} />
@@ -230,6 +247,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
           riskFlags={skill.riskFlags}
           siblings={siblings}
           version={version}
+          scan={scan}
           onCancel={() => setConfirming(false)}
           onConfirm={install}
         />
@@ -245,13 +263,14 @@ function ConfirmDialog(props: {
   riskFlags: string[];
   siblings: PluginSkill[];
   version: string | null;
+  scan: InstallScan | null;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   // High risk (this skill or one the plugin brings in) needs one deliberate tick (UI debate 2-9); about 1% of
   // skills, so the extra step is rare.
-  const high = props.riskLevel === 'high' || props.siblings.some((s) => s.riskLevel === 'high');
+  const high = props.riskLevel === 'high' || props.siblings.some((s) => s.riskLevel === 'high') || scanIsHigh(props.scan);
   const [checked, setChecked] = useState(false);
   const overwrite = needsOverwriteCheck(props.preview.existing);
   const [overwriteChecked, setOverwriteChecked] = useState(false);
@@ -281,6 +300,7 @@ function ConfirmDialog(props: {
         <RiskFlags flags={props.riskFlags} />
       </div>
       <SiblingRiskNote skills={props.siblings} />
+      <InstallScanView scan={props.scan} compact />
       <OverwriteNote existing={props.preview.existing} />
       {overwrite && (
         <label className="confirm-check">

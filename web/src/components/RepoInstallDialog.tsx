@@ -8,10 +8,11 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { apiGet, streamNdjson } from '../api.ts';
 import { forgetInstalled } from '../installed.ts';
 import { METHOD } from '../labels.ts';
-import type { InstallPreview, RepoResult, SettingsResponse } from '../types.ts';
+import type { InstallPreview, InstallScan, RepoResult, SettingsResponse } from '../types.ts';
 import { RiskBadge, RiskSummary } from './Badges.tsx';
 import { FolderInput } from './FolderInput.tsx';
 import { needsOverwriteCheck, OverwriteNote } from './InstallPanel.tsx';
+import { InstallScanView, scanIsHigh } from './InstallScan.tsx';
 
 type Step = 'select' | 'confirm' | 'run';
 type Status = 'wait' | 'run' | 'ok' | 'fail';
@@ -29,6 +30,8 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
   const [scope, setScope] = useState<'user' | 'project'>('user');
   const [projectPath, setProjectPath] = useState('');
   const [previews, setPreviews] = useState<Record<string, InstallPreview>>({});
+  /** The other files each chosen skill installs, checked (project review F1); a failed check shows as an error line. */
+  const [scans, setScans] = useState<Record<string, { scan: InstallScan | null; error?: string }>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<Record<string, Status>>({});
@@ -59,7 +62,7 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
   }, [log]);
 
   const chosen = installable.filter((s) => selected.has(s.id));
-  const chosenHigh = chosen.filter((s) => s.riskLevel === 'high');
+  const chosenHigh = chosen.filter((s) => s.riskLevel === 'high' || scanIsHigh(scans[s.id]?.scan));
   const toOverwrite = chosen.filter((s) => needsOverwriteCheck(previews[s.id]?.existing));
   const toggle = (id: string, on: boolean) =>
     setSelected((cur) => {
@@ -80,7 +83,17 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
       );
       const failed = pairs.find(([, p]) => p.error);
       if (failed) throw new Error(failed[1].error);
+      const scanned = await Promise.all(
+        chosen.map(async (s) => {
+          try {
+            return [s.id, { scan: await apiGet<InstallScan>(`/skills/${encodeURIComponent(s.id)}/install-scan`) }] as const;
+          } catch (e) {
+            return [s.id, { scan: null, error: String((e as Error).message ?? e) }] as const;
+          }
+        }),
+      );
       setPreviews(Object.fromEntries(pairs));
+      setScans(Object.fromEntries(scanned));
       setStep('confirm');
     } catch (e) {
       setError(String((e as Error).message ?? e));
@@ -175,6 +188,7 @@ export function RepoInstallDialog({ repo, open, onOpenChange }: { repo: RepoResu
                     <span className="muted small">작업 폴더: {st.cwd}</span>
                   </div>
                 ))}
+                <InstallScanView scan={scans[s.id]?.scan ?? null} error={scans[s.id]?.error} compact />
                 <OverwriteNote existing={previews[s.id]?.existing} />
               </li>
             ))}

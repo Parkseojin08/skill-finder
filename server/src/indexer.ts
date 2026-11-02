@@ -10,6 +10,7 @@ import type { PluginRow, SkillRow, Store } from './db/store.ts';
 import { RAW_MAX_BYTES, type GitHub, type RepoTree } from './sources/github.ts';
 import { normalizeSource, resolveRelativeRoot } from './sources/pluginSource.ts';
 import { pool } from './util/limiter.ts';
+import { sanitizeText } from './util/sanitize.ts';
 import { SizedCache } from './util/sizedCache.ts';
 
 export type StoredPluginEntry = { entry: MarketplaceEntry; pluginRoot: string | null };
@@ -144,6 +145,11 @@ const WRITE_BATCH = 50;
  */
 export type RepoIndexResult = { skills: number; sha: string | null; unchanged: boolean; removed: number };
 
+/** One piece of what a plugin runs (hooks, MCP servers, monitors, bin/ files) and where it is written. */
+export type RunConfigItem = { kind: 'hooks' | 'mcp' | 'monitors' | 'bin'; source: string; text: string; truncated: boolean };
+export type PluginRunConfig = { commit: string; items: RunConfigItem[] };
+const RUN_CONFIG_MAX_CHARS = 16_000;
+
 type RepoSnapshot ={ tree: RepoTree; index: TreeIndex; read: (path: string) => Promise<string | null> };
 /** What single-skill lookups need from a repo: its tree, plugin layout, and the generic rules per folder. */
 type RepoLookup = { snap: RepoSnapshot; discovery: RepoDiscovery; generic: GenericAcceptor };
@@ -188,6 +194,62 @@ export class Indexer {
     return meta?.pushed_at ?? tree.commitDate;
   }
 
+  /** A GitHub plugin's marketplace entry, commit, tree, folder and plugin.json, as the index reads them. */
+  private async openPlugin(plugin: PluginRow) {
+    const repo = plugin.repo!;
+    const stored = (plugin.entry_json ? JSON.parse(plugin.entry_json) : null) as StoredPluginEntry | null;
+    const entry = stored?.entry ?? ({ name: plugin.name, source: JSON.parse(plugin.source_json) } as MarketplaceEntry);
+    const src = normalizeSource(entry.source, stored?.pluginRoot);
+    const sha = plugin.sha ?? (await this.github.resolveRef(repo, plugin.ref))?.sha;
+    if (!sha) throw new Error('커밋을 찾을 수 없습니다');
+    const snap = await this.snapshot(repo, sha);
+    const root = src.kind === 'relative' ? resolveRelativeRoot(src.raw, stored?.pluginRoot ?? null, snap.index) : (plugin.path ?? '');
+    if (root == null || !snap.index.hasDir(root)) throw new Error(`플러그인 경로가 없습니다: ${root ?? '?'}`);
+    const manifestPath = joinPath(root, PLUGIN_JSON);
+    const manifest = snap.index.hasFile(manifestPath) ? parseJsonObject(await snap.read(manifestPath)) : null;
+    return { entry, src, sha, snap, root, manifest };
+  }
+
+  /**
+   * What a plugin runs once installed, as written in it (project review F1): its hooks, MCP servers, monitors and
+   * bin/ files, from hooks/hooks.json, .mcp.json, monitors/monitors.json, plugin.json and the marketplace entry.
+   * Only read and shown; nothing here is run.
+   */
+  async pluginRunConfig(pluginId: string): Promise<PluginRunConfig> {
+    const plugin = this.store.getPlugin(pluginId);
+    if (!plugin?.repo) throw new Error('GitHub에 있는 플러그인이 아니라 읽을 수 없습니다');
+    const { entry, sha, snap, root, manifest } = await this.openPlugin(plugin);
+    const items: RunConfigItem[] = [];
+    const show = (kind: RunConfigItem['kind'], source: string, value: unknown) => {
+      const text = sanitizeText(typeof value === 'string' ? value : JSON.stringify(value, null, 2));
+      items.push({ kind, source, text: text.slice(0, RUN_CONFIG_MAX_CHARS), truncated: text.length > RUN_CONFIG_MAX_CHARS });
+    };
+    const readFile = async (kind: RunConfigItem['kind'], rel: string) => {
+      const path = joinPath(root, rel.replace(/^\.\//, ''));
+      const text = await snap.read(path).catch(() => null);
+      if (text != null) show(kind, path, text);
+    };
+    // a component field is inline config, or a path (or paths) to it inside the plugin
+    const fromField = async (kind: RunConfigItem['kind'], field: unknown, source: string) => {
+      if (field == null) return;
+      if (typeof field === 'string') await readFile(kind, field);
+      else if (Array.isArray(field) && field.every((f) => typeof f === 'string')) for (const f of field) await readFile(kind, f);
+      else show(kind, source, field);
+    };
+    const manifestPath = joinPath(root, PLUGIN_JSON);
+    if (snap.index.hasFile(joinPath(root, 'hooks/hooks.json'))) await readFile('hooks', 'hooks/hooks.json');
+    await fromField('hooks', manifest?.hooks, `${manifestPath} hooks`);
+    await fromField('hooks', entry.hooks, 'marketplace.json hooks');
+    if (snap.index.hasFile(joinPath(root, '.mcp.json'))) await readFile('mcp', '.mcp.json');
+    await fromField('mcp', manifest?.mcpServers, `${manifestPath} mcpServers`);
+    await fromField('mcp', entry.mcpServers, 'marketplace.json mcpServers');
+    if (snap.index.hasFile(joinPath(root, 'monitors/monitors.json'))) await readFile('monitors', 'monitors/monitors.json');
+    await fromField('monitors', manifest?.monitors, `${manifestPath} monitors`);
+    const bin = [...snap.index.files.keys()].filter((f) => f.startsWith(joinPath(root, 'bin') + '/'));
+    if (bin.length) show('bin', joinPath(root, 'bin'), bin.slice(0, 50).join('\n') + (bin.length > 50 ? `\n… 외 ${bin.length - 50}개` : ''));
+    return { commit: sha, items };
+  }
+
   /** Indexes the skills of one marketplace plugin; replaces its previous skill rows. Returns the skill count. */
   async indexPlugin(pluginId: string): Promise<number> {
     const plugin = this.store.getPlugin(pluginId);
@@ -197,16 +259,7 @@ export class Indexer {
       return 0;
     }
     try {
-      const stored = (plugin.entry_json ? JSON.parse(plugin.entry_json) : null) as StoredPluginEntry | null;
-      const entry = stored?.entry ?? ({ name: plugin.name, source: JSON.parse(plugin.source_json) } as MarketplaceEntry);
-      const src = normalizeSource(entry.source, stored?.pluginRoot);
-      const sha = plugin.sha ?? (await this.github.resolveRef(plugin.repo, plugin.ref))?.sha;
-      if (!sha) throw new Error('커밋을 찾을 수 없습니다');
-      const snap = await this.snapshot(plugin.repo, sha);
-      const root = src.kind === 'relative' ? resolveRelativeRoot(src.raw, stored?.pluginRoot ?? null, snap.index) : (plugin.path ?? '');
-      if (root == null || !snap.index.hasDir(root)) throw new Error(`플러그인 경로가 없습니다: ${root ?? '?'}`);
-      const manifestPath = joinPath(root, PLUGIN_JSON);
-      const manifest = snap.index.hasFile(manifestPath) ? parseJsonObject(await snap.read(manifestPath)) : null;
+      const { entry, src, sha, snap, root, manifest } = await this.openPlugin(plugin);
       const d = discoverPluginSkills(snap.index, root, manifest, entry, {
         entryAtMarketplaceRoot: src.kind === 'relative' && root === '',
       });

@@ -141,6 +141,21 @@ export type SkillDetail = {
 /** A same-name skill folder the skills CLI would replace. `same`: true = this skill again, false = another, null = unknown. */
 export type ExistingSkill = { path: string; name: string; same: boolean | null; change: InstallChange };
 
+/** Text files of a skill folder checked before an install (project review F1); SKILL.md is not among them. */
+export type FileScan = {
+  commit: string;
+  checked: number;
+  findings: Array<{ path: string; flags: string[] }>;
+  skipped: Array<{ path: string; reason: 'binary' | 'large' | 'limit' | 'failed' }>;
+  unlisted: number;
+};
+/** What a plugin runs once installed, as written in it. */
+export type RunConfigItem = { kind: 'hooks' | 'mcp' | 'monitors' | 'bin'; source: string; text: string; truncated: boolean };
+export type InstallScan =
+  | { kind: 'files'; pinned: boolean; scan: FileScan }
+  | { kind: 'plugin'; pluginId: string; config: { commit: string; items: RunConfigItem[] } }
+  | { kind: 'none'; reason: string };
+
 export type InstallPreview = {
   plan: InstallPlan;
   steps: Array<{ display: string; cwd: string }>;

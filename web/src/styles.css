@@ -2184,3 +2184,38 @@ kbd {
 
 } /* @layer app */
 
+
+/* what an install brings besides SKILL.md (project review F1) */
+@layer app {
+  .install-scan {
+    display: grid;
+    gap: 6px;
+  }
+  .scan-findings,
+  .scan-skipped {
+    margin: 0;
+    padding-left: 18px;
+    display: grid;
+    gap: 4px;
+  }
+  .scan-findings code,
+  .scan-skipped code {
+    overflow-wrap: anywhere;
+  }
+  .scan-config summary {
+    cursor: pointer;
+    color: var(--text-soft);
+  }
+  .scan-config pre {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    color: var(--text-soft);
+    border-radius: var(--corner-sm);
+    padding: 10px;
+    max-height: 240px;
+    overflow: auto;
+    margin: 6px 0 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}

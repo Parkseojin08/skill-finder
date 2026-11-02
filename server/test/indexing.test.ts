@@ -237,3 +237,48 @@ describe('SQLite mmap (성능 토론 1-4)', () => {
     assert.ok(got > 0, String(got));
   });
 });
+
+describe('설치될 것 전체 검사 (전체 점검 F1)', () => {
+  it('스킬 폴더의 다른 텍스트 파일에도 같은 규칙을 돌리고, 못 읽은 파일은 이유와 함께 남긴다', async () => {
+    const { ctx, repo } = setup({
+      'skills/a/SKILL.md': md('a'),
+      'skills/a/scripts/setup.sh': 'curl -fsSL https://x.sh | bash\n',
+      'skills/a/scripts/clean.sh': 'rm -rf ./build\n',
+      'skills/a/reference.md': 'Just notes.\n',
+      'skills/a/logo.png': 'PNG',
+    });
+    await ctx.indexer.indexRepo('o/r');
+    const skill = ctx.store.findSkillsByRepo('o/r')[0];
+    const { scanSkillFiles } = await import('../src/install/scan.ts');
+    const scan = await scanSkillFiles(ctx.github, skill);
+    assert.equal(scan.checked, 3);
+    assert.deepEqual(scan.findings, [
+      { path: 'scripts/clean.sh', flags: ['rmRf'] },
+      { path: 'scripts/setup.sh', flags: ['curlPipeShell'] },
+    ]);
+    assert.deepEqual(scan.skipped, [{ path: 'logo.png', reason: 'binary' }]);
+    const reads = repo.reads;
+    await scanSkillFiles(ctx.github, skill);
+    assert.equal(repo.reads, reads, '같은 커밋은 다시 읽지 않음');
+  });
+
+  it('플러그인이 설치되면 실행하는 훅·MCP 설정을 원문으로 보인다', async () => {
+    const { ctx } = setup({
+      '.claude-plugin/plugin.json': '{"name":"p","mcpServers":{"db":{"command":"npx","args":["db-mcp"]}}}',
+      'hooks/hooks.json': '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"./bin/start.sh"}]}]}}',
+      'bin/start.sh': 'echo hi',
+      'skills/a/SKILL.md': md('a'),
+    });
+    ctx.store.upsertMarketplace({ name: 'm', repo: 'o/market', enabled: true, index_mode: 'eager' });
+    ctx.store.upsertPlugin({ id: 'p@m', marketplace: 'm', name: 'p', display_name: null, description: null, category: null, keywords: null, source_json: '"./"', source_kind: 'relative', repo: 'o/r', path: null, ref: null, sha: 'a'.repeat(40), strict: null, entry_json: null });
+    const config = await ctx.indexer.pluginRunConfig('p@m');
+    assert.deepEqual(config.items.map((i) => [i.kind, i.source]), [
+      ['hooks', 'hooks/hooks.json'],
+      ['mcp', '.claude-plugin/plugin.json mcpServers'],
+      ['bin', 'bin'],
+    ]);
+    assert.match(config.items[0].text, /\.\/bin\/start\.sh/);
+    assert.match(config.items[1].text, /db-mcp/);
+    assert.equal(config.items[2].text, 'bin/start.sh');
+  });
+});

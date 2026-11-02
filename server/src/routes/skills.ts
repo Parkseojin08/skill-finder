@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { AppContext } from '../context.ts';
 import type { StoredFiles } from '../indexer.ts';
 import { existingSkillFolder } from '../install/installed.ts';
+import { scanSkillFiles } from '../install/scan.ts';
 import { buildSteps, installLocation, planInstall, type InstallScope } from '../install/plan.ts';
 import { isProjectDir } from '../install/validate.ts';
 import { freshness, TRUST_SCORE, trustTier } from '../search/rank.ts';
@@ -9,16 +10,7 @@ import { githubSource, marketplaceSource, treeUrl } from '../search/result.ts';
 import { getSettings } from '../settings.ts';
 import { looksBinary } from '../util/http.ts';
 import { sanitizeText } from '../util/sanitize.ts';
-
-const MAX_FILE_BYTES = 256 * 1024;
-const TEXT_EXT =
-  /\.(md|markdown|mdx|txt|rst|json|jsonc|ya?ml|toml|ini|cfg|conf|env|py|js|mjs|cjs|ts|tsx|jsx|sh|bash|zsh|fish|ps1|psm1|bat|cmd|rb|pl|php|lua|r|go|rs|java|kt|swift|c|h|cc|cpp|hpp|cs|scala|sql|html?|css|scss|xml|svg|csv|tsv|graphql|proto|tf|hcl|gradle|properties|lock|gitignore|dockerignore|editorconfig)$/i;
-const TEXT_NAMES = /^(LICENSE|LICENCE|NOTICE|README|CHANGELOG|Makefile|Dockerfile|Gemfile|Procfile|\.[a-z]+rc)(\.[a-z]+)?$/i;
-
-export function isTextPath(path: string): boolean {
-  const name = path.split('/').pop() ?? path;
-  return TEXT_EXT.test(name) || TEXT_NAMES.test(name);
-}
+import { isTextPath, MAX_FILE_BYTES } from '../util/textFiles.ts';
 
 /**
  * Where an opened result was in its search (U5-2): the search's `sid`, its 1-based place in the list, the page,
@@ -158,6 +150,29 @@ export function skillsRouter(ctx: AppContext): Router {
       return;
     }
     res.json({ path, content: sanitizeText(out.text) });
+  });
+
+  // What the install brings besides SKILL.md (project review F1): the folder's other text files checked with the
+  // same rules, or what a plugin runs (hooks, MCP servers). Read only; asked once when the install tab opens.
+  r.get('/skills/:id/install-scan', async (req, res) => {
+    const skill = store.getSkill(req.params.id);
+    if (!skill) {
+      res.status(404).json({ error: '스킬을 찾을 수 없습니다' });
+      return;
+    }
+    const plugin = skill.plugin_id ? (store.getPlugin(skill.plugin_id) ?? null) : null;
+    const plan = planInstall(skill, plugin, plugin ? (store.getMarketplace(plugin.marketplace) ?? null) : null);
+    try {
+      if (plan.method === 'skills-cli' && skill.repo && skill.ref && skill.dir_path != null) {
+        res.json({ kind: 'files', pinned: !!plan.pinnedRef, scan: await scanSkillFiles(github, skill) });
+      } else if (plan.method === 'plugin' && plan.pluginId && store.getPlugin(plan.pluginId)?.repo) {
+        res.json({ kind: 'plugin', pluginId: plan.pluginId, config: await ctx.indexer.pluginRunConfig(plan.pluginId) });
+      } else {
+        res.json({ kind: 'none', reason: plan.method === 'plugin' ? '색인한 마켓플레이스에 없는 플러그인이라 실행 설정을 읽지 못했습니다' : '앱에서 설치하지 않는 스킬입니다' });
+      }
+    } catch (err) {
+      res.status(502).json({ error: `설치될 파일을 읽지 못했습니다: ${String((err as Error).message ?? err).slice(0, 200)}` });
+    }
   });
 
   r.get('/install/preview', async (req, res) => {
