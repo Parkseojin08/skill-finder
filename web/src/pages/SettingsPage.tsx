@@ -239,6 +239,21 @@ export function SettingsPage() {
         <DiagnosticsButton />
       </section>
 
+      <section>
+        <h2>{t('라이선스')}</h2>
+        <p className="muted small">
+          {tj(
+            'Skill Finder는 {0}입니다. 화면에 들어 있는 오픈소스의 라이선스는 {1}에서 볼 수 있습니다.',
+            <a href="/LICENSE.txt" target="_blank" rel="noopener noreferrer">
+              {t('MIT 라이선스')}
+            </a>,
+            <a href="/THIRD-PARTY-LICENSES.txt" target="_blank" rel="noopener noreferrer">
+              {t('오픈소스 라이선스 목록')}
+            </a>,
+          )}
+        </p>
+      </section>
+
     </div>
   );
 }
