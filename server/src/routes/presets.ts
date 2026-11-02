@@ -57,7 +57,14 @@ export function presetsRouter(ctx: AppContext): Router {
       const key = plugin ? `plugin:${plugin.id}` : skill.id;
       if (seen.has(key)) continue;
       seen.add(key);
-      skills.push(installSummary(skill, lookup, plugin ? `${plugin.name} (플러그인)` : skill.name));
+      const row = installSummary(skill, lookup, plugin ? `${plugin.name} (플러그인)` : skill.name);
+      if (plugin) {
+        // the whole plugin installs: its riskiest skill and every signal of its skills, so the dialog asks for the
+        // tick a high-risk skill inside needs (review 2026-11-02)
+        row.riskLevel = lookup.pluginTopRisk(plugin.id);
+        row.riskFlags = [...new Set(store.listSkillsByPlugin(plugin.id).flatMap((s) => (s.risk_json ? (JSON.parse(s.risk_json) as string[]) : [])))];
+      }
+      skills.push(row);
     }
     res.json({ skills, missing });
   });

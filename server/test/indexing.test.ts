@@ -233,6 +233,9 @@ describe('새 버전 알림', () => {
       // notes changed after signing: the version stands, the notes are not shown
       await checkForUpdate(page({ ...signed('0.4.0'), notes: ['가짜 안내'] }), key.publicKey);
       assert.deepEqual(updateInfo('0.2.0'), { version: '0.4.0', notes: [] });
+      // an older signed release served again does not take its place
+      await checkForUpdate(page(signed('0.3.0')), key.publicKey);
+      assert.equal(updateInfo('0.2.0')?.version, '0.4.0');
     } finally {
       delete process.env.SKILL_FINDER_UPDATES;
     }

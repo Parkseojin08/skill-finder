@@ -13,6 +13,8 @@ export function healthRouter(ctx: AppContext): Router {
       /** Fixed: the launcher tells this server from any other dev server answering /api/health on the port. */
       app: 'skill-finder',
       appVersion: APP_VERSION,
+      /** The server's process: `skill-finder stop` ends only the one its own pid file names. */
+      pid: process.pid,
       /** A newer version on the download page (installed app only); the launcher installs it at the next start. */
       update: updateInfo(APP_VERSION),
       node: process.version,

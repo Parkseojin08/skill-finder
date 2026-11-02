@@ -312,12 +312,13 @@ async function main() {
 
   if (command === 'stop') {
     const p = readPid();
-    if (!p?.pid || !(await health(p.port))) return console.log(t.notMine);
-    try {
-      process.kill(p.pid);
-    } catch {
-      // already gone
+    // only the server this command started, still running as the same process (a stale pid may be anything now)
+    const h = p?.pid ? await health(p.port) : null;
+    if (!h || h.pid !== p.pid) {
+      rmSync(PID_FILE, { force: true });
+      return console.log(t.notMine);
     }
+    process.kill(p.pid);
     rmSync(PID_FILE, { force: true });
     return console.log(t.stopped);
   }
@@ -328,7 +329,8 @@ async function main() {
     const port = await ensureRunning();
     const filters = ['low', 'medium', 'high'].includes(risk) ? { maxRisk: risk } : undefined;
     const lines = (await api(port, 'POST', '/search', { query, filters })).trim().split('\n').map((l) => JSON.parse(l));
-    const results = lines.find((e) => e.type === 'results');
+    // the last one: a slow search sends interim results first, then the final ones
+    const results = lines.filter((e) => e.type === 'results').at(-1);
     return printItems((results?.items ?? []).slice(0, limit));
   }
 

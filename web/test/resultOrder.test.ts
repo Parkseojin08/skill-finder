@@ -145,6 +145,7 @@ describe('팀 프리셋 파일', () => {
     assert.throws(() => parsePreset('not json'), /JSON/);
     const many = parsePreset(JSON.stringify({ ...p, items: Array.from({ length: 500 }, (_, i) => ({ id: `gh:a/b:s${i}` })) }));
     assert.equal(many.items.length, 200, '200개까지만');
+    assert.equal(many.skipped, 300, '넘친 개수를 알림');
   });
 });
 

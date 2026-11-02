@@ -1,6 +1,20 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
-import { clearedCookie, hashPassword, loginBlocked, noteLogin, PASSWORD_MAX, PASSWORD_MIN, sessionCookie, sessionToken, userFromCookie, USERNAME_RE, verifyPassword } from '../auth.ts';
+import {
+  clearedCookie,
+  hashPassword,
+  loginBlocked,
+  noteLogin,
+  PASSWORD_MAX,
+  PASSWORD_MIN,
+  serialLogin,
+  sessionCookie,
+  sessionCookieName,
+  sessionToken,
+  userFromCookie,
+  USERNAME_RE,
+  verifyPassword,
+} from '../auth.ts';
 import type { AppContext } from '../context.ts';
 import type { UserRow } from '../db/store.ts';
 import { freshInstalls, freshness, TRUST_SCORE, trustTier } from '../search/rank.ts';
@@ -9,14 +23,16 @@ import { buildResultItem, githubSource, marketplaceSource, storeLookup, type Res
 const Credentials = z.object({ username: z.string().max(64), password: z.string().max(PASSWORD_MAX) });
 const FavoriteBody = z.object({ id: z.string().min(1).max(400) });
 
-/** Answers a wrong name and a wrong password alike, after the same scrypt work. */
-let dummyHash: Promise<string> | null = null;
-
 /** Sign-up, login and the signed-in user's favorite skills (user decision 2026-11-02). */
 export function accountRouter(ctx: AppContext): Router {
   const r = Router();
   const { store } = ctx;
-  const userOf = (req: Request): UserRow | null => userFromCookie(store, req.headers.cookie);
+  // the port is read per request: a test server learns its port after the router is made
+  const cookieName = () => sessionCookieName(ctx.config.port);
+  const userOf = (req: Request): UserRow | null => userFromCookie(store, req.headers.cookie, cookieName());
+  /** Answers a wrong name and a wrong password alike, after the same scrypt work (made once, at start). */
+  const dummyHash = hashPassword('not a password of anyone');
+  dummyHash.catch(() => {});
   const publicUser = (u: UserRow) => ({ id: u.id, username: u.username });
 
   r.get('/auth/me', (req, res) => {
@@ -31,8 +47,14 @@ export function accountRouter(ctx: AppContext): Router {
     if (!USERNAME_RE.test(username)) return void res.status(400).json({ error: '아이디는 영문·숫자·_.- 3~32자입니다' });
     if (password.length < PASSWORD_MIN) return void res.status(400).json({ error: `비밀번호는 ${PASSWORD_MIN}자 이상이어야 합니다` });
     if (store.getUserByName(username)) return void res.status(409).json({ error: '이미 있는 아이디입니다' });
-    const user = store.createUser(username, await hashPassword(password));
-    res.setHeader('Set-Cookie', sessionCookie(sessionToken(store, user)));
+    const hash = await hashPassword(password);
+    let user;
+    try {
+      user = store.createUser(username, hash);
+    } catch {
+      return void res.status(409).json({ error: '이미 있는 아이디입니다' }); // the same name signed up meanwhile
+    }
+    res.setHeader('Set-Cookie', sessionCookie(cookieName(), sessionToken(store, user)));
     res.status(201).json({ user: publicUser(user) });
   });
 
@@ -40,19 +62,22 @@ export function accountRouter(ctx: AppContext): Router {
     const parsed = Credentials.safeParse(req.body);
     if (!parsed.success) return void res.status(400).json({ error: '아이디와 비밀번호를 입력하세요' });
     const { username, password } = parsed.data;
-    const wait = loginBlocked(username);
-    if (wait) return void res.status(429).json({ error: `잘못된 비밀번호가 여러 번 들어왔습니다. ${wait}초 뒤에 다시 해 보세요` });
-    const user = store.getUserByName(username);
-    dummyHash ??= hashPassword('not a password of anyone');
-    const ok = await verifyPassword(password, user?.password_hash ?? (await dummyHash));
-    noteLogin(username, !!user && ok);
-    if (!user || !ok) return void res.status(401).json({ error: '아이디 또는 비밀번호가 맞지 않습니다' });
-    res.setHeader('Set-Cookie', sessionCookie(sessionToken(store, user)));
-    res.json({ user: publicUser(user) });
+    const outcome = await serialLogin(username, async () => {
+      const wait = loginBlocked(username);
+      if (wait) return { wait };
+      const user = store.getUserByName(username);
+      const ok = await verifyPassword(password, user?.password_hash ?? (await dummyHash));
+      noteLogin(username, !!user && ok);
+      return { user: user && ok ? user : null };
+    });
+    if ('wait' in outcome) return void res.status(429).json({ error: `잘못된 비밀번호가 여러 번 들어왔습니다. ${outcome.wait}초 뒤에 다시 해 보세요` });
+    if (!outcome.user) return void res.status(401).json({ error: '아이디 또는 비밀번호가 맞지 않습니다' });
+    res.setHeader('Set-Cookie', sessionCookie(cookieName(), sessionToken(store, outcome.user)));
+    res.json({ user: publicUser(outcome.user) });
   });
 
   r.post('/auth/logout', (_req, res) => {
-    res.setHeader('Set-Cookie', clearedCookie());
+    res.setHeader('Set-Cookie', clearedCookie(cookieName()));
     res.json({ ok: true });
   });
 

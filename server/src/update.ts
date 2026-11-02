@@ -35,7 +35,9 @@ export async function checkForUpdate(fetchImpl: typeof fetch = fetch, publicKey?
       typeof bytes === 'number' &&
       typeof sha256 === 'string' &&
       /^[0-9a-f]{64}$/.test(sha256) &&
-      verifyText(releaseMessage({ version, bytes, sha256 }), meta.signature, publicKey)
+      verifyText(releaseMessage({ version, bytes, sha256 }), meta.signature, publicKey) &&
+      // an older signed release served again does not hide the newer one already seen
+      (!latest || !newerVersion(latest.version, version))
     ) {
       latest = { version, notes: signedNotes(meta, version, publicKey) };
     }

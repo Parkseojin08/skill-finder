@@ -8,7 +8,7 @@ import { rawRequest, startTestServer } from './helpers.ts';
 describe('계정·즐겨찾기 (사용자 결정 2026-11-02)', () => {
   it('비밀번호는 scrypt로 저장하고 맞는 비밀번호만 통과한다', async () => {
     const h = await hashPassword('correct horse');
-    assert.match(h, /^scrypt\$16384\$8\$1\$/);
+    assert.match(h, /^scrypt\$131072\$8\$1\$/);
     assert.ok(!h.includes('correct horse'));
     assert.equal(await verifyPassword('correct horse', h), true);
     assert.equal(await verifyPassword('wrong horse', h), false);
@@ -58,13 +58,21 @@ describe('계정·즐겨찾기 (사용자 결정 2026-11-02)', () => {
       assert.equal((await call('POST', '/api/auth/login', { username: 'nobody', password: 'wrong-pass' })).status, 401, '없는 아이디도 같은 답');
       for (let i = 0; i < 4; i++) await call('POST', '/api/auth/login', { username: 'alice', password: 'wrong-pass' });
       assert.equal((await call('POST', '/api/auth/login', { username: 'alice', password: 'longenough' })).status, 429);
+      // many guesses at once for another name: still only five get checked (review 2026-11-02)
+      await call('POST', '/api/auth/signup', { username: 'bob', password: 'longenough' });
+      const burst = await Promise.all(Array.from({ length: 8 }, () => call('POST', '/api/auth/login', { username: 'bob', password: 'wrong-pass' })));
+      assert.equal(burst.filter((r) => r.status === 401).length, 5, burst.map((r) => r.status).join(','));
+      assert.equal(burst.filter((r) => r.status === 429).length, 3);
 
       const user = store.getUserByName('alice')!;
       const old = sessionToken(store, user);
-      assert.equal(userFromCookie(store, `sf_session=${old}`)?.username, 'alice');
+      const name = `sf_session_${srv.port}`;
+      assert.equal(cookie.split('=')[0], name, '쿠키 이름에 포트가 들어감');
+      assert.equal(userFromCookie(store, `${name}=${old}`, name)?.username, 'alice');
+      assert.equal(userFromCookie(store, `sf_session_1=${old}`, name), null, '다른 포트의 쿠키는 보지 않음');
       srv.ctx.store.db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await hashPassword('another password'), user.id);
-      assert.equal(userFromCookie(store, `sf_session=${old}`), null, '비밀번호가 바뀌면 예전 로그인은 끝');
-      assert.equal(userFromCookie(store, `sf_session=${sessionToken(store, user, Date.now() - 31 * 86_400_000)}`), null, '30일이 지나면 끝');
+      assert.equal(userFromCookie(store, `${name}=${old}`, name), null, '비밀번호가 바뀌면 예전 로그인은 끝');
+      assert.equal(userFromCookie(store, `${name}=${sessionToken(store, user, Date.now() - 31 * 86_400_000)}`, name), null, '30일이 지나면 끝');
 
       const out = await call('POST', '/api/auth/logout', {}, cookie);
       assert.match(String(out.headers['set-cookie']), /Max-Age=0/);

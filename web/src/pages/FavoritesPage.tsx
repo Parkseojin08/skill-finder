@@ -20,7 +20,11 @@ export function FavoritesPage({ onOpen }: { onOpen: (item: ResultItem) => void }
     if (!user) return setData(null);
     let alive = true;
     apiGet<Favorites>('/favorites')
-      .then((d) => alive && setData(d))
+      .then((d) => {
+        if (!alive) return;
+        setData(d);
+        setError(null);
+      })
       .catch((e) => alive && setError(String(e.message ?? e)));
     return () => {
       alive = false;
