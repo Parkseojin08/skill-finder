@@ -113,3 +113,18 @@ describe('SKILL.md 링크와 내보내기 (사용성 검토 2026-11-02)', () => 
     assert.match(md, /\| \[a\\|b\]\(https:\/\/github\.com\/o\/r\) \| o\/r \| 5 \|/);
   });
 });
+
+describe('공유 링크 (소개 사이트 /s/)', () => {
+  it('스킬을 # 뒤에 담고, 같은 형식으로 다시 읽힌다', async () => {
+    const { readShareLink, shareLink, SITE } = await import('../src/lib/shareLink.ts');
+    const url = shareLink({ n: 'pdf', d: '표와 글을 PDF에서 뽑습니다 '.repeat(30), u: 'https://github.com/anthropics/skills/tree/x/skills/pdf', c: 'npx skills@1.7.4 add x --skill pdf', r: 'low', f: ['scripts'], i: 'gh:anthropics/skills:skills/pdf' });
+    assert.ok(url.startsWith(`${SITE}/s/#v1.`));
+    assert.match(url, /#v1\.[A-Za-z0-9_-]+$/, 'base64url만');
+    const back = readShareLink(url)!;
+    assert.equal(back.n, 'pdf');
+    assert.equal(back.r, 'low');
+    assert.deepEqual(back.f, ['scripts']);
+    assert.ok(back.d!.length <= 300, '설명은 잘라서');
+    assert.equal(readShareLink(shareLink({ n: 'x', u: 'https://evil.example/x' }))!.u, undefined, 'GitHub·skills.sh 주소만');
+  });
+});
