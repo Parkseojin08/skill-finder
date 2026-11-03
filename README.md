@@ -2,7 +2,7 @@
 
 Claude Code 스킬을 한곳에서 찾아 점수·위험 신호와 함께 보고, 설치 전에 무엇이 함께 들어오는지 확인한 뒤 설치·삭제하는 로컬 웹 앱입니다. 화면은 한국어·영어·일본어입니다.
 
-> **English:** A local web app (127.0.0.1) that searches Claude Code skills across plugin marketplaces, skills.sh and GitHub, scores them, flags risky signals, and installs or removes them only after showing the exact command, the install location and the files that come along. No AI calls; the UI is in Korean, English or Japanese (Settings). Run it with `npx skill-finder` on Windows, macOS or Linux.
+> **English:** A local web app (127.0.0.1) that searches Claude Code skills across plugin marketplaces, skills.sh and GitHub, scores them, flags risky signals, and installs or removes them only after showing the exact command, the install location and the files that come along. No AI calls; the UI is in Korean, English or Japanese (Settings). Run it with `npx @seojin08/skill-finder` on Windows, macOS or Linux.
 
 ## 무엇을 하나요
 
@@ -26,7 +26,7 @@ Claude Code 스킬을 한곳에서 찾아 점수·위험 신호와 함께 보고
 Node.js 22.18 이상이 있으면 설치 없이 실행합니다. 데이터는 사용자 폴더(macOS `~/Library/Application Support/Skill Finder`, Linux `~/.local/share/skill-finder`, Windows `%LOCALAPPDATA%\SkillFinder\npx-data`)에 남습니다.
 
 ```bash
-npx skill-finder
+npx @seojin08/skill-finder
 ```
 
 ### Claude Code 안에서 쓰기
@@ -34,14 +34,14 @@ npx skill-finder
 같은 명령에 읽기 전용 하위 명령이 있습니다. 앱이 꺼져 있으면 백그라운드로 켜고 결과만 출력하므로, Claude Code에게 "skill-finder로 pdf 스킬 찾아 줘"처럼 시킬 수 있습니다. 설치·삭제는 하지 않습니다(앱 화면의 확인 창에서만).
 
 ```bash
-npx skill-finder search "pdf tables" --limit 5
-npx skill-finder show gh:anthropics/skills:skills/pdf
-npx skill-finder recommend          # 지금 폴더의 README와 비슷한 스킬
-npx skill-finder installed --json
-npx skill-finder stop               # 백그라운드로 켠 앱 끄기
+npx @seojin08/skill-finder search "pdf tables" --limit 5
+npx @seojin08/skill-finder show gh:anthropics/skills:skills/pdf
+npx @seojin08/skill-finder recommend          # 지금 폴더의 README와 비슷한 스킬
+npx @seojin08/skill-finder installed --json
+npx @seojin08/skill-finder stop               # 백그라운드로 켠 앱 끄기
 ```
 
-`--json`은 기계가 읽는 출력, `--lang ko|en|ja`는 출력 언어입니다.
+`--json`은 기계가 읽는 출력, `--lang ko|en|ja`는 출력 언어입니다. 자주 쓰면 `npm install -g @seojin08/skill-finder`로 설치해 `skill-finder search …`처럼 짧게 부를 수 있습니다.
 
 ### 소스에서
 

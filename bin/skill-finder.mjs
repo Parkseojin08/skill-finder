@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Skill Finder on Windows, macOS and Linux: `npx skill-finder` (the npm package) or `node bin/skill-finder.mjs`
+// Skill Finder on Windows, macOS and Linux: `npx @seojin08/skill-finder` (the npm package) or `node bin/skill-finder.mjs`
 // (a checkout). With no command it starts the local app and opens the browser. `search`, `show`, `recommend` and
 // `installed` read from the app, starting it in the background when it is not running, and print text or --json,
 // so Claude Code can call them from its shell. Nothing here installs or removes a skill: that stays in the app,
