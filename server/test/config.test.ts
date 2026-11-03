@@ -26,4 +26,12 @@ describe('설정 파일과 버전 (전체 점검 3차)', () => {
     assert.equal(pkg('server/package.json').version, undefined, 'server/package.json에 버전을 두지 않음');
     assert.equal(pkg('web/package.json').version, undefined, 'web/package.json에 버전을 두지 않음');
   });
+
+  it('skills CLI는 정확한 버전으로 고정하고, 보여 주는 명령의 버전은 설치된 패키지에서 읽는다', async () => {
+    const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+    const pin = (JSON.parse(readFileSync(join(root, 'server', 'package.json'), 'utf8')) as { dependencies: Record<string, string> }).dependencies.skills;
+    assert.match(pin, /^\d+\.\d+\.\d+$/, '범위(^, ~) 없이 고정');
+    const { SKILLS_CLI_VERSION } = await import('../src/config.ts');
+    assert.equal(SKILLS_CLI_VERSION, pin);
+  });
 });

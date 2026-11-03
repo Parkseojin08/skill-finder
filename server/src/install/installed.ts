@@ -75,7 +75,7 @@ function readLock(file: string): Map<string, string> {
   return byFolder;
 }
 
-/** The folder the skills CLI installs a skill into (its `sanitizeName`, skills@1.7.4). */
+/** The folder the skills CLI installs a skill into (its `sanitizeName`, the same in skills@1.7.4 and 1.7.6). */
 export function skillFolderName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9._]+/g, '-').replace(/^[.\-]+|[.\-]+$/g, '').slice(0, 255) || 'unnamed-skill';
 }

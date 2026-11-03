@@ -23,7 +23,7 @@ Claude Code 스킬을 한곳에서 찾아 점수·위험 신호와 함께 보고
 
 ### macOS·Linux·Windows (npx)
 
-Node.js 22.18 이상이 있으면 설치 없이 실행합니다. 데이터는 사용자 폴더(macOS `~/Library/Application Support/Skill Finder`, Linux `~/.local/share/skill-finder`, Windows `%LOCALAPPDATA%\SkillFinder\npx-data`)에 남습니다.
+Node.js 22.20 이상이 있으면 설치 없이 실행합니다. 데이터는 사용자 폴더(macOS `~/Library/Application Support/Skill Finder`, Linux `~/.local/share/skill-finder`, Windows `%LOCALAPPDATA%\SkillFinder\npx-data`)에 남습니다.
 
 ```bash
 npx @seojin08/skill-finder
@@ -45,7 +45,7 @@ npx @seojin08/skill-finder stop               # 백그라운드로 켠 앱 끄�
 
 ### 소스에서
 
-필요한 것: Node.js 22.18 이상(24 권장), git, Claude Code(`claude` 명령).
+필요한 것: Node.js 22.20 이상(24 권장), git, Claude Code(`claude` 명령).
 
 ```bash
 npm install

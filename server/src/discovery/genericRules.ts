@@ -1,6 +1,8 @@
 import { basename, joinPath, skillMdPath, type TreeIndex } from './tree.ts';
 
-// Mirrors skills CLI 1.7.4 src/skills.ts (discoverSkills) so that what we list is what `skills add --skill` can install.
+// Mirrors skills CLI 1.7.6 src/skills.ts (discoverSkills) so that what we list is what `skills add --skill` can install.
+// Unchanged since 1.7.4 except two things not mirrored: extra search dirs a repo can list in skills.sh.json (`paths`),
+// and skipping a skill whose name or description is empty once control characters are removed.
 export const SKIP_DIRS = ['node_modules', '.git', 'dist', 'build', '__pycache__'];
 
 export const AGENT_PROJECT_SKILL_DIRS = [

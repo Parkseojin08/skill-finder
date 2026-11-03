@@ -34,7 +34,7 @@ const T = {
 
 공통: --json(기계가 읽는 출력), --port N, --no-open, --lang ko|en|ja
 설치·삭제는 앱 화면의 확인 창에서만 합니다.`,
-    node: (v) => `Node.js ${v}는 너무 오래됐습니다. 22.18 이상이 필요합니다: https://nodejs.org`,
+    node: (v) => `Node.js ${v}는 너무 오래됐습니다. 22.20 이상이 필요합니다: https://nodejs.org`,
     noWeb: '웹 화면이 빌드되지 않았습니다. 먼저 npm run build를 실행하세요.',
     starting: (p) => `Skill Finder를 켜는 중입니다 (127.0.0.1:${p})…`,
     background: (p) => `Skill Finder를 백그라운드로 켰습니다 (127.0.0.1:${p}). 끄려면: skill-finder stop`,
@@ -70,7 +70,7 @@ Usage:
 
 Common: --json (machine-readable), --port N, --no-open, --lang ko|en|ja
 Installing and removing happen only in the app's confirm dialog.`,
-    node: (v) => `Node.js ${v} is too old. 22.18 or later is needed: https://nodejs.org`,
+    node: (v) => `Node.js ${v} is too old. 22.20 or later is needed: https://nodejs.org`,
     noWeb: 'The web app is not built. Run npm run build first.',
     starting: (p) => `Starting Skill Finder (127.0.0.1:${p})…`,
     background: (p) => `Started Skill Finder in the background (127.0.0.1:${p}). To stop it: skill-finder stop`,
@@ -106,7 +106,7 @@ Installing and removing happen only in the app's confirm dialog.`,
 
 共通: --json(機械向け出力), --port N, --no-open, --lang ko|en|ja
 インストールと削除はアプリの確認画面でのみ行います。`,
-    node: (v) => `Node.js ${v} は古すぎます。22.18 以上が必要です: https://nodejs.org`,
+    node: (v) => `Node.js ${v} は古すぎます。22.20 以上が必要です: https://nodejs.org`,
     noWeb: 'Web 画面がビルドされていません。先に npm run build を実行してください。',
     starting: (p) => `Skill Finder を起動しています (127.0.0.1:${p})…`,
     background: (p) => `Skill Finder をバックグラウンドで起動しました (127.0.0.1:${p})。止めるには: skill-finder stop`,
@@ -204,7 +204,7 @@ function readPid() {
 /** Starts the server: in this terminal (`start`), or detached for the read commands. Resolves its port. */
 async function startServer(background) {
   const [major, minor] = process.versions.node.split('.').map(Number);
-  if (major < 22 || (major === 22 && minor < 18)) throw new Error(t.node(process.versions.node));
+  if (major < 22 || (major === 22 && minor < 20)) throw new Error(t.node(process.versions.node));
   if (!existsSync(join(ROOT, 'web', 'dist', 'index.html'))) throw new Error(t.noWeb);
   let port = Number(portArg) || Number(process.env.PORT) || DEFAULT_PORT;
   if (!(await portFree(port))) {

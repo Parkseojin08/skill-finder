@@ -8,15 +8,26 @@ export const SERVER_DIR = join(ROOT_DIR, 'server');
 export const WEB_DIST_DIR = join(ROOT_DIR, 'web', 'dist');
 /** The release launcher keeps the token outside the app folder (UI debate D-6); from the environment only. */
 export const ENV_PATH = process.env.SKILL_FINDER_ENV_PATH ? resolve(process.env.SKILL_FINDER_ENV_PATH) : join(ROOT_DIR, '.env');
-export const SKILLS_CLI_VERSION = '1.7.4';
 /** The bundled skills CLI: under the app, or wherever npm put it when installed as a package (npx hoists it). */
-export const SKILLS_CLI_PATH = (() => {
-  const local = join(ROOT_DIR, 'node_modules', 'skills', 'bin', 'cli.mjs');
+const SKILLS_DIR = (() => {
+  const local = join(ROOT_DIR, 'node_modules', 'skills');
   if (existsSync(local)) return local;
   try {
-    return join(dirname(createRequire(import.meta.url).resolve('skills/package.json')), 'bin', 'cli.mjs');
+    return dirname(createRequire(import.meta.url).resolve('skills/package.json'));
   } catch {
     return local;
+  }
+})();
+export const SKILLS_CLI_PATH = join(SKILLS_DIR, 'bin', 'cli.mjs');
+/**
+ * The version the app runs, read from the bundled package so the commands it shows for running by hand name the same
+ * one (it was written here by hand and could fall behind the package, review 2026-11-03).
+ */
+export const SKILLS_CLI_VERSION: string = (() => {
+  try {
+    return String(JSON.parse(readFileSync(join(SKILLS_DIR, 'package.json'), 'utf8')).version);
+  } catch {
+    return 'latest'; // no bundled CLI: installing fails anyway, and the shown command still runs
   }
 })();
 export const DEV_VITE_PORT = 5173;
