@@ -3,9 +3,11 @@ import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { repoFavoriteId } from '../favorites.ts';
 import { formatCount } from '../labels.ts';
 import { TRANSLATE_TO, useKorean } from '../translate.ts';
 import type { RepoResult } from '../types.ts';
+import { FavoriteButton } from './FavoriteButton.tsx';
 import { RepoInstallDialog } from './RepoInstallDialog.tsx';
 import { t } from '../i18n.ts';
 
@@ -35,6 +37,7 @@ export function RepoCard({ repo, onOpenSkill }: { repo: RepoResult; onOpenSkill:
           </CardDescription>
         )}
         <CardAction className="flex items-center gap-2">
+          <FavoriteButton id={repoFavoriteId(repo.repo)} name={repo.repo} extra={{ repo: { description: repo.description, topics: repo.topics } }} />
           {repo.stars != null && (
             <Badge variant="outline">
               <StarIcon data-icon="inline-start" />

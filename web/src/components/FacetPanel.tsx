@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { CATEGORY, METHOD, TRUST } from '../labels.ts';
 import type { ResultItem } from '../types.ts';
 import { Icon } from './Icon.tsx';
@@ -64,9 +64,12 @@ export function ActiveFacets({ value, onChange }: { value: Facets; onChange: (f:
   );
 }
 
-export function FacetPanel({ items, value, onChange }: { items: ResultItem[]; value: Facets; onChange: (f: Facets) => void }) {
+/** A group of a screen's own above the shared ones (the favorites' 종류), counted and reset with them. */
+export type ExtraFacet = { node: ReactNode; active: number; reset: () => void };
+
+export function FacetPanel({ items, value, onChange, extra }: { items: ResultItem[]; value: Facets; onChange: (f: Facets) => void; extra?: ExtraFacet }) {
   const [open, setOpen] = useState(false); // narrow screens only; always shown on desktop
-  const active = facetCount(value);
+  const active = facetCount(value) + (extra?.active ?? 0);
   const toggle = (g: Group, v: string) => onChange({ ...value, [g]: value[g].includes(v) ? value[g].filter((x) => x !== v) : [...value[g], v] });
 
   const title: Record<Group, string> = { trust: t('제공자'), category: t('카테고리'), method: t('설치 방식') };
@@ -80,12 +83,20 @@ export function FacetPanel({ items, value, onChange }: { items: ResultItem[]; va
         </button>
         <span className="facets-title">{t('필터')}</span>
         {active > 0 && (
-          <button type="button" className="linkish small" onClick={() => onChange(NO_FACETS)}>
+          <button
+            type="button"
+            className="linkish small"
+            onClick={() => {
+              onChange(NO_FACETS);
+              extra?.reset();
+            }}
+          >
             {t('초기화')}
           </button>
         )}
       </div>
       <div className="facet-body">
+        {extra?.node}
         {GROUPS.map((g) => {
           const counts = new Map<string, number>();
           for (const it of items) {

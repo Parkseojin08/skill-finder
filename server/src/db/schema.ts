@@ -92,4 +92,7 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE favorites_local RENAME TO favorites;
   DELETE FROM settings WHERE key = 'sessionKey';
   `,
+  // Favorite GitHub repositories (user request 2026-11-03) are `repo:owner/name` rows; the description and topics the
+  // search showed are kept with them, since the index has neither.
+  `ALTER TABLE favorites ADD COLUMN meta_json TEXT;`,
 ];

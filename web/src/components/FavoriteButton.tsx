@@ -4,7 +4,7 @@ import { toggleFavorite, useFavorites } from '../favorites.ts';
 import { t } from '../i18n.ts';
 
 /** The star on a result card and a skill page: this PC's favorites, no account (user decision 2026-11-02). */
-export function FavoriteButton({ id, name, className = '' }: { id: string; name: string; className?: string }) {
+export function FavoriteButton({ id, name, extra, className = '' }: { id: string; name: string; extra?: Record<string, unknown>; className?: string }) {
   const on = useFavorites().has(id);
   // a refused change used to put the star back without a word
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +25,7 @@ export function FavoriteButton({ id, name, className = '' }: { id: string; name:
           e.stopPropagation();
           setError(null);
           // the API already put the server's message in the screen's language
-          toggleFavorite(id, name).catch((err: Error) => setError(t('즐겨찾기를 바꾸지 못했습니다: {0}', err.message)));
+          toggleFavorite(id, name, extra).catch((err: Error) => setError(t('즐겨찾기를 바꾸지 못했습니다: {0}', err.message)));
         }}
       >
         <StarIcon weight={on ? 'fill' : 'regular'} aria-hidden />

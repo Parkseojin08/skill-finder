@@ -10,6 +10,47 @@ import { TreeIndex } from '../src/discovery/tree.ts';
 import { buildSkillRow } from '../src/indexer.ts';
 import { rawRequest, startTestServer } from './helpers.ts';
 
+describe('GitHub 저장소 즐겨찾기 (사용자 요청 2026-11-03)', () => {
+  it('저장소를 이름 하나로 넣고, 검색이 보여 준 설명·토픽과 색인의 스킬로 카드를 만든다', async () => {
+    const srv = await startTestServer();
+    try {
+      const { store } = srv.ctx;
+      for (const dir of ['skills/rea-tool-design', 'skills/reverse-engineer-anything']) {
+        const name = dir.split('/')[1];
+        store.upsertSkill(buildSkillRow({ repo: 'morluto/rea', sha: '0'.repeat(40), dirPath: dir, raw: `---\nname: ${name}\ndescription: ${name} for tests.\n---\n`, tree: new TreeIndex([]), origin: 'generic', pluginId: null, extraFlags: [], install: null, lastCommitAt: null }), '');
+      }
+      store.upsertRepo({ full_name: 'morluto/rea', stars: 423_600, pushed_at: null, archived: 0, fork: 0, license: null, default_branch: 'main', etag: null, fetched_at: new Date().toISOString() });
+      const headers = { 'X-Skill-Finder': '1', Origin: `http://127.0.0.1:${srv.port}`, 'Content-Type': 'application/json' };
+      const call = (method: string, path: string, body?: unknown) => rawRequest({ port: srv.port, method, path, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+
+      const repo = { description: 'Reverse engineer anything\u0007 with agents', topics: ['ai', 'Not A Topic', 'mcp', 7] };
+      assert.equal((await call('POST', '/api/favorites', { id: 'repo:morluto/rea', name: 'Morluto/REA', repo })).status, 200);
+      assert.equal((await call('POST', '/api/favorites', { id: 'repo:MORLUTO/rea', name: 'x' })).status, 200, '대소문자만 다른 같은 저장소');
+      assert.equal((await call('POST', '/api/favorites', { id: 'repo:../etc' })).status, 400);
+      assert.equal((await call('POST', '/api/favorites', { id: 'repo:a/..' })).status, 400, '설치와 같은 저장소 이름 규칙');
+      assert.equal((await call('POST', '/api/favorites', { id: 'repo:morluto/k', name: 'morluto/K' })).status, 200);
+      assert.equal(JSON.parse((await call('GET', '/api/favorites')).body).repos.find((r: { repo: string }) => r.repo.endsWith('k')).repo, 'morluto/k', '저장소 이름이 아닌 이름은 쓰지 않음');
+      assert.equal((await call('DELETE', '/api/favorites?id=repo%3AMORLUTO%2Fk')).status, 200);
+      assert.deepEqual(JSON.parse((await call('GET', '/api/favorites/ids')).body).ids, ['repo:morluto/rea']);
+
+      const list = JSON.parse((await call('GET', '/api/favorites')).body);
+      assert.equal(list.repos.length, 1);
+      const card = list.repos[0];
+      assert.equal(card.repo, 'Morluto/REA', 'GitHub가 쓰는 이름 그대로');
+      assert.equal(card.stars, 423_600);
+      assert.equal(card.description, 'Reverse engineer anything with agents', '제어 문자는 지움');
+      assert.deepEqual(card.topics, ['ai', 'mcp']);
+      assert.deepEqual(card.skills.map((s: { name: string }) => s.name).sort(), ['rea-tool-design', 'reverse-engineer-anything']);
+      assert.equal(list.items.length, 0, '저장소는 스킬 카드가 아님');
+
+      assert.equal((await call('DELETE', '/api/favorites?id=repo%3Amorluto%2Frea')).status, 200);
+      assert.equal(JSON.parse((await call('GET', '/api/favorites')).body).repos.length, 0);
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
 describe('즐겨찾기 (계정 없이, 사용자 결정 2026-11-02)', () => {
   it('별을 넣고 빼고, 색인에서 사라진 스킬도 이름으로 남는다', async () => {
     const srv = await startTestServer();

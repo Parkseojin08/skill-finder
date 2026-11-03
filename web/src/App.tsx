@@ -218,7 +218,7 @@ export function App() {
         {route.path === '/installed' && <InstalledPage onOpenSkill={(id) => go('/skill', id)} />}
         {route.path === '/marketplaces' && <MarketplacesPage />}
         {route.path === '/settings' && <SettingsPage />}
-        {route.path === '/favorites' && <FavoritesPage onOpen={openSkill} />}
+        {route.path === '/favorites' && <FavoritesPage onOpen={openSkill} onOpenId={(id) => go('/skill', id)} />}
       </main>
     </div>
   );

@@ -624,8 +624,15 @@ export class Store {
 
   // ── favorites: this PC's, no accounts (user decision 2026-11-02) ──
 
-  addFavorite(skillId: string, skillName: string): void {
-    this.run('INSERT INTO favorites (skill_id, skill_name, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING', skillId, skillName, now());
+  /** `meta`: what a repository favorite shows beyond its name (description, topics). */
+  addFavorite(skillId: string, skillName: string, meta: unknown = null): void {
+    this.run(
+      'INSERT INTO favorites (skill_id, skill_name, created_at, meta_json) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING',
+      skillId,
+      skillName,
+      now(),
+      meta == null ? null : JSON.stringify(meta),
+    );
   }
 
   removeFavorite(skillId: string): void {
@@ -633,8 +640,8 @@ export class Store {
   }
 
   /** Newest first. */
-  listFavorites(): Array<{ skill_id: string; skill_name: string; created_at: string }> {
-    return this.all('SELECT skill_id, skill_name, created_at FROM favorites ORDER BY created_at DESC, rowid DESC');
+  listFavorites(): Array<{ skill_id: string; skill_name: string; created_at: string; meta_json: string | null }> {
+    return this.all('SELECT skill_id, skill_name, created_at, meta_json FROM favorites ORDER BY created_at DESC, rowid DESC');
   }
 
   /** Skills the app installed into a skills folder (skills CLI), newest first, to match those folders to the index. */
