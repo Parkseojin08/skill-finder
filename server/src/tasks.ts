@@ -3,7 +3,7 @@ import type { AppContext } from './context.ts';
 import { skillMdPath } from './discovery/tree.ts';
 import { PluginUnavailableError, recheckRisk } from './indexer.ts';
 import type { Job, JobControl } from './jobs.ts';
-import { GRAPHQL_BATCH } from './sources/github.ts';
+import { GitHubError, GRAPHQL_BATCH } from './sources/github.ts';
 import { syncMarketplace } from './sources/marketplace.ts';
 import { collectPopularRepos, popularState } from './sources/popularRepos.ts';
 import { searchActivity } from './search/activity.ts';
@@ -71,6 +71,29 @@ const POPULAR_EVERY_MS = 24 * 60 * 60 * 1000;
 export const REPO_META_EVERY_MS = 6 * 60 * 60 * 1000;
 const REPO_META_STALE_MS = 18 * 60 * 60 * 1000;
 let repoMetaRunning = false;
+/** The smallest group asked again in halves; a group this small that still fails waits for the next run. */
+const REPO_META_MIN_SPLIT = 25;
+
+/** GitHub gave up on the query (502/503/504, usually when it takes too long) or our own 30 s limit ran out. */
+const gaveUp = (err: unknown) => (err instanceof GitHubError && [502, 503, 504].includes(err.status)) || (err as Error)?.name === 'TimeoutError';
+
+/**
+ * One group of repos, asked again in halves when GitHub gives up on it: a hundred lookups in one query can take
+ * too long, and one 502 used to end the whole run, leaving the rest stale until the next one 6 hours later
+ * (2026-11-03). Other errors (limit reached, network) still end the run.
+ */
+async function refreshRepoGroup(ctx: AppContext, repos: string[]): Promise<{ stored: number; left: number; error?: unknown }> {
+  try {
+    return { stored: await ctx.github.refreshRepoMeta(repos), left: 0 };
+  } catch (err) {
+    if (!gaveUp(err)) throw err;
+    if (repos.length <= REPO_META_MIN_SPLIT) return { stored: 0, left: repos.length, error: err };
+    const half = Math.ceil(repos.length / 2);
+    const a = await refreshRepoGroup(ctx, repos.slice(0, half));
+    const b = await refreshRepoGroup(ctx, repos.slice(half));
+    return { stored: a.stored + b.stored, left: a.left + b.left, error: b.error ?? a.error };
+  }
+}
 
 /**
  * Keeps star counts of the repos skills come from current (GraphQL, 100 per call), so a search reads them
@@ -83,10 +106,17 @@ export async function refreshRepoMeta(ctx: AppContext): Promise<number> {
   let stored = 0;
   try {
     const repos = ctx.store.listReposToRefresh(new Date(Date.now() - REPO_META_STALE_MS).toISOString(), 10_000);
+    let left = 0;
     for (let i = 0; i < repos.length; i += GRAPHQL_BATCH) {
       while (searchActivity.busy()) await sleep(500);
-      stored += await ctx.github.refreshRepoMeta(repos.slice(i, i + GRAPHQL_BATCH));
+      const group = repos.slice(i, i + GRAPHQL_BATCH);
+      const r = await refreshRepoGroup(ctx, group);
+      stored += r.stored;
+      left += r.left;
+      // not one piece answered: GitHub is down rather than slow, so stop asking until the next run
+      if (r.left === group.length) throw r.error;
     }
+    if (left) console.warn('[repo-meta]', `GitHub가 일부 요청에 답하지 않아 저장소 ${left}개는 다음 갱신 때 다시 묻습니다`);
   } catch (err) {
     console.warn('[repo-meta]', String((err as Error).message ?? err).slice(0, 200));
   } finally {

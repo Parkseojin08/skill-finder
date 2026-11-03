@@ -7,6 +7,7 @@ import { createContext } from '../src/bootstrap.ts';
 import { TreeIndex } from '../src/discovery/tree.ts';
 import { buildSkillRow } from '../src/indexer.ts';
 import { searchSkillsSh } from '../src/sources/skillsSh.ts';
+import { refreshRepoMeta } from '../src/tasks.ts';
 import { RateLimitWait, TokenBucket } from '../src/util/limiter.ts';
 
 const realFetch = globalThis.fetch;
@@ -79,6 +80,37 @@ describe('저장소 별 정보 묶음 갱신 (2단계)', () => {
     repo('a/old', '2026-01-01T00:00:00.000Z');
     const list = ctx.store.listReposToRefresh(new Date(Date.now() - 3_600_000).toISOString(), 100).sort();
     assert.deepEqual(list, ['a/none', 'a/old']);
+  });
+
+  /** n skills from n repos, and a GraphQL stand-in: `fail(size)` says whether a query of that many repos gets 502. */
+  function manyRepos(n: number, fail: (size: number) => boolean) {
+    const ctx = ctxWithToken();
+    for (let i = 0; i < n; i++) {
+      const row = buildSkillRow({ repo: `o/r${i}`, sha: 'a'.repeat(40), dirPath: 's', raw: '---\nname: s\ndescription: d\n---\n', tree: new TreeIndex([]), origin: 'generic', pluginId: null, extraFlags: [], install: null, lastCommitAt: null });
+      ctx.store.upsertSkill(row, '');
+    }
+    const sizes: number[] = [];
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      const size = Object.keys(JSON.parse(String(init.body)).variables).length / 2;
+      sizes.push(size);
+      if (fail(size)) return new Response('Bad Gateway', { status: 502 });
+      const data = Object.fromEntries(Array.from({ length: size }, (_, i) => [`r${i}`, { stargazerCount: 5, pushedAt: null, isArchived: false, isFork: false, licenseInfo: null, defaultBranchRef: { name: 'main' } }]));
+      return new Response(JSON.stringify({ data }), { status: 200 });
+    }) as typeof fetch;
+    return { ctx, sizes };
+  }
+
+  it('GitHub가 502로 포기한 묶음은 반씩 나눠 다시 묻고, 다음 묶음도 계속한다', async () => {
+    const { ctx, sizes } = manyRepos(150, (size) => size > 50);
+    assert.equal(await refreshRepoMeta(ctx), 150);
+    assert.deepEqual(sizes, [100, 50, 50, 50]);
+    assert.equal(ctx.store.getRepo('o/r149')!.stars, 5);
+  });
+
+  it('작게 나눠도 하나도 답하지 않으면 GitHub가 멈춘 것으로 보고 이번 갱신을 그만둔다', async () => {
+    const { ctx, sizes } = manyRepos(150, () => true);
+    assert.equal(await refreshRepoMeta(ctx), 0);
+    assert.deepEqual(sizes, [100, 50, 25, 25, 50, 25, 25], '첫 묶음만 25개까지 나눠 보고, 둘째 묶음은 묻지 않음');
   });
 });
 
