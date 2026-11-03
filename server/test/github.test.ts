@@ -168,3 +168,20 @@ describe('GitHub 호출 한도와 검색 캐시 (2단계)', () => {
     assert.equal(calls.length, 1);
   });
 });
+
+describe('raw 다운로드 (2026-11-03)', () => {
+  it('429를 받으면 모든 다운로드가 잠시 멈췄다가 다시 받는다', async () => {
+    const ctx = ctxWithToken();
+    const calls: number[] = [];
+    const t0 = Date.now();
+    globalThis.fetch = (async () => {
+      calls.push(Date.now() - t0);
+      return calls.length === 1 ? new Response('slow down', { status: 429 }) : new Response('text', { status: 200 });
+    }) as typeof fetch;
+    const [a, b] = await Promise.all([ctx.github.getRawText('o/r', 'main', 'a.md'), new Promise((r) => setTimeout(r, 50)).then(() => ctx.github.getRawText('o/r', 'main', 'b.md'))]);
+    assert.equal(a.text, 'text');
+    assert.equal(b.text, 'text');
+    assert.equal(calls.length, 3);
+    assert.ok(calls[1] >= 900 && calls[2] >= 900, `429 뒤 두 다운로드 모두 1초 기다림: ${calls}`);
+  });
+});

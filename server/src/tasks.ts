@@ -46,16 +46,23 @@ export function startSync(ctx: AppContext, marketplace?: string, force = false):
       .listMarketplaces()
       .filter((m) => (marketplace ? m.name === marketplace : m.enabled === 1));
     ctl.setTotal(targets.length);
+    const eager: string[] = [];
     for (const m of targets) {
       await ctl.checkpoint();
       try {
         await syncMarketplace(ctx.store, ctx.github, m.name, force);
         ctl.tick();
+        if (m.index_mode === 'eager') eager.push(m.name);
       } catch (err) {
         ctl.tick(`${m.name}: ${String((err as Error).message ?? err).slice(0, 200)}`);
-        continue;
       }
-      if (m.index_mode === 'eager') await indexPending(ctx, m.name, ctl);
+    }
+    // Every list first, then the skills of the marketplace with the fewest plugins to read: Anthropic's own skills
+    // (5 plugins) used to wait about 100 s for the 300-plugin official list on a first run (2026-11-03).
+    const pending = new Map(eager.map((name) => [name, ctx.store.listPluginsNeedingIndex(name).length]));
+    for (const name of eager.sort((a, b) => pending.get(a)! - pending.get(b)!)) {
+      await indexPending(ctx, name, ctl);
+      ctx.store.clearSearchCache();
     }
     ctx.store.clearSearchCache();
     if (!marketplace && getSettings(ctx.store).autoCollect) {

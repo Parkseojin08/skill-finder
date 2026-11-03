@@ -5,6 +5,13 @@ import { run } from '../util/proc.ts';
 
 export type TreeEntry = { path: string; size: number | null; sha: string | null };
 
+/**
+ * git asked for a login: GitHub answers so for a repo that is deleted or private (credentials are turned off
+ * here), so it is gone, not a network hiccup. It used to count as "could not read" in searches and was asked
+ * again on every sync (2026-11-03).
+ */
+export class RepoUnreachableError extends Error {}
+
 const REPO_RE = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 const SHA_RE = /^[0-9a-f]{40}$/i;
 const REF_RE = /^[A-Za-z0-9._\/-]{1,200}$/;
@@ -79,7 +86,10 @@ export async function gitTree(
     const init = await git(['init', '--bare', '-q', dir]);
     if (init.exitCode !== 0) throw new Error(`git init failed: ${init.stderr.trim()}`);
     const fetch = await git(['fetch', '-q', '--depth', '1', '--filter=blob:none', '--no-tags', repoUrl(repo), sha], dir);
-    if (fetch.exitCode !== 0) throw new Error(`git fetch failed: ${fetch.stderr.trim().split('\n')[0] || fetch.exitCode}`);
+    if (fetch.exitCode !== 0) {
+      if (/could not read Username|Repository not found/i.test(fetch.stderr)) throw new RepoUnreachableError(`저장소를 찾을 수 없습니다: ${repo}`);
+      throw new Error(`git fetch failed: ${fetch.stderr.trim().split('\n')[0] || fetch.exitCode}`);
+    }
     if (sha === 'HEAD') {
       const rev = await git(['rev-parse', 'FETCH_HEAD'], dir);
       sha = rev.stdout.trim();

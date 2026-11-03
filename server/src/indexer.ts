@@ -7,6 +7,7 @@ import { genericAcceptor, type GenericAcceptor } from './discovery/genericRules.
 import { discoverPluginSkills, type MarketplaceEntry } from './discovery/pluginRules.ts';
 import { basename, joinPath, skillMdPath, TreeIndex } from './discovery/tree.ts';
 import type { PluginRow, SkillRow, Store } from './db/store.ts';
+import { RepoUnreachableError } from './sources/gitTree.ts';
 import { RAW_MAX_BYTES, type GitHub, type RepoTree } from './sources/github.ts';
 import { normalizeSource, resolveRelativeRoot } from './sources/pluginSource.ts';
 import { pool } from './util/limiter.ts';
@@ -318,7 +319,9 @@ export class Indexer {
     const msg = String((err as Error)?.message ?? err);
     const path = msg.match(/^플러그인 경로가 없습니다: (.*)$/);
     if (path) return `마켓플레이스가 가리키는 폴더가 저장소에 없습니다 (${path[1]})`;
-    if (/^tree 422|^tree 409/.test(msg)) return '마켓플레이스가 고정한 커밋이 저장소 기록에서 지워졌습니다';
+    if (err instanceof RepoUnreachableError) return '저장소가 삭제됐거나 비공개입니다';
+    // "not our ref": git's answer for a pinned commit no branch holds any more (the tree API says 422)
+    if (/^tree 422|^tree 409|not our ref/.test(msg)) return '마켓플레이스가 고정한 커밋이 저장소 기록에서 지워졌습니다';
     if (/^tree 404|커밋을 찾을 수 없습니다/.test(msg)) {
       const exists = await this.github.repoExists(repo);
       if (exists === false) return '저장소가 삭제됐거나 비공개입니다';

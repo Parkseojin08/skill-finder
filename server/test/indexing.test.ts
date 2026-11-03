@@ -6,8 +6,10 @@ import { describe, it } from 'node:test';
 import { RISK_RULES_VERSION } from '../src/analyze/risk.ts';
 import { createContext } from '../src/bootstrap.ts';
 import { TreeIndex } from '../src/discovery/tree.ts';
-import { buildSkillRow, recheckRisk } from '../src/indexer.ts';
-import { recheckRiskRules, relevelRisk } from '../src/tasks.ts';
+import { buildSkillRow, PluginUnavailableError, recheckRisk } from '../src/indexer.ts';
+import { getSettings, saveSettings } from '../src/settings.ts';
+import { RepoUnreachableError } from '../src/sources/gitTree.ts';
+import { recheckRiskRules, relevelRisk, startSync } from '../src/tasks.ts';
 
 const md = (name: string, body = 'Body.') => `---\nname: ${name}\ndescription: ${name} does things.\n---\n${body}\n`;
 
@@ -308,5 +310,44 @@ describe('설치될 것 전체 검사 (전체 점검 F1)', () => {
     assert.match(config.items[0].text, /\.\/bin\/start\.sh/);
     assert.match(config.items[1].text, /db-mcp/);
     assert.equal(config.items[2].text, 'bin/start.sh');
+  });
+});
+
+describe('첫 실행 수집 (2026-11-03)', () => {
+  const plugin = (id: string, marketplace: string) =>
+    ({ id, marketplace, name: id.split('@')[0], display_name: null, description: null, category: null, keywords: null, source_json: '"./"', source_kind: 'relative', repo: 'o/r', path: null, ref: null, sha: 'a'.repeat(40), strict: null, entry_json: null }) as const;
+
+  it('git이 로그인을 요구한 저장소와 지워진 고정 커밋은 설치 불가로 기록해 다시 묻지 않는다', async () => {
+    const { ctx } = setup({});
+    ctx.store.upsertMarketplace({ name: 'm', repo: 'o/market', enabled: true, index_mode: 'eager' });
+    ctx.store.upsertPlugin(plugin('gone@m', 'm'));
+    ctx.store.upsertPlugin(plugin('moved@m', 'm'));
+    const failures = [new RepoUnreachableError('저장소를 찾을 수 없습니다: o/r'), new Error(`git fetch failed: fatal: remote error: upload-pack: not our ref ${'a'.repeat(40)}`)];
+    ctx.github.getTree = async () => {
+      throw failures.shift();
+    };
+    await assert.rejects(ctx.indexer.indexPlugin('gone@m'), PluginUnavailableError);
+    await assert.rejects(ctx.indexer.indexPlugin('moved@m'), PluginUnavailableError);
+    assert.equal(ctx.store.getPlugin('gone@m')!.error, '설치 불가: 저장소가 삭제됐거나 비공개입니다');
+    assert.equal(ctx.store.getPlugin('moved@m')!.error, '설치 불가: 마켓플레이스가 고정한 커밋이 저장소 기록에서 지워졌습니다');
+    assert.deepEqual(ctx.store.listPluginsNeedingIndex('m'), []);
+  });
+
+  it('마켓플레이스 목록을 모두 받은 뒤, 읽을 플러그인이 적은 마켓플레이스부터 색인한다', async () => {
+    const { ctx } = setup({});
+    saveSettings(ctx.store, { ...getSettings(ctx.store), autoCollect: false });
+    const sizes: Record<string, number> = { 'anthropics/claude-plugins-official': 3, 'anthropics/skills': 1, 'anthropics/claude-plugins-community': 2 };
+    ctx.github.getRawText = async (repo) =>
+      ({ status: 200, text: JSON.stringify({ name: 'x', owner: { name: 'o' }, plugins: Array.from({ length: sizes[repo] ?? 0 }, (_, i) => ({ name: `p${i}`, source: `./p${i}` })) }) }) as never;
+    const order: string[] = [];
+    ctx.indexer.indexPlugin = async (id) => {
+      order.push(`${id} (plugins: ${ctx.store.countPlugins()})`);
+      ctx.store.markPluginIndexed(id, ctx.store.getPlugin(id)!.sha, null, null);
+      return 0;
+    };
+    const job = startSync(ctx);
+    while (job.status === 'running') await new Promise((r) => setTimeout(r, 10));
+    assert.equal(job.status, 'done');
+    assert.deepEqual(order, ['p0@anthropic-agent-skills (plugins: 6)', 'p0@claude-plugins-official (plugins: 6)', 'p1@claude-plugins-official (plugins: 6)', 'p2@claude-plugins-official (plugins: 6)']);
   });
 });

@@ -53,6 +53,8 @@ function isSafeRepoPath(path: string): boolean {
 
 /** Raw files (SKILL.md included) are read up to this many bytes; the rest is cut off. */
 export const RAW_MAX_BYTES = 512 * 1024;
+/** First wait after a raw download got 429, doubled on each retry. */
+const RAW_THROTTLE_WAIT_MS = 1000;
 
 export class GitHub {
   private readonly store: Store;
@@ -71,6 +73,8 @@ export class GitHub {
   private readonly refCache = new Map<string, { at: number; value: Promise<RemoteRef | null> }>();
   /** raw.githubusercontent.com answers bursts of hundreds of parallel downloads with 429s; keep it civil. */
   private readonly rawSlots = new Semaphore(24);
+  /** raw.githubusercontent.com said 429: no download starts before this time. */
+  private rawPausedUntil = 0;
   private readonly metaInFlight = new Map<string, Promise<RepoRow | null>>();
 
   constructor(store: Store, config: AppConfig) {
@@ -268,8 +272,18 @@ export class GitHub {
     const url = `https://raw.githubusercontent.com/${repo}/${ref}/${path.split('/').map(encodeURIComponent).join('/')}`;
     for (let attempt = 0; ; attempt++) {
       try {
-        const res = await this.rawSlots.run(() => fetchText(url, { maxBytes, timeoutMs: 15_000 }));
-        if ((res.status === 429 || res.status >= 500) && attempt < 2) {
+        const res = await this.rawSlots.run(async () => {
+          const pause = this.rawPausedUntil - Date.now();
+          if (pause > 0) await sleep(pause);
+          return fetchText(url, { maxBytes, timeoutMs: 15_000 });
+        });
+        if (res.status === 429 && attempt < 3) {
+          // Throttled: every download waits (1, 2, 4 s), not only this one. Retrying after 0.4 s still failed
+          // while a repo with hundreds of skills was read (2026-11-03).
+          this.rawPausedUntil = Math.max(this.rawPausedUntil, Date.now() + RAW_THROTTLE_WAIT_MS * 2 ** attempt);
+          continue;
+        }
+        if (res.status >= 500 && attempt < 2) {
           await sleep(400 * (attempt + 1));
           continue;
         }
