@@ -2,6 +2,7 @@ import { config, ensureDataDirs } from './config.ts';
 import { createApp } from './app.ts';
 import { openContext } from './bootstrap.ts';
 import { DataTooNewError } from './db/index.ts';
+import { importSeed, SEED_PATH } from './db/seed.ts';
 import { startUpdateChecks } from './update.ts';
 import { startLogFile } from './util/log.ts';
 import { pruneSearchLog, recheckRiskRules, refreshRepoMeta, relevelRisk, REPO_META_EVERY_MS, startSync } from './tasks.ts';
@@ -26,6 +27,14 @@ const ctx = (() => {
     process.exit(1);
   }
 })();
+// A new install starts from the index shipped with the release instead of an empty one; any problem only costs speed.
+try {
+  const t0 = Date.now();
+  const seeded = importSeed(ctx.store, SEED_PATH);
+  if (seeded) console.log(`[seed] 미리 만든 색인을 넣었습니다: 스킬 ${seeded.skills}개, 플러그인 ${seeded.plugins}개, 저장소 ${seeded.repos}개 (${((Date.now() - t0) / 1000).toFixed(1)}초)`);
+} catch (err) {
+  console.warn('[seed] 미리 만든 색인을 넣지 못해 GitHub에서 처음부터 모읍니다:', String((err as Error).message ?? err).slice(0, 200));
+}
 const app = createApp(ctx);
 
 // Express' listen(port) binds 0.0.0.0; always pass the loopback host explicitly.

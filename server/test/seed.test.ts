@@ -1,0 +1,84 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it } from 'node:test';
+import { gzipSync } from 'node:zlib';
+import { createContext } from '../src/bootstrap.ts';
+import { exportSeed, importSeed, writeSeedFile } from '../src/db/seed.ts';
+import { TreeIndex } from '../src/discovery/tree.ts';
+import { buildSkillRow } from '../src/indexer.ts';
+
+const md = (name: string) => `---\nname: ${name}\ndescription: ${name} extracts tables from pdf files.\n---\nBody.\n`;
+const newCtx = (dbPath = ':memory:') => createContext({ port: 0, dev: false, dataDir: mkdtempSync(join(tmpdir(), 'sf-seed-')), githubToken: null }, dbPath);
+const skill = (repo: string, dir: string, pluginId: string | null) =>
+  buildSkillRow({ repo, sha: 'a'.repeat(40), dirPath: dir, raw: md(dir.split('/').pop()!), tree: new TreeIndex([]), origin: pluginId ? 'plugin' : 'generic', pluginId, extraFlags: [], install: null, lastCommitAt: null });
+const plugin = (id: string, marketplace: string, repo: string) =>
+  ({ id, marketplace, name: id.split('@')[0], display_name: null, description: 'PDF tools', category: null, keywords: null, source_json: '"./"', source_kind: 'url', repo, path: null, ref: null, sha: 'a'.repeat(40), strict: null, entry_json: null }) as const;
+
+/** An index like a developer's: a default marketplace, a marketplace of their own, and skills found by searching. */
+function sourceIndex() {
+  const dir = mkdtempSync(join(tmpdir(), 'sf-seed-src-'));
+  const ctx = newCtx(join(dir, 'index.db'));
+  const s = ctx.store;
+  s.updateMarketplaceSync('claude-plugins-official', { commit_sha: 'c'.repeat(40), plugin_count: 2, etag: 'e' });
+  s.upsertMarketplace({ name: 'mine', repo: 'me/market', enabled: true, index_mode: 'eager' });
+  s.updateMarketplaceSync('mine', { commit_sha: 'd'.repeat(40), plugin_count: 1 });
+  s.upsertPlugin(plugin('pdf@claude-plugins-official', 'claude-plugins-official', 'o/pdf'));
+  s.markPluginIndexed('pdf@claude-plugins-official', 'a'.repeat(40), { hooks: false }, null);
+  s.upsertPlugin(plugin('broken@claude-plugins-official', 'claude-plugins-official', 'o/broken'));
+  s.markPluginIndexed('broken@claude-plugins-official', null, null, 'git fetch failed: C:\\Users\\me\\data\\tmp\\git');
+  s.upsertPlugin(plugin('secret@mine', 'mine', 'me/secret'));
+  s.markPluginIndexed('secret@mine', 'a'.repeat(40), null, null);
+  s.upsertSkill(skill('o/pdf', 'skills/pdf-tables', 'pdf@claude-plugins-official'), 'pdf');
+  s.upsertSkill(skill('me/secret', 'skills/secret', 'secret@mine'), 'secret');
+  s.upsertSkill(skill('searched/repo', 'skills/found', null), '');
+  for (const [full_name, stars] of [['o/pdf', 420], ['me/secret', 1], ['searched/repo', 9]] as const) {
+    s.upsertRepo({ full_name, stars, pushed_at: null, archived: 0, fork: 0, license: null, default_branch: 'main', etag: null, fetched_at: '2026-01-01T00:00:00.000Z' });
+  }
+  s.addFavorite('gh:searched/repo:skills/found', 'found');
+  return { ctx, dir, dbPath: join(dir, 'index.db') };
+}
+
+describe('미리 만든 색인 (2026-11-03)', () => {
+  it('기본 마켓플레이스의 플러그인·스킬·별 수만 내보내고, 직접 추가한 마켓플레이스·검색으로 모은 스킬·로컬 오류 문구는 뺀다', () => {
+    const { ctx } = sourceIndex();
+    const seed = exportSeed(ctx.store.db);
+    assert.deepEqual(seed.marketplaces.map((m) => m.name), ['claude-plugins-official']);
+    assert.deepEqual(seed.plugins.map((p) => p.id), ['broken@claude-plugins-official', 'pdf@claude-plugins-official']);
+    assert.equal(seed.plugins[0].error, null, '경로가 든 오류 문구는 내보내지 않음');
+    assert.deepEqual(seed.skills.map((s) => s.id), ['gh:o/pdf:skills/pdf-tables']);
+    assert.deepEqual(seed.repos.map((r) => r.full_name), ['o/pdf']);
+    assert.ok(!JSON.stringify(seed).includes('found'), '즐겨찾기·검색으로 모은 것은 없음');
+  });
+
+  it('빈 데이터에만 넣고, 넣은 뒤에는 검색되며 동기화가 다시 읽을 플러그인이 없다', () => {
+    const { dbPath, dir } = sourceIndex();
+    const file = join(dir, 'seed.json.gz');
+    assert.deepEqual(writeSeedFile(dbPath, file).skills, 1);
+    const ctx = newCtx();
+    assert.deepEqual(importSeed(ctx.store, file), { plugins: 2, skills: 1, repos: 1 });
+    assert.equal(ctx.store.searchSkillsFts('tables', 5)[0]?.skill.id, 'gh:o/pdf:skills/pdf-tables');
+    assert.equal(ctx.store.searchPluginsFts('pdf', 5)[0]?.plugin.id, 'pdf@claude-plugins-official');
+    assert.equal(ctx.store.getMarketplace('claude-plugins-official')!.commit_sha, 'c'.repeat(40));
+    assert.deepEqual(ctx.store.listPluginsNeedingIndex('claude-plugins-official').map((p) => p.id), ['broken@claude-plugins-official'], '실패했던 것만 다시 읽음');
+    const repo = ctx.store.getRepo('o/pdf')!;
+    assert.equal(repo.stars, 420);
+    assert.equal(repo.fetched_at, '2026-01-01T00:00:00.000Z', '별 수는 받은 시각 그대로(넣은 시각으로 새것처럼 꾸미지 않음)');
+    assert.equal(importSeed(ctx.store, file), null, '이미 색인이 있으면 넣지 않음');
+    assert.equal(importSeed(newCtx().store, join(dir, 'none.json.gz')), null, '파일이 없으면 지금 방식');
+  });
+
+  it('형식이 다르면 실패하고, 저장소가 바뀐 마켓플레이스는 넣지 않고, 옛 위험 규칙 색인은 만들지 않는다', () => {
+    const { ctx: src, dbPath, dir } = sourceIndex();
+    const seed = exportSeed(src.store.db);
+    const write = (s: object) => (writeFileSync(join(dir, 'x.json.gz'), gzipSync(JSON.stringify(s))), join(dir, 'x.json.gz'));
+    assert.throws(() => importSeed(newCtx().store, write({ ...seed, format: 99 })), /형식/);
+    const moved = { ...seed, marketplaces: seed.marketplaces.map((m) => ({ ...m, repo: 'someone/else' })) };
+    const ctx = newCtx();
+    assert.deepEqual(importSeed(ctx.store, write(moved)), { plugins: 0, skills: 0, repos: 1 });
+    assert.equal(ctx.store.countSkills(), 0);
+    src.store.db.exec('UPDATE skills SET risk_rules = 0');
+    assert.throws(() => writeSeedFile(dbPath, join(dir, 'old.json.gz')), /옛 위험 규칙/);
+  });
+});
