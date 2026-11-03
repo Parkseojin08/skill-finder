@@ -24,6 +24,7 @@ describe('즐겨찾기 (계정 없이, 사용자 결정 2026-11-02)', () => {
       assert.equal((await call('POST', '/api/favorites', { id: row.id })).status, 200, '두 번 눌러도 하나');
       assert.equal((await call('POST', '/api/favorites', { id: 'gh:no/such:x' })).status, 404, '색인에 없고 이름도 없음');
       assert.equal((await call('POST', '/api/favorites', {})).status, 400);
+      assert.equal((await call('POST', '/api/favorites', { id: row.id, name: ' ' })).status, 200, '쓸 수 없는 이름은 무시, 색인의 이름으로');
       assert.deepEqual(JSON.parse((await call('GET', '/api/favorites/ids')).body).ids, [row.id]);
       assert.equal(JSON.parse((await call('GET', '/api/favorites')).body).items[0].name, 'pdf');
 

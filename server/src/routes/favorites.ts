@@ -5,8 +5,12 @@ import { freshInstalls, freshness, TRUST_SCORE, trustTier } from '../search/rank
 import { buildResultItem, githubSource, marketplaceSource, storeLookup, type ResultItem } from '../search/result.ts';
 
 const FavoriteBody = z.object({ id: z.string().min(1).max(400) });
-/** `name`: a search result not in the index yet (still being checked) is kept by it until it is. */
-const FavoriteAdd = FavoriteBody.extend({ name: z.string().trim().min(1).max(200).optional() });
+/**
+ * `name`: a search result not in the index yet (still being checked) is kept by it until it is. Unusable (empty,
+ * not text) it is left out rather than refused, so an indexed skill still gets its star.
+ */
+const FavoriteAdd = FavoriteBody.extend({ name: z.unknown().optional() });
+const usableName = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 200) : undefined);
 
 /**
  * This PC's favorite skills (user decision 2026-11-02). No accounts: the app runs for one person on 127.0.0.1, so a
@@ -46,7 +50,7 @@ export function favoritesRouter(ctx: AppContext): Router {
     if (!parsed.success) return void res.status(400).json({ error: '스킬 id가 없습니다' });
     const skill = store.getSkill(parsed.data.id);
     // not indexed: listed by name on the favorites page, as a card once the index has it
-    const name = skill?.name ?? parsed.data.name;
+    const name = skill?.name ?? usableName(parsed.data.name);
     if (!name) return void res.status(404).json({ error: '스킬을 찾을 수 없습니다' });
     store.addFavorite(parsed.data.id, name);
     res.json({ ok: true });

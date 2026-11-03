@@ -1,7 +1,7 @@
 import { StarIcon } from '@phosphor-icons/react';
 import { useEffect, useState } from 'react';
 import { toggleFavorite, useFavorites } from '../favorites.ts';
-import { serverText, t } from '../i18n.ts';
+import { t } from '../i18n.ts';
 
 /** The star on a result card and a skill page: this PC's favorites, no account (user decision 2026-11-02). */
 export function FavoriteButton({ id, name, className = '' }: { id: string; name: string; className?: string }) {
@@ -24,7 +24,8 @@ export function FavoriteButton({ id, name, className = '' }: { id: string; name:
         onClick={(e) => {
           e.stopPropagation();
           setError(null);
-          toggleFavorite(id, name).catch((err: Error) => setError(t('즐겨찾기를 바꾸지 못했습니다: {0}', serverText(err.message))));
+          // the API already put the server's message in the screen's language
+          toggleFavorite(id, name).catch((err: Error) => setError(t('즐겨찾기를 바꾸지 못했습니다: {0}', err.message)));
         }}
       >
         <StarIcon weight={on ? 'fill' : 'regular'} aria-hidden />

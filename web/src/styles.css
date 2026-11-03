@@ -2466,7 +2466,7 @@ kbd {
   .fav-error {
     position: absolute;
     top: 100%;
-    right: 0;
+    left: 0;
     z-index: 3;
     width: max-content;
     max-width: 260px;
@@ -2477,6 +2477,11 @@ kbd {
     color: var(--text);
     font-size: 12px;
     line-height: 1.4;
+  }
+  /* on a card the star is at the right edge: open leftwards */
+  .card .fav-error {
+    left: auto;
+    right: 0;
   }
 }
 

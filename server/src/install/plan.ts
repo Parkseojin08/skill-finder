@@ -136,10 +136,13 @@ export function buildSteps(plan: InstallPlan, scope: InstallScope, projectPath: 
     ];
   }
   if (plan.method === 'skills-cli') {
-    const args = [SKILLS_CLI_PATH, ...skillsCliArgs(plan.source ?? plan.repo!, plan.skillName!, scope)];
+    const source = plan.source ?? plan.repo!;
+    const args = [SKILLS_CLI_PATH, ...skillsCliArgs(source, plan.skillName!, scope)];
     // The app runs its own copy of the CLI, whose path depends on how the app was installed (under npx it was
-    // "../skills/bin/cli.mjs"); the same version through npx reads the same anywhere.
-    return [{ kind: 'skills-add', file: 'node', args, cwd, display: formatCommand('npx', [`skills@${SKILLS_CLI_VERSION}`, ...args.slice(1)]), note: '앱에 들어 있는 같은 버전으로 실행' }];
+    // "../skills/bin/cli.mjs"). Shown as the same version through npx and without -y, since it can be copied into
+    // any terminal and there the CLI should ask before replacing a folder (D#410d); the note says what the app adds.
+    const shown = [`skills@${SKILLS_CLI_VERSION}`, ...skillsCliArgs(source, plan.skillName!, scope, false)];
+    return [{ kind: 'skills-add', file: 'node', args, cwd, display: formatCommand('npx', shown), note: '앱은 내장된 같은 버전에 -y를 붙여 실행' }];
   }
   return [];
 }

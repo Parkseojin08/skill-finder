@@ -33,6 +33,11 @@ export async function toggleFavorite(id: string, name?: string): Promise<void> {
     if (on) await apiSend('POST', '/favorites', { id, name });
     else await apiSend('DELETE', `/favorites?id=${encodeURIComponent(id)}`);
   } catch (e) {
+    // back as it was, also when the server cannot be reached to ask (review 2026-11-03: the star stayed changed)
+    const back = new Set(favorites);
+    if (on) back.delete(id);
+    else back.add(id);
+    set(back);
     await refreshFavorites();
     throw e;
   }

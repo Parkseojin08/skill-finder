@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import type { PluginRow, SkillRow } from '../src/db/store.ts';
+import { SKILLS_CLI_VERSION } from '../src/config.ts';
 import { buildSteps, planInstall } from '../src/install/plan.ts';
 import { lastJsonLine } from '../src/install/run.ts';
 import { isPluginName, isProjectDir, isRepo, isSkillName } from '../src/install/validate.ts';
@@ -69,6 +72,22 @@ describe('§10.1 설치 방식', () => {
     assert.deepEqual(steps[1].args, ['plugin', 'install', 'p@m', '--scope', 'project', '--json']);
     assert.equal(steps[1].cwd, tmpdir());
     assert.ok(!steps.some((s) => s.args.includes('--yes') || s.args.includes('-y')));
+    // the when goes beside the command, not in it as a shell comment
+    assert.equal(steps[0].display, 'claude plugin marketplace add own/market --json');
+    assert.equal(steps[0].note, '마켓플레이스 미등록 시에만');
+    assert.ok(!steps.some((s) => s.display.includes('#')));
+  });
+
+  it('단계 옆 설명은 화면의 영어·일본어 사전에 있다 (serverText가 옮김)', () => {
+    const notes = [
+      ...buildSteps(planInstall(baseSkill, basePlugin, mp), 'user', null),
+      ...buildSteps(planInstall({ ...baseSkill, origin: 'generic', plugin_id: null }, null, null), 'user', null),
+    ].flatMap((s) => (s.note ? [s.note] : []));
+    assert.equal(notes.length, 2);
+    for (const lang of ['en', 'ja']) {
+      const dict = JSON.parse(readFileSync(join(import.meta.dirname, '..', '..', 'web', 'src', 'locales', `${lang}.json`), 'utf8'));
+      for (const note of notes) assert.ok(dict[note], `${lang}: ${note}`);
+    }
   });
 
   it('command 출처는 설치 버튼 비활성', () => {
@@ -105,6 +124,10 @@ describe('§10.1 설치 방식', () => {
     assert.ok(!plan.command.split(' ').includes('-y'), '손으로 실행할 명령에는 -y가 없음(CLI가 직접 물음)');
     const [global] = buildSteps(plan, 'user', null);
     assert.equal(global.args.at(-1), '-g');
+    // the dialog shows (and copies) what runs anywhere: the same version through npx, without -y (D#410d)
+    assert.equal(step.display, `npx skills@${SKILLS_CLI_VERSION} add https://github.com/vercel-labs/agent-skills/tree/${'a'.repeat(40)}/skills/x --skill web-design-guidelines -a claude-code --copy`);
+    assert.equal(global.display, `${step.display} -g`);
+    assert.ok(step.note?.includes('-y'), 'the note says the app adds -y');
   });
 
   it('검사한 커밋으로 고정할 수 없으면 저장소 최신으로 (고정 표시 없음)', () => {
