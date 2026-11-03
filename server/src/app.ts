@@ -11,6 +11,7 @@ import { favoritesRouter } from './routes/favorites.ts';
 import { recommendRouter } from './routes/recommend.ts';
 import { searchRouter } from './routes/search.ts';
 import { skillsRouter } from './routes/skills.ts';
+import { translateFiles, translateRouter } from './routes/translate.ts';
 import type { SearchDeps } from './search/pipeline.ts';
 import { CSP, securityMiddleware } from './security.ts';
 
@@ -31,12 +32,14 @@ export function createApp(ctx: AppContext, opts: { searchDeps?: SearchDeps } = {
   app.use('/api', favoritesRouter(ctx));
   app.use('/api', recommendRouter(ctx));
   app.use('/api', adminRouter(ctx));
+  app.use('/api', translateRouter(ctx));
 
   // any other /api path, in any case (/API/... is not an API route and not a page either)
   app.use((req, res, next) => {
     if (!req.path.toLowerCase().startsWith('/api')) return next();
     res.status(404).json({ error: '없는 API 주소입니다' });
   });
+  app.use(translateFiles(ctx));
 
   if (existsSync(WEB_DIST_DIR)) {
     app.use((_req, res, next) => {

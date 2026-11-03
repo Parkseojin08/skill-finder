@@ -55,6 +55,9 @@ export function securityMiddleware(opts: SecurityOptions): RequestHandler {
   };
 }
 
+// 'wasm-unsafe-eval': the translation engine is WebAssembly (served from here); it allows compiling WASM, not eval.
+// Its worker takes the policy of its own script's response, but the page has it too for browsers that give workers
+// the page's policy.
 export const CSP =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
+  "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
   "connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";

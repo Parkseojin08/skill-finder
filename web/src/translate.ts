@@ -1,8 +1,10 @@
 import { useEffect, useSyncExternalStore } from 'react';
-import { LANG } from './i18n.ts';
+import { apiGet, apiSend } from './api.ts';
+import { LANG, serverText, t } from './i18n.ts';
 
-// English → Korean with the browser's built-in, on-device Translator API (Chrome 138+). Nothing is sent to a server.
-// Where the API is missing or never answers (other browsers, embedded Chromium), descriptions stay in English.
+// English → Korean/Japanese on this PC; descriptions are never sent anywhere. The browser's built-in Translator API
+// (Chrome 138+) when it has one; elsewhere (Firefox, Safari, embedded Chromium) Firefox's own Mozilla models run in
+// a worker by the Bergamot engine, the files fetched once by the app's server (user request 2026-11-03).
 
 type TranslatorLike = { translate(text: string): Promise<string> };
 type CreateOptions = {
@@ -15,8 +17,13 @@ type TranslatorStatic = {
   create(o: CreateOptions): Promise<TranslatorLike>;
 };
 
-export type TranslateState = 'checking' | 'ready' | 'needs-download' | 'downloading' | 'unsupported' | 'error' | 'off';
-export type TranslateStatus = { state: TranslateState; progress: number | null; error: string | null };
+export type TranslateState = 'checking' | 'ready' | 'needs-download' | 'downloading' | 'loading' | 'unsupported' | 'error' | 'off';
+/**
+ * `engine`: the browser's own translator or the Bergamot engine with Mozilla's models. `size`: bytes the Bergamot
+ * download takes. `progress`: 0–1 while downloading.
+ */
+export type TranslateStatus = { state: TranslateState; progress: number | null; error: string | null; engine: 'builtin' | 'bergamot' | null; size: number | null };
+type ModelStatus = { state: 'absent' | 'downloading' | 'ready' | 'error'; received: number; total: number; error: string | null };
 
 /** The screen's language when descriptions need translating into it; English screens show them as they are. */
 export const TRANSLATE_TO: 'ko' | 'ja' | null = LANG === 'en' ? null : LANG;
@@ -24,7 +31,7 @@ const LANGS = { sourceLanguage: 'en', targetLanguage: TRANSLATE_TO ?? 'ko' };
 const STORAGE_KEY = TRANSLATE_TO === 'ja' ? 'sf-ja-translations' : 'sf-ko-translations';
 const MAX_STORED = 3000;
 
-let status: TranslateStatus = { state: 'checking', progress: null, error: null };
+let status: TranslateStatus = { state: 'checking', progress: null, error: null, engine: null, size: null };
 let translator: TranslatorLike | null = null;
 let version = 0;
 const listeners = new Set<() => void>();
@@ -125,23 +132,85 @@ async function create(): Promise<void> {
 async function init() {
   if (!TRANSLATE_TO) return setStatus({ state: 'off' });
   const T = api();
-  if (!T) return setStatus({ state: 'unsupported' });
-  // Embedded Chromium exposes the API but availability() never settles; treat a slow answer as unsupported.
-  const availability = await Promise.race([
-    T.availability(LANGS).catch(() => 'unavailable' as const),
-    new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 3000)),
-  ]);
-  if (availability === 'available') {
-    try {
-      await create();
-    } catch (err) {
-      setStatus({ state: 'error', error: String((err as Error).message ?? err) });
+  if (T) {
+    // Embedded Chromium exposes the API but availability() never settles: a slow answer falls through to Bergamot.
+    const availability = await Promise.race([
+      T.availability(LANGS).catch(() => 'unavailable' as const),
+      new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 3000)),
+    ]);
+    if (availability === 'available') {
+      setStatus({ engine: 'builtin' });
+      try {
+        await create();
+      } catch (err) {
+        setStatus({ state: 'error', error: String((err as Error).message ?? err) });
+      }
+      return;
     }
-  } else if (availability === 'downloadable' || availability === 'downloading') {
-    setStatus({ state: 'needs-download' });
-  } else {
-    setStatus({ state: 'unsupported' });
+    if (availability === 'downloadable' || availability === 'downloading') return setStatus({ state: 'needs-download', engine: 'builtin' });
   }
+  await initBergamot();
+}
+
+/* ── Bergamot: Firefox's models, fetched once by the server, run in a worker ── */
+
+const modelPath = () => `/translate/models/${TRANSLATE_TO}`;
+/** Loading the model into the engine took about 2 s here; a slow PC gets plenty more before it counts as broken. */
+const OPEN_TIMEOUT_MS = 90_000;
+
+async function initBergamot() {
+  if (typeof WebAssembly === 'undefined' || typeof Worker === 'undefined') return setStatus({ state: 'unsupported' });
+  setStatus({ engine: 'bergamot' });
+  try {
+    const m = await apiGet<ModelStatus>(modelPath());
+    setStatus({ size: m.total });
+    if (m.state === 'ready') await createBergamot();
+    else if (m.state === 'downloading') await waitForModel();
+    else setStatus({ state: 'needs-download', error: m.error && serverText(m.error) });
+  } catch (err) {
+    setStatus({ state: 'error', error: String((err as Error).message ?? err) });
+  }
+}
+
+/** Follows the server's download, then starts the engine. */
+async function waitForModel() {
+  for (;;) {
+    const m = await apiGet<ModelStatus>(modelPath());
+    if (m.state === 'ready') return createBergamot();
+    if (m.state !== 'downloading') throw new Error(serverText(m.error) || t('번역 모델 받기가 멈췄습니다'));
+    setStatus({ state: 'downloading', progress: m.total ? m.received / m.total : null });
+    await new Promise((r) => setTimeout(r, 700));
+  }
+}
+
+async function createBergamot() {
+  setStatus({ state: 'loading', progress: null });
+  const { BatchTranslator } = await import('@mkljczk/bergamot-translator');
+  const to = TRANSLATE_TO!;
+  const engine = new BatchTranslator({
+    registryUrl: new URL('/translate-models/index.json', location.origin).href,
+    workerUrl: new URL('/bergamot/translator-worker.js', location.origin).href,
+    downloadTimeout: 0,
+  });
+  const run = async (text: string) => (await engine.translate({ from: 'en', to, text, html: false, qualityScores: false })).target.text;
+  // The engine only logs a worker that failed to start, and its requests then never settle (review 2026-11-03):
+  // its errors and a time limit end the first request, so a broken engine shows as an error, not as "opening" forever.
+  // (Set here, not as options: the options are copied to the worker, and a function cannot be.)
+  let fail: (err: Error) => void = () => {};
+  const failed = new Promise<never>((_, reject) => (fail = reject));
+  engine.onerror = engine.backing.onerror = (err) => fail(err instanceof Error ? err : new Error(String(err)));
+  const timer = setTimeout(() => fail(new Error(t('번역 모델을 열지 못했습니다'))), OPEN_TIMEOUT_MS);
+  try {
+    await Promise.race([run('Hello.'), failed]);
+  } catch (err) {
+    void engine.delete().catch(() => {});
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+  translator = { translate: run };
+  setStatus({ state: 'ready', progress: null, error: null });
+  pump();
 }
 
 let started = false;
@@ -151,12 +220,20 @@ function ensureStarted() {
   void init();
 }
 
-/** Downloads the language model; must run from a click (browsers require user activation for the download). */
+/**
+ * Downloads the language model; must run from a click (browsers require user activation for the built-in one's
+ * download, and the Bergamot model is tens of MB the user agrees to).
+ */
 export async function enableTranslation(): Promise<void> {
-  if (!api() || status.state === 'ready') return;
+  if (status.state === 'ready' || status.state === 'downloading' || status.state === 'loading') return;
   setStatus({ state: 'downloading', progress: 0, error: null });
   try {
-    await create();
+    if (status.engine === 'bergamot') {
+      await apiSend('POST', modelPath());
+      await waitForModel();
+    } else if (api()) {
+      await create();
+    }
   } catch (err) {
     setStatus({ state: 'error', error: String((err as Error).message ?? err) });
   }

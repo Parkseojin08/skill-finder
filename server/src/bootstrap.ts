@@ -8,6 +8,7 @@ import { Indexer } from './indexer.ts';
 import { Jobs } from './jobs.ts';
 import { seedMarketplaces } from './settings.ts';
 import { GitHub } from './sources/github.ts';
+import { TranslateModels } from './translate/models.ts';
 import { APP_VERSION } from './version.ts';
 
 export function createContext(config: AppConfig, dbPath = join(config.dataDir, 'skill-finder.db')): AppContext {
@@ -15,7 +16,7 @@ export function createContext(config: AppConfig, dbPath = join(config.dataDir, '
   seedMarketplaces(store);
   const github = new GitHub(store, config);
   const indexer = new Indexer(store, github);
-  return { config, store, github, indexer, jobs: new Jobs() };
+  return { config, store, github, indexer, jobs: new Jobs(), translateModels: new TranslateModels(join(config.dataDir, 'translate-models')) };
 }
 
 /**
