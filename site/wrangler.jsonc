@@ -1,10 +1,9 @@
-// Skill Finder landing page: static files only (no Worker script), served from ./public.
+// Skill Finder landing page on Cloudflare Pages: static files only, served from ./public at
+// https://seojin-skill-finder.pages.dev (user decision 2026-11-04: the workers.dev address carried the account name).
 // The download zip in ./public/download is produced by `npm run package` at the repo root.
-// Deploy: cd site && npx wrangler@4 deploy
+// Deploy: cd site && npx wrangler@4 pages deploy
 {
-  "name": "skill-finder",
+  "name": "seojin-skill-finder",
   "compatibility_date": "2026-10-01",
-  "assets": {
-    "directory": "./public"
-  }
+  "pages_build_output_dir": "./public"
 }

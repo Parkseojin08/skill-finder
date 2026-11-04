@@ -2,7 +2,7 @@
 // in the fragment (`#v1.` + base64url JSON), which browsers never send to the server; the page checks each field
 // and draws it as text (site/public/s/share.js reads this format).
 
-export const SITE = 'https://skill-finder.a01075011775.workers.dev';
+export const SITE = 'https://seojin-skill-finder.pages.dev';
 
 export type SharedSkill = {
   /** name, description, repo or skills.sh page, install command, risk level, risk flag codes, the app's skill id */

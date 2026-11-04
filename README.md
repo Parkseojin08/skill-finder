@@ -19,7 +19,7 @@ Claude Code 스킬을 한곳에서 찾아 점수·위험 신호와 함께 보고
 
 ### Windows
 
-[소개 페이지](https://skill-finder.a01075011775.workers.dev)에서 zip을 받아 압축을 풀고 `SkillFinder.exe`를 실행합니다. 서버를 켜고 브라우저를 열며, 새 버전이 나오면 서명을 확인한 뒤 업데이트합니다.
+[소개 페이지](https://seojin-skill-finder.pages.dev)에서 zip을 받아 압축을 풀고 `SkillFinder.exe`를 실행합니다. 서버를 켜고 브라우저를 열며, 새 버전이 나오면 서명을 확인한 뒤 업데이트합니다.
 
 ### macOS·Linux·Windows (npx)
 

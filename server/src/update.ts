@@ -4,7 +4,7 @@
 import type { KeyLike } from 'node:crypto';
 import { releaseMessage, signedNotes, verifyText } from './release.ts';
 
-const DEFAULT_BASE = 'https://skill-finder.a01075011775.workers.dev/download/';
+const DEFAULT_BASE = 'https://seojin-skill-finder.pages.dev/download/';
 const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
 
 let latest: { version: string; notes: string[] } | null = null;

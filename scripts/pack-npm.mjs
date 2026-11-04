@@ -54,7 +54,7 @@ writeFileSync(
       engines: rootPkg.engines,
       dependencies: serverPkg.dependencies,
       repository: { type: 'git', url: 'git+https://github.com/Parkseojin08/skill-finder.git' },
-      homepage: 'https://skill-finder.a01075011775.workers.dev',
+      homepage: 'https://seojin-skill-finder.pages.dev',
       bugs: 'https://github.com/Parkseojin08/skill-finder/issues',
       keywords: ['claude-code', 'claude-skills', 'agent-skills', 'skills', 'cli'],
       files: ['bin', 'server', 'web/dist', 'seed-index.json.gz', 'README.md', 'LICENSE', 'CHANGELOG.md', '.env.example'],

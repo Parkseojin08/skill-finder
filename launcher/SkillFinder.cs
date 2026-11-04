@@ -42,7 +42,7 @@ static class SkillFinderLauncher
     const int MinMajor = 22;
     const int MinMinor = 20;
     const string NodeDownload = "https://nodejs.org/ko/download";
-    const string UpdateBase = "https://skill-finder.a01075011775.workers.dev/download/";
+    const string UpdateBase = "https://seojin-skill-finder.pages.dev/download/";
     /// <summary>
     /// The public half of the update key (RSA 3072, scripts/signing-key.mjs): meta.json must be signed with its
     /// private half, which never leaves the publisher's PC (user decision 2026-11-02). Same key as release.ts.

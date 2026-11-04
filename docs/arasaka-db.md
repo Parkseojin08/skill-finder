@@ -62,7 +62,7 @@ flowchart LR
 | Cloudflare 계정 | `54360923120c2364db8c053f0279a8ac` |
 | Workers KV | `skill_finder` (`cdd1dae00c1f4c76a2fb13f49d847a4b`), 게임 API Worker에서 `RANK`로 연결 |
 | 게임 API Worker | `skill-finder-api`, 코드는 `game-api/`. `https://skill-finder-api.a01075011775.workers.dev` (매일 18:00 UTC 정리 작업) |
-| 소개 페이지 Worker | `skill-finder`, 정적 파일만(`site/`). `https://skill-finder.a01075011775.workers.dev` — Windows 다운로드(zip) 포함 |
+| 소개 페이지 Pages | `seojin-skill-finder`, 정적 파일만(`site/`). `https://seojin-skill-finder.pages.dev` — Windows 다운로드(zip) 포함 (2026-11-04까지는 Worker `skill-finder`의 workers.dev 주소였다. 0.3.4 이하 설치가 업데이트를 받도록 옛 Worker도 한동안 같은 파일을 둔다) |
 | `DATABASE_URL` | 로컬: `game-api/.dev.vars`(git 제외). 배포본: Cloudflare 비밀값으로 등록됨(`wrangler secret list`로 이름만 확인 가능) |
 
 - 이름 변경(2026-10-27): 처음 만든 `arasaka-in`(Neon 프로젝트), DB `arasaka`·역할 `arasaka_owner`, Worker `arasaka-in-api`는 비어 있는 상태에서 위 이름으로 바꾸거나 새로 만든 뒤 지웠다.
@@ -70,7 +70,7 @@ flowchart LR
 - 연결 문자열 다시 받기: `npx neonctl connection-string --project-id quiet-surf-05937801 --database-name skill_finder --role-name skill_finder_owner --pooled`
 - 로컬 실행: `cd game-api && npm run dev` → `http://127.0.0.1:8787/v1/health`가 `{"kv":true,"db":true}`면 연결 정상이다.
 - 게임 API 배포: `cd game-api && npm run deploy`. 상태 확인은 `https://skill-finder-api.a01075011775.workers.dev/v1/health`.
-- 소개 페이지 배포: 루트에서 `npm run package`(zip을 `site/public/download/`로 복사) → `cd site && npx wrangler@4 deploy`.
+- 소개 페이지 배포: 루트에서 `npm run package`(zip을 `site/public/download/`로 복사) → `cd site && npx wrangler@4 pages deploy`.
 
 ## 1. 누가 상태를 계산하나: 서버만
 
