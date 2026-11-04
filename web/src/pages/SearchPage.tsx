@@ -1,5 +1,6 @@
 import { Icon } from '../components/Icon.tsx';
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { apiGet, streamNdjson } from '../api.ts';
 import { ActiveFacets, FacetPanel, facetCount, matchFacets, NO_FACETS, type Facets } from '../components/FacetPanel.tsx';
 import { RepoCard } from '../components/RepoCard.tsx';
@@ -105,6 +106,10 @@ type Snapshot = {
   liftedStars: number | null;
 };
 
+/** Searching this word opens the hidden ARASAKA_IN minigame; its code loads only then. */
+const GAME_TRIGGER = 'arasaka_in';
+const ArasakaGame = lazy(() => import('../game/ArasakaGame.tsx'));
+
 export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, from?: OpenedFrom) => void; onQuery: (q: string) => void }) {
   const [query, setQuery] = useState('');
   const [sources, setSources] = useState<SourceKind[]>(['marketplace', 'skillssh', 'github']);
@@ -149,6 +154,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(readPageSize);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [gameOpen, setGameOpen] = useState(false);
   // Sidebar filters narrow the current results in the browser; they stay set across searches.
   const [facets, setFacets] = useState<Facets>(NO_FACETS);
   const installedAs = useInstalled();
@@ -257,6 +263,11 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
     async (q: string, risk = maxRisk, liftStars: number | null = null, useSources = sources) => {
       const text = q.trim();
       if (!text) return;
+      // hidden minigame (docs/arasaka-game.md): this query opens it instead of searching
+      if (text.toLowerCase() === GAME_TRIGGER) {
+        setGameOpen(true);
+        return;
+      }
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
@@ -479,6 +490,18 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
     <div className="page search-page">
       {/* headings for screen readers: the search screen had none to jump to (review 2026-11-02) */}
       <h1 className="sr-only">{t('스킬 검색')}</h1>
+      {gameOpen &&
+        createPortal(
+          <Suspense fallback={null}>
+            <ArasakaGame
+              onClose={() => {
+                setGameOpen(false);
+                inputRef.current?.focus();
+              }}
+            />
+          </Suspense>,
+          document.body,
+        )}
       <div className="search-hero">
         <form
           className="search-box"

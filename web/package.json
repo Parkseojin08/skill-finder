@@ -11,6 +11,8 @@
   "dependencies": {
     "@base-ui/react": "^1.9.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource/rajdhani": "^5.3.0",
+    "@fontsource/titillium-web": "^5.3.0",
     "@mkljczk/bergamot-translator": "0.4.16",
     "@phosphor-icons/react": "^2.1.10",
     "class-variance-authority": "^0.7.1",

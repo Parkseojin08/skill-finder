@@ -1,0 +1,20 @@
+// ARASAKA_IN game API. Design: docs/arasaka-db.md (Workers + Neon + Workers KV).
+// Secrets are not kept here: DATABASE_URL is set with `wrangler secret put` (deployed) and .dev.vars (local).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "skill-finder-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // run near the Neon database (Singapore): each request makes two round trips to it
+  "placement": { "mode": "smart" },
+  "kv_namespaces": [
+    // ranking and season cache (rank:v1:boards, rank:v1:dungeons, season:v1:current); the source of truth is Neon
+    { "binding": "RANK", "id": "cdd1dae00c1f4c76a2fb13f49d847a4b" }
+  ],
+  "triggers": {
+    // daily housekeeping (expired sessions, old action logs)
+    "crons": ["0 18 * * *"]
+  },
+  "observability": { "enabled": true }
+}

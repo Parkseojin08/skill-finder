@@ -2,12 +2,16 @@ import { randomUUID } from 'node:crypto';
 import type { Store } from '../db/store.ts';
 import type { SearchEvent, SearchFilters } from './pipeline.ts';
 
+/** The hidden minigame's query (docs/arasaka-game.md) is never logged: the screen opens it without searching. */
+const NOT_LOGGED = new Set(['arasaka_in']);
+
 /**
  * Watches one search's events and, at `done`, writes one search-log entry (U5-2, user decision): the query, how
  * many results and hidden ones, how long the first and final results took, failed sources and the filters.
  * Only on this PC, never sent anywhere; the result list itself is not kept. Returns events to send (done gets `sid`).
  */
 export function searchLogger(store: Store, query: string, filters: SearchFilters, started: number): (e: SearchEvent) => SearchEvent {
+  if (NOT_LOGGED.has(query.trim().toLowerCase())) return (e) => e;
   const sid = randomUUID();
   let firstMs: number | null = null;
   let results: Extract<SearchEvent, { type: 'results' }> | null = null;

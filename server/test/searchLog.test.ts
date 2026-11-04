@@ -49,6 +49,14 @@ describe('검색 기록 (U5-2)', () => {
     assert.ok(meta.firstMs >= 50);
   });
 
+  it('숨은 게임 검색어는 남기지 않는다', () => {
+    srv.ctx.store.clearSearchLog();
+    const log = searchLogger(srv.ctx.store, ' ARASAKA_IN ', {}, Date.now());
+    const done = log({ type: 'done', cached: true, elapsedMs: 1 });
+    assert.equal(rows('search').length, 0);
+    assert.ok(done.type === 'done' && done.sid === undefined);
+  });
+
   it('열어 본 결과는 sid·순위와 함께 남고, 설정을 끄면 남기지 않는다', async () => {
     srv.ctx.store.clearSearchLog();
     srv.ctx.store.upsertSkill(
