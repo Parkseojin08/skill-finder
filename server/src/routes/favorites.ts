@@ -1,10 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AppContext } from '../context.ts';
-import { freshInstalls, freshness, TRUST_SCORE, trustTier } from '../search/rank.ts';
 import { installSummary } from '../install/summary.ts';
 import { isRepo } from '../install/validate.ts';
-import { buildResultItem, githubSource, marketplaceSource, storeLookup, type RepoResult, type ResultItem } from '../search/result.ts';
+import { indexItem, storeLookup, type RepoResult, type ResultItem } from '../search/result.ts';
 import { sanitizeLine } from '../util/sanitize.ts';
 
 const FavoriteBody = z.object({ id: z.string().min(1).max(400) });
@@ -75,12 +74,7 @@ export function favoritesRouter(ctx: AppContext): Router {
         gone.push({ id: f.skill_id, name: f.skill_name });
         continue;
       }
-      const plugin = lookup.plugin(s.plugin_id);
-      const source = plugin ? marketplaceSource(s, plugin) : githubSource(s);
-      const breakdown = { R: 0, P: 0, F: freshness(s.last_commit_at), T: TRUST_SCORE[trustTier(s, plugin)] };
-      items.push(
-        buildResultItem({ skill: s, lookup, sources: source ? [source] : [], installs: freshInstalls(s), stars: s.repo ? (store.getRepo(s.repo)?.stars ?? null) : null, breakdown, score: 0 }),
-      );
+      items.push(indexItem(store, lookup, s));
     }
     res.json({ items, repos, gone });
   });

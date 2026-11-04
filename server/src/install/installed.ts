@@ -1,9 +1,9 @@
 // What is installed on this PC and how it matches the index (UI debate stage 3: shown only, nothing is run).
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, posix } from 'node:path';
+import { basename, join, posix, resolve, sep } from 'node:path';
 import { extractSkillMeta } from '../analyze/frontmatter.ts';
 import { riskLevel, skillRiskFlags, type RiskFlag, type RiskLevel } from '../analyze/risk.ts';
 import { runClaude } from '../claude/cli.ts';
@@ -105,32 +105,103 @@ export async function scanInstalledSkills(store: Store, scope: 'user' | 'project
   for (const folder of entries.sort()) {
     if (onlyFolder && folder.toLowerCase() !== onlyFolder.toLowerCase()) continue;
     const path = join(dir, folder);
-    let raw: string;
-    try {
-      raw = await readFile(join(path, 'SKILL.md'), 'utf8');
-    } catch {
-      continue; // not a skill folder
-    }
-    const meta = extractSkillMeta(raw, folder);
-    const hash = mdHash(raw);
-    const log = logged.get(meta.name.toLowerCase()) ?? logged.get(folder.toLowerCase());
-    const fromLock = lock.get(folder.toLowerCase());
-    const skillId = (fromLock && store.getSkill(fromLock)?.id) || (log && store.getSkill(log.id) ? log.id : null) || store.findSkillIdByMdSha(hash);
-    const indexed = skillId ? store.getSkill(skillId) : undefined;
-    const flags = skillRiskFlags({ files: await listFiles(path), allowedTools: meta.allowedTools, body: meta.body, hasHooks: meta.hasHooks, raw });
-    out.push({
-      scope,
-      path,
-      folder,
-      name: meta.name,
-      description: truncate(meta.description, 200),
-      removeCommand: `npx skills@${SKILLS_CLI_VERSION} remove ${/\s/.test(folder) ? `"${folder}"` : folder} -a claude-code -y${scope === 'user' ? ' -g' : ''}`,
-      skillId,
-      risk: { level: riskLevel(flags), flags },
-      installedRisk: (log?.id === skillId ? (log?.risk as RiskLevel | null) : null) ?? null,
-      change: !indexed?.skill_md_sha256 ? 'unknown' : indexed.skill_md_sha256 === hash ? 'same' : 'changed',
-      tokens: skillTokens(meta.name, meta.description, raw),
+    const hit = await inspectSkill(store, path, folder, (name) => {
+      const log = logged.get(name.toLowerCase()) ?? logged.get(folder.toLowerCase());
+      const fromLock = lock.get(folder.toLowerCase());
+      const id = (fromLock && store.getSkill(fromLock)?.id) || (log && store.getSkill(log.id) ? log.id : null);
+      return { id: id || null, installedRisk: log && log.id === id ? (log.risk as RiskLevel | null) : null };
     });
+    if (!hit) continue; // not a skill folder
+    out.push({
+      ...hit,
+      scope,
+      removeCommand: `npx skills@${SKILLS_CLI_VERSION} remove ${/\s/.test(folder) ? `"${folder}"` : folder} -a claude-code -y${scope === 'user' ? ' -g' : ''}`,
+    });
+  }
+  return out;
+}
+
+/**
+ * One skill folder as installed: its SKILL.md, the current risk rules run on its files, and its index row — the one
+ * `known` names (lock file, install log, plugin), else an indexed copy of the same SKILL.md. Null without a SKILL.md.
+ */
+async function inspectSkill(
+  store: Store,
+  path: string,
+  folder: string,
+  known: (name: string) => { id: string | null; installedRisk: RiskLevel | null },
+): Promise<Omit<InstalledSkill, 'scope' | 'removeCommand'> | null> {
+  let raw: string;
+  try {
+    raw = await readFile(join(path, 'SKILL.md'), 'utf8');
+  } catch {
+    return null;
+  }
+  const meta = extractSkillMeta(raw, folder);
+  const hash = mdHash(raw);
+  const { id, installedRisk } = known(meta.name);
+  const skillId = id ?? store.findSkillIdByMdSha(hash);
+  const indexed = skillId ? store.getSkill(skillId) : undefined;
+  const flags = skillRiskFlags({ files: await listFiles(path), allowedTools: meta.allowedTools, body: meta.body, hasHooks: meta.hasHooks, raw });
+  return {
+    path,
+    folder,
+    name: meta.name,
+    description: truncate(meta.description, 200),
+    skillId,
+    risk: { level: riskLevel(flags), flags },
+    installedRisk: id && id === skillId ? installedRisk : null,
+    change: !indexed?.skill_md_sha256 ? 'unknown' : indexed.skill_md_sha256 === hash ? 'same' : 'changed',
+    tokens: skillTokens(meta.name, meta.description, raw),
+  };
+}
+
+/** A skill a plugin brought in: removed with the plugin, and loaded only while the plugin is on. */
+export type PluginSkill = Omit<InstalledSkill, 'removeCommand'> & { plugin: { id: string; scope: string; enabled: boolean | null } };
+
+/**
+ * The skills inside an installed plugin, read from its install folder (user report 2026-11-04: the 설치됨 screen
+ * listed a plugin's skills only when the index knew them, folded away, so a project's skills looked incomplete).
+ * Claude Code reads the plugin's `skills/` folder plus the `skills` path(s) of `.claude-plugin/plugin.json`; each
+ * path is a skill folder or a folder of them, and must stay inside the install folder.
+ */
+export async function scanPluginSkills(store: Store, plugin: { id: string; scope: string; installPath: unknown; enabled: boolean | null }): Promise<PluginSkill[]> {
+  if (typeof plugin.installPath !== 'string' || !plugin.installPath) return [];
+  const root = resolve(plugin.installPath);
+  let declared: unknown;
+  try {
+    declared = (JSON.parse(await readFile(join(root, '.claude-plugin', 'plugin.json'), 'utf8')) as { skills?: unknown }).skills;
+  } catch {
+    // no manifest: the default folder only
+  }
+  const paths = ['skills', ...(typeof declared === 'string' ? [declared] : Array.isArray(declared) ? declared.filter((p): p is string => typeof p === 'string') : [])];
+  const candidates: string[] = [];
+  for (const p of paths) {
+    const dir = resolve(root, p);
+    if (existsSync(join(dir, 'SKILL.md'))) {
+      candidates.push(dir);
+      continue;
+    }
+    try {
+      for (const e of await readdir(dir, { withFileTypes: true })) if (e.isDirectory() || e.isSymbolicLink()) candidates.push(join(dir, e.name));
+    } catch {
+      // no such folder
+    }
+  }
+  // a path or a link leading out of the plugin is not read: compared by where it really is
+  const realRoot = await realpath(root).catch(() => null);
+  if (!realRoot) return [];
+  const dirs = new Set<string>();
+  for (const dir of candidates) {
+    const real = await realpath(dir).catch(() => null);
+    if (real && (real === realRoot || real.startsWith(realRoot + sep))) dirs.add(dir);
+  }
+  const indexedByName = new Map(pluginSkills(store, plugin.id).map((s) => [s.name.toLowerCase(), s.id]));
+  const out: PluginSkill[] = [];
+  for (const path of [...dirs].sort()) {
+    const folder = basename(path);
+    const hit = await inspectSkill(store, path, folder, (name) => ({ id: indexedByName.get(name.toLowerCase()) ?? indexedByName.get(folder.toLowerCase()) ?? null, installedRisk: null }));
+    if (hit) out.push({ ...hit, scope: plugin.scope === 'project' || plugin.scope === 'local' ? 'project' : 'user', plugin: { id: plugin.id, scope: plugin.scope, enabled: plugin.enabled } });
   }
   return out;
 }
@@ -216,7 +287,7 @@ export function installedPluginCommits(): Map<string, string> {
 }
 
 /** Windows paths compared as Claude Code writes them: backslashes, no trailing one, any case. */
-const pathKey = (p: string) => p.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+export const pathKey = (p: string) => p.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 export const pluginCommitKey = (id: string, scope: string, projectPath: string | null) => `${id}|${scope}|${scope === 'user' ? '' : pathKey(projectPath ?? '')}`;
 
 /** How a plugin install compares with the index: its skills' top risk and whether it came from the indexed commit. */

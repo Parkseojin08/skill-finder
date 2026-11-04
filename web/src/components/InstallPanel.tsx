@@ -89,6 +89,8 @@ type InstallEvent = { type: 'log'; line: string; stream: string } | { type: 'res
 
 export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skill: SkillDetail; defaultScope: 'user' | 'project'; defaultProjectPath: string }) {
   const plan = skill.install;
+  // a plugin installs all of its skills: the riskiest one counts
+  const topRisk = (plan.method === 'plugin' ? (skill.plugin?.skills ?? []) : []).reduce<RiskLevel>((top, s) => (RISK_RANK[s.riskLevel] > RISK_RANK[top] ? s.riskLevel : top), skill.riskLevel);
   const [scope, setScope] = useState<InstallScope>(plan.scopes.includes(defaultScope) ? defaultScope : (plan.scopes[0] ?? 'user'));
   const [projectPath, setProjectPath] = useState(defaultProjectPath);
   /** `key`: the scope and folder it was asked for; a preview for other input is not used (it may be on its way). */
@@ -240,6 +242,10 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
           </label>
         ))}
       </fieldset>
+      {/* a hint only, the scope is not changed for the user (peer request 2026-11-04) */}
+      {scope === 'user' && plan.scopes.some((s) => s !== 'user') && RISK_RANK[topRisk] >= RISK_RANK.medium && (
+        <p className="muted small">{t('위험 등급이 {0}입니다. 모든 프로젝트 대신 이 프로젝트에만 설치하는 것도 고려하세요.', RISK_LEVEL[topRisk])}</p>
+      )}
       {scope !== 'user' && (
         <div className="field">
           <span>{t('프로젝트 폴더')}</span>

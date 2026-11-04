@@ -31,6 +31,7 @@ export function RepoInstallDialog({
   onOpenChange,
   title,
   note,
+  defaultProjectPath,
 }: {
   repo: RepoResult;
   open: boolean;
@@ -38,12 +39,14 @@ export function RepoInstallDialog({
   /** Another title than "<repo> 설치" (a team preset), and a note above the list (what it could not find). */
   title?: string;
   note?: ReactNode;
+  /** The folder chosen on the screen it was opened from (설치됨): its project scope is the default (peer request 2026-11-04). */
+  defaultProjectPath?: string;
 }) {
   const installable = repo.skills.filter((s) => s.installable);
   const [step, setStep] = useState<Step>('select');
   const [selected, setSelected] = useState<Set<string>>(() => new Set(installable.map((s) => s.id)));
-  const [scope, setScope] = useState<'user' | 'project'>('user');
-  const [projectPath, setProjectPath] = useState('');
+  const [scope, setScope] = useState<'user' | 'project'>(defaultProjectPath ? 'project' : 'user');
+  const [projectPath, setProjectPath] = useState(defaultProjectPath ?? '');
   const [previews, setPreviews] = useState<Record<string, InstallPreview>>({});
   /** The other files each chosen skill installs, checked (project review F1); a failed check shows as an error line. */
   const [scans, setScans] = useState<Record<string, { scan: InstallScan | null; error?: string }>>({});

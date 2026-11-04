@@ -31,6 +31,7 @@ export function SkillPage({
   item,
   query,
   from,
+  projectPath,
   backLabel,
   onBack,
   onOpenSkill,
@@ -39,6 +40,8 @@ export function SkillPage({
   item: ResultItem | null;
   query: string;
   from?: OpenedFrom;
+  /** The folder chosen on the screen it was opened from (README 추천, 설치됨): installing starts at that project. */
+  projectPath?: string | null;
   /** Names the screen it was opened from ("검색 결과로", "설치됨으로"). */
   backLabel: string;
   onBack: () => void;
@@ -351,7 +354,11 @@ export function SkillPage({
       {detail && tab === 'install' && (
         <div className="tab-body" role="tabpanel" id="tab-panel" aria-labelledby="tab-install">
           <section>
-            <InstallPanel skill={detail} defaultScope={settings?.settings.defaultScope ?? 'user'} defaultProjectPath={settings?.settings.defaultProjectPath ?? ''} />
+            <InstallPanel
+              skill={detail}
+              defaultScope={projectPath ? 'project' : (settings?.settings.defaultScope ?? 'user')}
+              defaultProjectPath={projectPath || (settings?.settings.defaultProjectPath ?? '')}
+            />
           </section>
         </div>
       )}

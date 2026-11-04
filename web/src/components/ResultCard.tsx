@@ -9,9 +9,13 @@ import { FavoriteButton } from './FavoriteButton.tsx';
 import { t } from '../i18n.ts';
 
 
-/** The skill page's address; `from` (where in a search it was) rides along so a new tab still logs the view. */
-export function skillHref(id: string, from?: OpenedFrom): string {
+/**
+ * The skill page's address; `from` (where in a search it was) rides along so a new tab still logs the view, and
+ * `project` (the folder chosen on README 추천 or 설치됨) so its install panel starts at that project.
+ */
+export function skillHref(id: string, from?: OpenedFrom, project?: string | null): string {
   const q = new URLSearchParams({ id });
+  if (project) q.set('project', project);
   if (from?.sid) {
     q.set('sid', from.sid);
     if (from.pos) q.set('pos', String(from.pos));

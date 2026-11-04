@@ -3,7 +3,7 @@ import type { MarketplaceRow, PluginRow, SkillRow, Store } from '../db/store.ts'
 import { planInstall, type InstallMethod } from '../install/plan.ts';
 import { truncate } from '../util/sanitize.ts';
 import { categorize, type Category } from './category.ts';
-import { trustTier, type Breakdown, type TrustTier } from './rank.ts';
+import { freshInstalls, freshness, TRUST_SCORE, trustTier, type Breakdown, type TrustTier } from './rank.ts';
 
 export type SourceKind = 'marketplace' | 'skillssh' | 'github';
 export type SourceRef = { kind: SourceKind; label: string; url: string };
@@ -129,6 +129,15 @@ export function storeLookup(store: Store): Lookup {
       return list(id).reduce<RiskLevel>((top, s) => (RISK_ORDER[s.risk_level as RiskLevel] > RISK_ORDER[top] ? (s.risk_level as RiskLevel) : top), 'low');
     },
   };
+}
+
+/** An indexed skill as a card outside a search (favorites, installed): no relevance or popularity score. */
+export function indexItem(store: Store, lookup: Lookup, skill: SkillRow): ResultItem {
+  const plugin = lookup.plugin(skill.plugin_id);
+  const source = plugin ? marketplaceSource(skill, plugin) : githubSource(skill);
+  const breakdown = { R: 0, P: 0, F: freshness(skill.last_commit_at), T: TRUST_SCORE[trustTier(skill, plugin)] };
+  const stars = skill.repo ? (store.getRepo(skill.repo)?.stars ?? null) : null;
+  return buildResultItem({ skill, lookup, sources: source ? [source] : [], installs: freshInstalls(skill), stars, breakdown, score: 0 });
 }
 
 export function buildResultItem(a: {

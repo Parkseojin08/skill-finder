@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { apiGet, apiSend } from './api.ts';
 import { LANG, serverText, t } from './i18n.ts';
+import { worthTranslating } from './lib/textLang.ts';
 
 // English → Korean/Japanese on this PC; descriptions are never sent anywhere. The browser's built-in Translator API
 // (Chrome 138+) when it has one; elsewhere (Firefox, Safari, embedded Chromium) Firefox's own Mozilla models run in
@@ -275,7 +276,9 @@ export function useTranslateStatus(): TranslateStatus {
  */
 export function useKorean(text: string | null | undefined, priority = 0): { ko: string | null; waiting: boolean } {
   useSyncExternalStore(subscribe, () => version);
-  const t = text?.trim() ?? '';
+  // a text already in another language, or symbols, stays as it is (a stored garbage translation is not looked up)
+  const trimmed = text?.trim() ?? '';
+  const t = worthTranslating(trimmed) ? trimmed : '';
   useEffect(() => {
     if (!TRANSLATE_TO || !t || translations.has(t) || inFlight.has(t)) return;
     pending.set(t, priority);

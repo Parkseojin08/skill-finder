@@ -6,7 +6,8 @@ import { z } from 'zod';
 import type { AppContext } from '../context.ts';
 import { buildSteps, planInstall } from '../install/plan.ts';
 import { executeInstall } from '../install/run.ts';
-import { existingSkillFolder, forgetPlugins, installedPluginCommits, listInstalledPlugins, pluginCommitKey, pluginIndexInfo, pluginSkills, scanInstalledSkills } from '../install/installed.ts';
+import { existingSkillFolder, forgetPlugins, installedPluginCommits, listInstalledPlugins, pathKey, pluginCommitKey, pluginIndexInfo, pluginSkills, scanInstalledSkills, scanPluginSkills, type InstalledPlugin } from '../install/installed.ts';
+import { indexItem, storeLookup, type ResultItem } from '../search/result.ts';
 import { uninstallPlugin, uninstallSkill } from '../install/uninstall.ts';
 import { isProjectDir } from '../install/validate.ts';
 import { getSettings } from '../settings.ts';
@@ -245,7 +246,8 @@ export function installRouter(ctx: AppContext): Router {
     }
     const listed = await listInstalledPlugins(projectPath ?? homedir(), true);
     const commits = installedPluginCommits();
-    const plugins = listed.plugins.map((o) => {
+    // with a folder, another project's project and local plugins are not this one's (user report 2026-11-04)
+    const plugins = listed.plugins.filter((o) => !projectPath || (o.scope !== 'project' && o.scope !== 'local') || pathKey(o.projectPath ?? '') === pathKey(projectPath)).map((o) => {
       const { scope, id: pid } = o;
       const ownProject = o.projectPath;
       // `claude plugin list` reports enabled for the folder it runs in; read the settings file that owns this install instead.
@@ -267,20 +269,43 @@ export function installRouter(ctx: AppContext): Router {
       ...(await scanInstalledSkills(store, 'user', null)),
       ...(projectPath ? await scanInstalledSkills(store, 'project', projectPath) : []),
     ];
-    res.json({ plugins, pluginError: listed.error, skills, projects: store.listInstalledProjects() });
+    // The skills of the plugins that apply here: everyone's (user, synced) and this folder's. Without a folder the
+    // project plugins listed above belong to other folders. One row per folder: a plugin installed for the user and
+    // for a project shares its install folder (code review 2026-11-04).
+    const applying = plugins.filter((p) => (p.scope !== 'project' && p.scope !== 'local') || projectPath);
+    const seen = new Set<string>();
+    const pluginSkillRows = (await Promise.all(applying.map((p) => scanPluginSkills(store, { ...p, enabled: typeof p.enabled === 'boolean' ? p.enabled : null }))))
+      .flat()
+      .filter((s) => !seen.has(s.path) && seen.add(s.path));
+    // the index's card for each indexed one: provider, category and install method for the side filters
+    const lookup = storeLookup(store);
+    const items: Record<string, ResultItem> = {};
+    for (const s of [...skills, ...pluginSkillRows]) {
+      const row = s.skillId ? store.getSkill(s.skillId) : undefined;
+      if (row && !items[row.id]) items[row.id] = indexItem(store, lookup, row);
+    }
+    res.json({ plugins, pluginError: listed.error, skills, pluginSkills: pluginSkillRows, items, projects: store.listInstalledProjects() });
   });
 
   // What is installed, by index id, for the "설치됨" badges on results (UI debate 3-1). Project skills are those of
-  // the default project folder in the settings. Unknown ones are simply absent: no badge, never "not installed".
-  r.get('/installed/ids', async (_req, res) => {
-    const project = getSettings(store).defaultProjectPath;
+  // `projectPath` (the folder README 추천 analyzed, user request 2026-11-04), else of the default project folder in
+  // the settings; with `projectPath`, project and local plugins of other folders are left out. Unknown ones are
+  // simply absent: no badge, never "not installed".
+  r.get('/installed/ids', async (req, res) => {
+    const asked = typeof req.query.projectPath === 'string' && req.query.projectPath.trim() ? req.query.projectPath.trim() : null;
+    if (asked && !isProjectDir(asked)) {
+      res.status(400).json({ error: '프로젝트 경로는 존재하는 디렉터리의 절대경로여야 합니다' });
+      return;
+    }
+    const project = asked ?? getSettings(store).defaultProjectPath;
     const listed = await listInstalledPlugins();
     const skills = [
       ...(await scanInstalledSkills(store, 'user', null)),
       ...(isProjectDir(project) ? await scanInstalledSkills(store, 'project', project) : []),
     ];
+    const inFolder = (p: InstalledPlugin) => !asked || (p.scope !== 'project' && p.scope !== 'local') || pathKey(p.projectPath ?? '') === pathKey(asked);
     res.json({
-      plugins: listed.plugins.map((p) => ({ id: p.id, scope: p.scope })),
+      plugins: listed.plugins.filter(inFolder).map((p) => ({ id: p.id, scope: p.scope })),
       skills: skills.filter((s) => s.skillId).map((s) => ({ id: s.skillId, scope: s.scope })),
     });
   });

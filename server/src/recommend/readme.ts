@@ -167,8 +167,21 @@ function inlineText(s: string): string {
     .trim();
 }
 
+/** Markdown and HTML links with their text: what is left of a row of links ("Docs · Discord · Blog") is its separators. */
+const LINKS = /\[[^[\]]*\]\((?:[^()]|\([^()]*\))*\)|\[[^[\]]*\]\[[^[\]]*\]|<a\b[^<>]*>[^<]*<\/a>/gi;
+
 /**
- * Title (first H1, else the folder name), intro (first paragraph of 20+ chars), features (first list under a
+ * A paragraph that reads as a sentence, for the summary's intro: mostly letters (not a row of symbols) and 20+
+ * characters without its links' text (not a navigation row). Others still count as body text.
+ */
+function isProse(raw: string, text: string): boolean {
+  const letters = text.match(/\p{L}/gu)?.length ?? 0;
+  if (letters < text.replace(/\s/g, '').length * 0.6) return false;
+  return inlineText(raw.replace(LINKS, ' ')).length >= CONFIG.minParagraphChars;
+}
+
+/**
+ * Title (first H1, else the folder name), intro (first paragraph of 20+ chars that reads as prose), features (first list under a
  * "feature/기능/특징" heading, up to 5), other headings, body text and code-block languages. Code itself is
  * dropped: README code and badges otherwise dominate any word statistics.
  */
@@ -183,7 +196,7 @@ export function extractReadme(md: string, fallbackTitle: string): ReadmeInfo {
   const addText = (raw: string, html = false) => {
     const text = html ? inlineText(raw.replace(TAG, ' ')) : inlineText(raw);
     if (text.length < CONFIG.minParagraphChars) return; // badge rows and short lines
-    if (!out.intro) out.intro = text;
+    if (!out.intro && isProse(raw, text)) out.intro = text;
     else out.body.push(text);
   };
   const flushPara = () => {

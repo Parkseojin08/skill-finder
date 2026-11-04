@@ -260,6 +260,10 @@ export type InstalledResponse = {
     change: InstallChange;
     tokens: { perTurn: number; onUse: number | null };
   }>;
+  /** Skills inside the listed plugins, read from their install folders; removed with the plugin. */
+  pluginSkills: Array<Omit<InstalledResponse['skills'][number], 'removeCommand'> & { plugin: { id: string; scope: string; enabled: boolean | null } }>;
+  /** The index's card of each indexed skill above, by id (provider, category, install method). */
+  items: Record<string, ResultItem>;
 };
 
 /** What is installed, by index id (`/installed/ids`), for the "설치됨" badges. */

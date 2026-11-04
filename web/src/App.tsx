@@ -6,12 +6,17 @@ import { RecommendPage } from './pages/RecommendPage.tsx';
 import { SearchPage, searchUrl } from './pages/SearchPage.tsx';
 import { SettingsPage } from './pages/SettingsPage.tsx';
 import { SkillPage } from './pages/SkillPage.tsx';
+import { skillHref } from './components/ResultCard.tsx';
 import { apiGet } from './api.ts';
 import type { Health, OpenedFrom, ResultItem } from './types.ts';
 import { t } from './i18n.ts';
 
 type Path = '/' | '/recommend' | '/skill' | '/installed' | '/marketplaces' | '/settings' | '/favorites';
-type Route = { path: Path; skillId: string | null };
+/**
+ * `project`: the folder chosen on the screen a skill page was opened from (README 추천, 설치됨), so its install panel
+ * starts at that project (peer request 2026-11-04); it rides in the address (`&project=`) for new tabs and reloads.
+ */
+type Route = { path: Path; skillId: string | null; project: string | null };
 
 /** `short`: the label on a phone-width window, where the five did not fit (review 2026-11-02). */
 const NAV: Array<{ path: Path; label: string; short?: string }> = [
@@ -27,8 +32,10 @@ const PATHS: Path[] = ['/', '/recommend', '/skill', '/installed', '/marketplaces
 function readRoute(): Route {
   const p = window.location.pathname as Path;
   const path = PATHS.includes(p) ? p : '/';
-  const skillId = path === '/skill' ? new URLSearchParams(window.location.search).get('id') : null;
-  return path === '/skill' && !skillId ? { path: '/', skillId: null } : { path, skillId };
+  const q = new URLSearchParams(window.location.search);
+  const skillId = path === '/skill' ? q.get('id') : null;
+  const project = path === '/skill' ? q.get('project') || null : null;
+  return path === '/skill' && !skillId ? { path: '/', skillId: null, project: null } : { path, skillId, project };
 }
 
 /** Where in a search a skill page opened in a new tab came from (ResultCard skillHref puts it in the link). */
@@ -65,10 +72,10 @@ export function App() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
-  const go = useCallback((path: Path, skillId: string | null = null) => {
-    const url = skillId ? `${path}?id=${encodeURIComponent(skillId)}` : path === '/' ? searchUrl() : path;
+  const go = useCallback((path: Path, skillId: string | null = null, project?: string | null) => {
+    const url = skillId ? skillHref(skillId, undefined, project) : path === '/' ? searchUrl() : path;
     window.history.pushState(null, '', url);
-    setRoute({ path, skillId });
+    setRoute({ path, skillId, project: (skillId && project) || null });
     window.scrollTo(0, 0);
   }, []);
 
@@ -104,13 +111,13 @@ export function App() {
   // and taken out of the address, so a reload or a copied link does not log the view again.
   const [openedFrom, setOpenedFrom] = useState<Map<string, OpenedFrom>>(() => {
     const from = fromQuery();
-    const { skillId } = readRoute();
+    const { skillId, project } = readRoute();
     if (!from || !skillId) return new Map();
-    window.history.replaceState(null, '', `/skill?id=${encodeURIComponent(skillId)}`);
+    window.history.replaceState(null, '', skillHref(skillId, undefined, project));
     return new Map([[skillId, from]]);
   });
   const openSkill = useCallback(
-    (item: ResultItem, from?: OpenedFrom) => {
+    (item: ResultItem, from?: OpenedFrom, project?: string) => {
       lastOpened.current = item.id;
       setOpened((m) => new Map(m).set(item.id, item));
       setOpenedFrom((m) => {
@@ -119,7 +126,7 @@ export function App() {
         else next.delete(item.id);
         return next;
       });
-      go('/skill', item.id);
+      go('/skill', item.id, project);
     },
     [go],
   );
@@ -210,12 +217,13 @@ export function App() {
             item={opened.get(route.skillId) ?? null}
             query={lastQuery}
             from={openedFrom.get(route.skillId)}
+            projectPath={route.project}
             backLabel={BACK_LABEL[listPath] ?? t('뒤로')}
-            onOpenSkill={(sid) => go('/skill', sid)}
+            onOpenSkill={(sid) => go('/skill', sid, route.project)}
             onBack={() => (window.history.length > 1 ? window.history.back() : go(listPath))}
           />
         )}
-        {route.path === '/installed' && <InstalledPage onOpenSkill={(id) => go('/skill', id)} />}
+        {route.path === '/installed' && <InstalledPage onOpenSkill={(id, project) => go('/skill', id, project)} />}
         {route.path === '/marketplaces' && <MarketplacesPage />}
         {route.path === '/settings' && <SettingsPage />}
         {route.path === '/favorites' && <FavoritesPage onOpen={openSkill} onOpenId={(id) => go('/skill', id)} />}

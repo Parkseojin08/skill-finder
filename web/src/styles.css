@@ -783,10 +783,15 @@ button.status-chip.action:hover:not(:disabled) {
   font-family: var(--font-mono);
 }
 
-/* README recommendation */
-.recommend-page {
-  max-width: 900px;
+/* 설치됨: what the index knows of an installed skill, under its path */
+.installed-index {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
 }
+
+/* README recommendation: the page's full width since the results have the side filters (user request 2026-11-04) */
 .summary-title {
   margin: 0 0 6px;
   font-size: 1.15rem;

@@ -78,6 +78,7 @@ export function TeamPreset({ data, projectPath, onInstalled }: { data: Installed
         <RepoInstallDialog
           repo={{ repo: preset.name, url: '', description: null, stars: null, topics: [], skills: preset.resolved.skills }}
           open
+          defaultProjectPath={projectPath.trim() || undefined}
           title={t('프리셋 "{0}" 설치', preset.name)}
           note={
             preset.resolved.missing.length > 0 && (

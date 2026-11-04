@@ -92,6 +92,23 @@ describe('README 기반 스킬 추천', () => {
     assert.equal(info.intro, 'A paragraph inside an HTML block that is long enough.');
   });
 
+  it('링크만 늘어선 줄·기호 줄은 소개가 되지 않고 본문으로 간다', () => {
+    const md = [
+      '# deckmaker',
+      '',
+      '[Docs](https://a.dev) · [Discord](https://b.dev) · [Twitter](https://c.dev) · [Blog](https://d.dev)',
+      '',
+      '<p><a href="https://a.dev">Documentation</a> | <a href="https://b.dev">Examples</a></p>',
+      '',
+      '=== *** === *** === *** === ***',
+      '',
+      'A small tool that turns Markdown into slides.',
+    ].join('\n');
+    const info = extractReadme(md, 'x');
+    assert.equal(info.intro, 'A small tool that turns Markdown into slides.');
+    assert.ok(info.body.includes('Docs · Discord · Twitter · Blog'));
+  });
+
   it('주소·링크 정의·HTML 주석·셸 코드 언어는 단어가 되지 않는다', () => {
     const md = [
       '<!--',

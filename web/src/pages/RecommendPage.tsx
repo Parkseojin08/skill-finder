@@ -7,7 +7,10 @@ import { useInstalled } from '../installed.ts';
 import { Translated } from '../components/Translated.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { readPageSize, savePageSize } from '../lib/prefs.ts';
+import { ActiveFacets, FacetPanel, matchFacets, NO_FACETS, type Facets } from '../components/FacetPanel.tsx';
 import type { RecommendResult, ResultItem, SettingsResponse } from '../types.ts';
+
+type SkillMatch = RecommendResult['skills'][number];
 import { t } from '../i18n.ts';
 import { tj } from '../i18nNodes.tsx';
 
@@ -25,9 +28,15 @@ function readFrom(result: RecommendResult): string {
   return /^readme/i.test(files[0]) ? t('README 요약') : t('{0} 요약 (README 없음)', files.join(' + '));
 }
 
-export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }) {
-  const installedAs = useInstalled();
+/** `onOpen`'s `project`: the analyzed folder, where installing from the skill page starts (peer request 2026-11-04). */
+export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem, from: undefined, project: string) => void }) {
   const [projectPath, setProjectPath] = useState('');
+  /** The folder of the result on screen: its project skills count as installed (user request 2026-11-04). */
+  const [analyzedPath, setAnalyzedPath] = useState('');
+  const installedAs = useInstalled(analyzedPath);
+  /** Installed skills are marked, and hidden at a click like the high-risk ones (user request 2026-11-04). */
+  const [hideInstalled, setHideInstalled] = useState(false);
+  const [facets, setFacets] = useState<Facets>(NO_FACETS);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<RecommendResult | null>(null);
   const [error, setError] = useState<{ message: string; hint?: string; status?: number } | null>(null);
@@ -60,6 +69,7 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
       const body = { projectPath: path.trim(), exclude: tuning ? [...tuning.off] : undefined, extra: tuning?.added };
       const r = await apiSend<RecommendResult>('POST', '/readme-skills', body);
       setResult(r);
+      setAnalyzedPath(path.trim());
       setPage(1);
       setShowRisky(false);
       if (!tuning) {
@@ -97,9 +107,18 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
     void analyze(projectPath, { off, added: nextAdded });
   };
 
+  // narrowed in the search's order: risk, then the side filters (counted on what the risk limit leaves), then installed
   const all = result?.skills ?? [];
-  const hiddenRisky = showRisky ? 0 : all.filter((m) => m.item.riskLevel === 'high').length;
-  const skills = showRisky ? all : all.filter((m) => m.item.riskLevel !== 'high');
+  const riskOk = (m: SkillMatch) => showRisky || m.item.riskLevel !== 'high';
+  const faceted = all.filter((m) => matchFacets(m.item, facets));
+  const hiddenRisky = faceted.filter((m) => !riskOk(m)).length;
+  const visible = faceted.filter(riskOk);
+  const installedCount = visible.filter((m) => installedAs(m.item)).length;
+  const skills = hideInstalled ? visible.filter((m) => !installedAs(m.item)) : visible;
+  const changeFacets = (f: Facets) => {
+    setFacets(f);
+    setPage(1);
+  };
   const pageCount = Math.max(1, Math.ceil(skills.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const pageItems = skills.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -208,92 +227,126 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem) => void }
             )}
           </section>
 
-          {skills.length === 0 ? (
-            <p className="empty">
-              {hiddenRisky > 0 ? (
-                <>
-                  {t('위험 높음으로 숨긴 {0}개만 있습니다.', hiddenRisky)}{' '}
-                  <button type="button" className="linkish" onClick={() => setShowRisky(true)}>
-                    {t('보기')}
-                  </button>
-                </>
-              ) : (
-                t('비슷한 스킬을 찾지 못했습니다. README의 단어와 겹치는 스킬이 색인에 없습니다.')
-              )}
-            </p>
+          {all.length === 0 ? (
+            <p className="empty">{t('비슷한 스킬을 찾지 못했습니다. README의 단어와 겹치는 스킬이 색인에 없습니다.')}</p>
           ) : (
-            <>
-              <div className="results-toolbar" ref={listRef}>
-                <div className="toolbar-left">
-                  <span>
-                    {tj('비슷한 스킬 {0}개 {1}', <b>{skills.length}</b>, <span className="muted small">{t('· 다운로드 → 스타 순')}</span>)}
-                  </span>
-                  {hiddenRisky > 0 && (
-                    <button
-                      type="button"
-                      className="status-chip action"
-                      title={t('외부 스크립트 실행·비밀값 접근처럼 위험이 큰 스킬입니다. 상세 화면에서 이유를 확인한 뒤 설치하세요.')}
-                      onClick={() => {
-                        setShowRisky(true);
-                        setPage(1);
-                      }}
-                    >
-                      {t('위험 높음 {0}개 숨김 · 보기', hiddenRisky)}
-                    </button>
-                  )}
-                </div>
-                <div className="toolbar-right">
-                  <TranslationNotice compact />
-                  <select
-                    value={pageSize}
-                    onChange={(e) => {
-                      setPageSize(Number(e.target.value));
-                      setPage(1);
-                      savePageSize(Number(e.target.value));
-                    }}
-                    aria-label={t('페이지당 개수')}
-                  >
-                    {[5, 10, 20].map((n) => (
-                      <option key={n} value={n}>
-                        {t('{0}개씩', n)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div className="results">
-                {pageItems.map((m, i) => (
-                  <div key={m.item.id}>
-                    <ResultCard item={m.item} position={i} href={skillHref(m.item.id)} installed={installedAs(m.item)} onSelect={() => onOpen(m.item)} />
-                    <p className="muted small matched-terms">{t('겹친 단어: {0}', m.matchedTerms.join(', '))}</p>
+            <div className="results-layout">
+              <FacetPanel items={all.filter(riskOk).map((m) => m.item)} value={facets} onChange={changeFacets} />
+              <div className="results-main">
+                <div className="results-toolbar" ref={listRef}>
+                  <div className="toolbar-left">
+                    <span>
+                      {tj('비슷한 스킬 {0}개 {1}', <b>{skills.length}</b>, <span className="muted small">{t('· 다운로드 → 스타 순')}</span>)}
+                    </span>
+                    {hiddenRisky > 0 && (
+                      <button
+                        type="button"
+                        className="status-chip action"
+                        title={t('외부 스크립트 실행·비밀값 접근처럼 위험이 큰 스킬입니다. 상세 화면에서 이유를 확인한 뒤 설치하세요.')}
+                        onClick={() => {
+                          setShowRisky(true);
+                          setPage(1);
+                        }}
+                      >
+                        {t('위험 높음 {0}개 숨김 · 보기', hiddenRisky)}
+                      </button>
+                    )}
+                    {installedCount > 0 && (
+                      <button
+                        type="button"
+                        className="status-chip action"
+                        aria-pressed={hideInstalled}
+                        title={t('이 프로젝트 폴더나 개인 범위(~/.claude)에 이미 설치된 스킬입니다.')}
+                        onClick={() => {
+                          setHideInstalled((h) => !h);
+                          setPage(1);
+                        }}
+                      >
+                        {hideInstalled ? t('설치됨 {0}개 숨김 · 보기', installedCount) : t('설치됨 {0}개 · 숨기기', installedCount)}
+                      </button>
+                    )}
+                    <ActiveFacets value={facets} onChange={changeFacets} />
                   </div>
-                ))}
-              </div>
-              {pageCount > 1 && (
-                <nav className="pager" aria-label={t('추천 결과 페이지')}>
-                  <button type="button" className="ghost" onClick={() => goPage(currentPage - 1)} disabled={currentPage === 1} aria-label={t('이전 페이지')}>
-                    <Icon name="back" size={15} />
-                  </button>
-                  {Array.from({ length: pageCount }, (_, i) => i + 1).map((p) => (
-                    <button
-                      key={p}
-                      type="button"
-                      className={p === currentPage ? 'page-num active' : 'page-num'}
-                      aria-current={p === currentPage ? 'page' : undefined}
-                      onClick={() => goPage(p)}
+                  <div className="toolbar-right">
+                    <TranslationNotice compact />
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setPage(1);
+                        savePageSize(Number(e.target.value));
+                      }}
+                      aria-label={t('페이지당 개수')}
                     >
-                      {p}
-                    </button>
+                      {[5, 10, 20].map((n) => (
+                        <option key={n} value={n}>
+                          {t('{0}개씩', n)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                {skills.length === 0 && (
+                  <p className="empty">
+                    {faceted.length === 0 ? (
+                      <>
+                        {t('필터에 맞는 스킬이 없습니다.')}{' '}
+                        <button type="button" className="linkish" onClick={() => changeFacets(NO_FACETS)}>
+                          {t('필터 초기화')}
+                        </button>
+                      </>
+                    ) : hiddenRisky > 0 && !hideInstalled ? (
+                      <>
+                        {t('위험 높음으로 숨긴 {0}개만 있습니다.', hiddenRisky)}{' '}
+                        <button type="button" className="linkish" onClick={() => setShowRisky(true)}>
+                          {t('보기')}
+                        </button>
+                      </>
+                    ) : (
+                      t('숨긴 스킬만 있습니다. 위의 칩을 눌러 보이게 하세요.')
+                    )}
+                  </p>
+                )}
+                <div className="results">
+                  {pageItems.map((m, i) => (
+                    <div key={m.item.id}>
+                      <ResultCard
+                        item={m.item}
+                        position={i}
+                        href={skillHref(m.item.id, undefined, analyzedPath)}
+                        installed={installedAs(m.item)}
+                        onSelect={() => onOpen(m.item, undefined, analyzedPath)}
+                      />
+                      <p className="muted small matched-terms">{t('겹친 단어: {0}', m.matchedTerms.join(', '))}</p>
+                    </div>
                   ))}
-                  <button type="button" className="ghost" onClick={() => goPage(currentPage + 1)} disabled={currentPage === pageCount} aria-label={t('다음 페이지')}>
-                    <Icon name="back" size={15} className="flip" />
-                  </button>
-                  <span className="muted small pager-info">
-                    {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, skills.length)} / {t('{0}개', skills.length)}
-                  </span>
-                </nav>
-              )}
-            </>
+                </div>
+                {pageCount > 1 && (
+                  <nav className="pager" aria-label={t('추천 결과 페이지')}>
+                    <button type="button" className="ghost" onClick={() => goPage(currentPage - 1)} disabled={currentPage === 1} aria-label={t('이전 페이지')}>
+                      <Icon name="back" size={15} />
+                    </button>
+                    {Array.from({ length: pageCount }, (_, i) => i + 1).map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        className={p === currentPage ? 'page-num active' : 'page-num'}
+                        aria-current={p === currentPage ? 'page' : undefined}
+                        onClick={() => goPage(p)}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                    <button type="button" className="ghost" onClick={() => goPage(currentPage + 1)} disabled={currentPage === pageCount} aria-label={t('다음 페이지')}>
+                      <Icon name="back" size={15} className="flip" />
+                    </button>
+                    <span className="muted small pager-info">
+                      {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, skills.length)} / {t('{0}개', skills.length)}
+                    </span>
+                  </nav>
+                )}
+              </div>
+            </div>
           )}
         </>
       )}
