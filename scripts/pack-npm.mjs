@@ -98,7 +98,12 @@ for (let i = 0; i < 120 && !health; i++) {
 const page = health ? await fetch(`http://127.0.0.1:${port}/`).then((r) => r.text()) : '';
 child.kill();
 await new Promise((r) => setTimeout(r, 1000));
-rmSync(proj, { recursive: true, force: true });
+// Windows may still hold the stopped server's database for a moment: retried, and a leftover never hides the result
+try {
+  rmSync(proj, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+} catch (e) {
+  console.warn(`임시 폴더를 지우지 못했습니다 (${e.code}): ${proj}`);
+}
 if (!health || health.appVersion !== rootPkg.version || !page.includes('<div id="root">')) throw new Error(`설치한 패키지가 켜지지 않았습니다\n${out}`);
 console.log(`켜짐: ${health.app} ${health.appVersion}, 화면 응답함`);
 console.log(`\n완료: ${tgz}\n올리기(직접, 루트에서): npm publish ./release/${info.filename} --access public`);
