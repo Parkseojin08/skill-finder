@@ -10,11 +10,14 @@ import type { AppContext } from '../src/context.ts';
 
 export type TestServer = { ctx: AppContext; port: number; close(): Promise<void> };
 
-export async function startTestServer(overrides: Partial<AppConfig> = {}): Promise<TestServer> {
+export async function startTestServer(
+  overrides: Partial<AppConfig> = {},
+  appOpts: Parameters<typeof createApp>[1] = {},
+): Promise<TestServer> {
   const dataDir = mkdtempSync(join(tmpdir(), 'skill-finder-test-'));
   const config: AppConfig = { port: 0, dev: false, dataDir, githubToken: null, ...overrides };
   const ctx = createContext(config, ':memory:');
-  const app = createApp(ctx);
+  const app = createApp(ctx, appOpts);
   const server = await new Promise<ReturnType<typeof app.listen>>((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });

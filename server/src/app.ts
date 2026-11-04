@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import express, { type ErrorRequestHandler } from 'express';
 import { WEB_DIST_DIR } from './config.ts';
 import type { AppContext } from './context.ts';
@@ -15,7 +14,11 @@ import { translateFiles, translateRouter } from './routes/translate.ts';
 import type { SearchDeps } from './search/pipeline.ts';
 import { CSP, securityMiddleware } from './security.ts';
 
-export function createApp(ctx: AppContext, opts: { searchDeps?: SearchDeps } = {}): express.Express {
+export function createApp(
+  ctx: AppContext,
+  opts: { searchDeps?: SearchDeps; webDistDir?: string } = {},
+): express.Express {
+  const webDistDir = opts.webDistDir ?? WEB_DIST_DIR;
   const app = express();
   app.disable('x-powered-by');
   app.set('etag', false);
@@ -41,16 +44,17 @@ export function createApp(ctx: AppContext, opts: { searchDeps?: SearchDeps } = {
   });
   app.use(translateFiles(ctx));
 
-  if (existsSync(WEB_DIST_DIR)) {
+  if (existsSync(webDistDir)) {
     app.use((_req, res, next) => {
       res.setHeader('Content-Security-Policy', CSP);
       next();
     });
     // index.html must never be cached (it names the current hashed bundles); it is served by the fallback below.
-    app.use(express.static(WEB_DIST_DIR, { index: false, maxAge: '1h' }));
+    app.use(express.static(webDistDir, { index: false, maxAge: '1h' }));
     app.get(/^\/(?!api\/).*/i, (_req, res) => {
       res.setHeader('Cache-Control', 'no-cache');
-      res.sendFile(join(WEB_DIST_DIR, 'index.html'));
+      // root keeps send's dotfile check off the install path (npx unpacks under ~/.npm/_npx, which 404'd every page)
+      res.sendFile('index.html', { root: webDistDir });
     });
   }
 
