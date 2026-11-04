@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Skill Finder — Claude Code 스킬 검색·설치</title>
+  <meta name="description" content="Claude Code 스킬을 마켓플레이스·skills.sh·GitHub에서 한 번에 찾아 위험 신호와 점수를 보고, 확인한 뒤 설치·삭제하는 앱. Windows·macOS·Linux, 오픈소스(MIT)." />
+  <meta name="theme-color" content="#0a0a0c" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://skill-finder.a01075011775.workers.dev/" />
+  <meta property="og:title" content="Skill Finder — 설치하기 전에 다 보여 주는 Claude Code 스킬 탐색기" />
+  <meta property="og:description" content="마켓플레이스·skills.sh·GitHub의 스킬을 한 번에 찾고, 함께 설치되는 파일·훅·MCP 서버와 위험 신호를 보고 나서 검사한 커밋 그대로 설치합니다. 내 PC에서만 실행, AI 호출 없음." />
+  <meta property="og:image" content="https://skill-finder.a01075011775.workers.dev/img/search.webp" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23140b0d'/%3E%3Ctext x='5' y='22' font-family='monospace' font-size='16' font-weight='700' fill='%23ff4d5e'%3E%3E_%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/style.css" />
+  <script>
+    // Hide animated elements only when animations will run; if the script never loads they are shown anyway.
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      document.documentElement.classList.add('anim');
+      setTimeout(function () { if (!window.__animReady) document.documentElement.classList.remove('anim'); }, 2500);
+    }
+  </script>
+  <script src="/i18n.js" defer></script>
+  <script src="/page.js" defer></script>
+  <script type="module" src="/main.js"></script>
+</head>
+<body>
+  <header class="top">
+    <a class="logo" href="/"><span class="logo-mark">&gt;_</span> skill-finder<span class="cursor"></span></a>
+    <nav>
+      <a href="#how" data-i18n="navHow">흐름</a>
+      <a href="#features" data-i18n="navFeatures">기능</a>
+      <a href="#screens" data-i18n="navScreens">화면</a>
+      <a href="#start" data-i18n="navStart">시작하기</a>
+      <a href="https://github.com/Parkseojin08/skill-finder" rel="noopener">GitHub</a>
+      <a class="nav-cta" href="/download/skill-finder-win.zip" download data-dl data-i18n="navDownload">다운로드</a>
+      <select id="site-lang" aria-label="Language"><option value="ko">한국어</option><option value="en">English</option><option value="ja">日本語</option></select>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="dots" aria-hidden="true"></div>
+      <div class="hero-copy">
+        <p class="eyebrow" data-i18n="eyebrow">// Claude Code 스킬 탐색기</p>
+        <h1 class="split" data-i18n="heroTitle">필요한 스킬을<br /><em>찾고, 따져 보고,</em><br />설치까지.</h1>
+        <p class="lead reveal-hero" data-i18n="lead">
+          마켓플레이스·skills.sh·GitHub에 흩어진 스킬을 한 검색창에서 찾고, 다운로드 수·별·위험 신호를 같이 봅니다.
+          마음에 들면 버튼 하나로 내 PC의 Claude Code에 설치합니다.
+        </p>
+        <div class="cta-row reveal-hero">
+          <a class="btn btn-primary" href="/download/skill-finder-win.zip" download data-dl>
+            <span class="ring" aria-hidden="true"></span>
+            <span class="dl-label" data-i18n="dlWin">Windows용 다운로드</span>
+            <small class="dl-meta zip">zip · 약 9MB</small>
+          </a>
+          <a class="btn btn-ghost" href="#start" data-i18n="howTo">사용법 보기</a>
+        </div>
+        <p class="fine reveal-hero"><span data-i18n="fine">무료·오픈소스(MIT) · Windows · macOS · Linux · Node.js 22.20 이상 · 내 PC에서만 실행</span> <button type="button" class="text-btn" data-get data-i18n="otherOs">다른 운영체제 →</button></p>
+      </div>
+
+      <!-- the app, drawn in HTML so its text stays sharp (the shrunken screenshot here was unreadable) -->
+      <div class="hero-visual">
+        <div class="app" role="img" aria-label="Skill Finder에서 'extract tables from pdf'를 검색한 화면. 설치 218K·위험 낮음인 Anthropic의 pdf 스킬과 명령·검사 결과가 보이는 설치 창, MCP 서버 때문에 주의로 표시된 파트너 스킬." data-i18n-label="mkAlt">
+          <div class="frame-bar"><i></i><i></i><i></i><span>127.0.0.1:4317</span></div>
+          <div class="mk-nav" aria-hidden="true">
+            <span class="mk-logo"><b>&gt;_</b> skill-finder</span>
+            <span class="on" data-i18n="mkTabSearch">검색</span><span data-i18n="mkTabReadme">README 추천</span><span data-i18n="mkTabInstalled">설치됨</span><span data-i18n="mkTabFav">즐겨찾기</span>
+          </div>
+          <div class="mk-body" aria-hidden="true">
+            <div class="mk-search"><span class="mk-pr">❯</span><span class="mk-q">extract tables from pdf</span><span class="mk-caret"></span><span class="mk-go" data-i18n="mkGo">검색</span></div>
+            <div class="mk-meta"><span data-i18n="mkCount">결과 <b>34</b>개 · 2.4초</span><span class="mk-chip on" data-i18n="mqMarket">마켓플레이스</span><span class="mk-chip on">skills.sh</span><span class="mk-chip on">GitHub</span></div>
+            <article class="mk-res hi">
+              <div class="mk-top"><strong>pdf</strong><span class="mk-repo">anthropics/skills</span><span class="mk-btn" data-i18n="mkInstall">설치</span></div>
+              <p>Use this skill whenever the user wants to do anything with PDF files. This includes reading or extracting text and tables…</p>
+              <div class="mk-tags"><span class="mk-tag official" data-i18n="mkOfficial">Anthropic 공식</span><span class="mk-tag">⤓ 218K</span><span class="mk-tag">★ 187K</span><span class="mk-tag low" data-i18n="mkLow">위험 낮음</span></div>
+            </article>
+            <div class="mk-sheet">
+              <div class="mk-sheet-h"><span data-i18n="mkSheetT">설치 · 개인(모든 프로젝트)</span><span class="mk-dim">document-skills</span></div>
+              <code>$ claude plugin install document-skills@anthropic-agent-skills</code>
+              <ul class="mk-checks"><li data-i18n="mkC1">함께 설치되는 파일 검사</li><li data-i18n="mkC2">훅·MCP 서버 없음</li><li data-i18n="mkC3">검사한 커밋 그대로</li></ul>
+            </div>
+            <article class="mk-res">
+              <div class="mk-top"><strong>adobe-anyexcel</strong><span class="mk-repo">adobe/skills</span><span class="mk-star">☆</span></div>
+              <p>MANDATORY when an Excel/XLSX task's source content is an uploaded PDF — including when the PDF's text or tables are already extracted…</p>
+              <div class="mk-tags"><span class="mk-tag partner" data-i18n="mkPartner">파트너</span><span class="mk-tag">★ 319</span><span class="mk-tag mid" data-i18n="mkMid">주의 · MCP 서버</span></div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <ul class="stats">
+      <li><b>13,000+</b><span data-i18n="k1">스킬 색인 포함 — 처음 켜자마자 검색</span></li>
+      <li><b>5</b><span data-i18n="k2">한 번에 찾는 곳 — 마켓플레이스 3 · skills.sh · GitHub</span></li>
+      <li><b>0</b><span data-i18n="k3">AI 호출 · 스킬 코드 실행</span></li>
+      <li><b>3</b><span data-i18n="k4">화면 언어 — 한국어 · English · 日本語</span></li>
+    </ul>
+
+    <div class="marquee" aria-hidden="true">
+      <div class="track">
+        <span data-i18n="mqMarket">마켓플레이스</span><span>skills.sh</span><span>GitHub</span><span data-i18n="mqRisk">위험 신호</span><span data-i18n="mqScore">점수 4가지</span><span data-i18n="mqReadme">README 추천</span><span data-i18n="mqPinned">검사한 커밋 그대로 설치</span><span data-i18n="mqFav">즐겨찾기</span><span data-i18n="mqLang">한국어 · English · 日本語</span><span data-i18n="mqLocal">127.0.0.1 전용</span>
+        <span data-i18n="mqMarket">마켓플레이스</span><span>skills.sh</span><span>GitHub</span><span data-i18n="mqRisk">위험 신호</span><span data-i18n="mqScore">점수 4가지</span><span data-i18n="mqReadme">README 추천</span><span data-i18n="mqPinned">검사한 커밋 그대로 설치</span><span data-i18n="mqFav">즐겨찾기</span><span data-i18n="mqLang">한국어 · English · 日本語</span><span data-i18n="mqLocal">127.0.0.1 전용</span>
+      </div>
+    </div>
+
+    <section id="how" class="how">
+      <h2 class="reveal"><span>#</span> <span data-i18n="hHow">검색 한 번에 일어나는 일</span></h2>
+      <div class="pipe">
+        <svg viewBox="0 0 1000 120" preserveAspectRatio="none" aria-hidden="true">
+          <path class="pipe-line" d="M40 60 C 180 10, 260 110, 380 60 S 600 10, 640 60 S 860 110, 960 60" />
+        </svg>
+        <ol class="nodes">
+          <li class="node"><b>01</b><strong data-i18n="n1t">모으기</strong><span data-i18n="n1d">3곳에서 후보를 동시에 수집</span></li>
+          <li class="node"><b>02</b><strong data-i18n="n2t">확인</strong><span data-i18n="n2d">실제로 설치되는 SKILL.md만 남김</span></li>
+          <li class="node"><b>03</b><strong data-i18n="n3t">정렬</strong><span data-i18n="n3d">이름·관련 일치 → 다운로드 → 별 순</span></li>
+          <li class="node"><b>04</b><strong data-i18n="n4t">설치</strong><span data-i18n="n4d">함께 들어오는 것까지 보여 주고 설치</span></li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="features" class="features">
+      <h2 class="reveal"><span>#</span> <span data-i18n="hFeatures">무엇을 해 주나요</span></h2>
+      <div class="grid reveal-group">
+        <article class="card reveal">
+          <svg class="icon" viewBox="0 0 48 48" aria-hidden="true"><circle cx="21" cy="21" r="12" /><path d="M30 30 L42 42" /><path d="M15 21 h12 M21 15 v12" /></svg>
+          <h3 data-i18n="c1t">한 번에 검색</h3>
+          <p data-i18n="c1d">공식·커뮤니티 마켓플레이스, skills.sh, GitHub의 스킬을 한 검색창에서 찾습니다.</p>
+        </article>
+        <article class="card reveal">
+          <svg class="icon" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 5 L41 12 V24 C41 34 33 41 24 44 C15 41 7 34 7 24 V12 Z" /><path d="M17 24 L22 29 L32 18" /></svg>
+          <h3 data-i18n="c2t">위험 신호·점수</h3>
+          <p data-i18n="c2d">원격 스크립트 실행 같은 위험 신호를 표시하고 관련도·인기·최신성·신뢰도로 점수를 매깁니다.</p>
+        </article>
+        <article class="card reveal">
+          <svg class="icon" viewBox="0 0 48 48" aria-hidden="true"><path d="M10 6 H30 L38 14 V42 H10 Z" /><path d="M30 6 V14 H38" /><path d="M16 22 H32 M16 28 H32 M16 34 H26" /></svg>
+          <h3 data-i18n="c3t">README로 추천</h3>
+          <p data-i18n="c3d">프로젝트 폴더를 고르면 README를 읽고 어울리는 스킬을 인기순으로 골라 줍니다.</p>
+        </article>
+        <article class="card reveal">
+          <svg class="icon" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 6 V30" /><path d="M14 20 L24 30 L34 20" /><path d="M8 34 V42 H40 V34" /></svg>
+          <h3 data-i18n="c4t">설치 전에 다 보여 줌</h3>
+          <p data-i18n="c4d">함께 설치되는 스크립트·참고 파일을 같은 규칙으로 검사하고, 플러그인이 실행하는 훅·MCP 서버를 원문으로 보여 준 뒤 검사한 커밋 그대로 설치합니다. 같은 이름 스킬을 덮어쓰면 미리 알립니다.</p>
+        </article>
+        <article class="card reveal">
+          <svg class="icon" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 6 L29.3 16.8 L41 18.5 L32.5 26.8 L34.5 38.5 L24 33 L13.5 38.5 L15.5 26.8 L7 18.5 L18.7 16.8 Z" /></svg>
+          <h3 data-i18n="c5t">즐겨찾기</h3>
+          <p data-i18n="c5d">스킬과 GitHub 저장소에 별을 눌러 모으고, 종류·제공자·카테고리로 골라 봅니다.</p>
+        </article>
+        <article class="card reveal">
+          <svg class="icon" viewBox="0 0 48 48" aria-hidden="true"><circle cx="13" cy="24" r="5" /><circle cx="35" cy="12" r="5" /><circle cx="35" cy="36" r="5" /><path d="M17.5 21.6 L30.5 14.4 M17.5 26.4 L30.5 33.6" /></svg>
+          <h3 data-i18n="c6t">팀과 나누기</h3>
+          <p data-i18n="c6d">설치한 스킬을 프리셋 파일로 내보내면 팀원이 같은 확인 창을 거쳐 같은 스킬을 설치합니다. 앱이 없는 사람에게는 위험 신호와 설치 명령이 담긴 공유 링크를 보냅니다.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="screens" class="screens">
+      <h2 class="reveal"><span>#</span> <span data-i18n="hScreens">실제 화면</span></h2>
+      <div class="showcase">
+        <div class="show-text reveal">
+          <h3 data-i18n="s1t">점수가 왜 그렇게 나왔는지까지</h3>
+          <p data-i18n="s1d">관련도·인기·최신성·신뢰도를 막대로 보여 주고, 설치 수·별·마지막 수정일·라이선스를 한눈에 봅니다.</p>
+        </div>
+        <figure class="frame rise">
+          <div class="frame-bar"><i></i><i></i><i></i><span data-i18n="barDetail">스킬 상세</span></div>
+          <img src="/img/detail.webp" alt="스킬 상세 화면. 73점, 설명, 설치 수·별 수·컨텍스트 토큰, 위험 등급과 검사 결과." data-i18n-alt="altDetail" width="1120" height="760" loading="lazy" />
+        </figure>
+      </div>
+      <div class="showcase flip">
+        <div class="show-text reveal">
+          <h3 data-i18n="s2t">실행될 명령을 먼저 보고 설치</h3>
+          <p data-i18n="s2d">개인(모든 프로젝트) 또는 특정 프로젝트 범위를 고르면, 실제로 실행할 명령과 설치 위치, 함께 설치되는 파일의 검사 결과와 훅·MCP 원문을 보여 준 뒤에 설치합니다. 명령은 복사해 직접 실행해도 됩니다.</p>
+        </div>
+        <figure class="frame rise">
+          <div class="frame-bar"><i></i><i></i><i></i><span data-i18n="barInstall">설치</span></div>
+          <img src="/img/install.webp" alt="설치 탭. 범위 선택, 실행할 명령, 설치 위치." data-i18n-alt="altInstall" width="1120" height="600" loading="lazy" />
+        </figure>
+      </div>
+    </section>
+
+    <section id="start" class="start">
+      <h2 class="reveal"><span>#</span> <span data-i18n="hStart">시작하기</span></h2>
+      <div class="os-switch" role="group" aria-label="OS">
+        <button type="button" data-start-os="win" aria-pressed="true" data-i18n="tabWin">Windows</button>
+        <button type="button" data-start-os="unix" aria-pressed="false" data-i18n="tabUnix">macOS · Linux</button>
+      </div>
+      <div data-start-panel="unix">
+        <ol class="steps">
+          <li><b>01</b><strong data-i18n="su1t">준비</strong><p data-i18n="su1d"><a href="https://nodejs.org/ko/download" rel="noopener">Node.js</a> 22.20 이상과 git이 필요합니다.</p></li>
+          <li><b>02</b><strong data-i18n="su2t">실행</strong><p data-i18n="su2d">터미널에서 <code>npx @seojin08/skill-finder</code></p></li>
+          <li><b>03</b><strong data-i18n="su3t">사용</strong><p data-i18n="su3d">브라우저에 <code>127.0.0.1:4317</code>이 열립니다. 끄려면 터미널에서 <kbd>Ctrl</kbd>+<kbd>C</kbd>. 계속 쓰려면 <code>npm install -g @seojin08/skill-finder</code> 뒤 <code>skill-finder</code>로 켭니다.</p></li>
+        </ol>
+      </div>
+      <!-- the OS tabs show one panel at a time, so nothing inside waits for a scroll reveal -->
+      <div data-start-panel="win">
+        <ol class="steps">
+          <li><b>01</b><strong data-i18n="st1t">내려받기</strong><p data-i18n="st1d"><a href="/download/skill-finder-win.zip" download>skill-finder-win.zip</a>을 받아 원하는 곳에 압축을 풉니다.</p></li>
+          <li><b>02</b><strong data-i18n="st2t">실행</strong><p data-i18n="st2d"><code>SkillFinder.exe</code>를 더블클릭하면 설치되고 바탕화면에 <b>Skill Finder</b> 바로가기가 생깁니다. 다음부터는 바로가기로 켜고, 4317 포트가 이미 쓰이고 있으면 비어 있는 포트를 고르는 창이 뜹니다.</p></li>
+          <li><b>03</b><strong data-i18n="st3t">사용</strong><p data-i18n="st3d">브라우저에 <code>127.0.0.1:4317</code>이 열립니다. 검은 창을 닫으면 꺼집니다.</p></li>
+        </ol>
+        <div class="warn">
+          <h3 data-i18n="warnT">Chrome이 "일반적으로 다운로드되지 않는 파일"이라고 막으면</h3>
+          <p data-i18n="warnD">
+            바이러스가 발견됐다는 뜻이 아니라, 새로 배포된 서명 없는 프로그램이라 받아 간 사람이 적다는 뜻입니다.
+            다운로드 목록에서 <b>의심스러운 파일 다운로드</b>(또는 <b>계속</b>)를 누르면 받을 수 있습니다.
+            실행할 때 Windows가 "알 수 없는 게시자"라고 하면 <b>추가 정보 → 실행</b>을 누르세요.
+          </p>
+          <p class="hash" data-i18n="hash">받은 파일이 이 페이지의 원본과 같은지 확인하려면 PowerShell에서 <code>Get-FileHash skill-finder-win.zip</code>를 실행해 아래 값과 비교하세요.<br /><span class="sha">SHA-256 <code id="sha">불러오는 중…</code></span></p>
+        </div>
+      </div>
+
+      <div class="notes reveal-group">
+        <div class="reveal">
+          <h3 data-i18n="cliT">Claude Code 안에서</h3>
+          <p data-i18n="cliD">읽기 전용 명령이 있어 Claude Code에게 찾게 할 수 있습니다. 설치·삭제는 앱의 확인 창에서만 합니다.</p>
+          <p><code>npx @seojin08/skill-finder search "pdf tables"</code><br /><code>npx @seojin08/skill-finder recommend</code></p>
+        </div>
+        <div class="reveal">
+          <h3 data-i18n="needT">필요한 것</h3>
+          <ul data-i18n="needL">
+            <li>Windows 10 / 11 · macOS · Linux</li>
+            <li><a href="https://nodejs.org/ko/download" rel="noopener">Node.js</a> 22.20 이상 — Claude Code를 네이티브 설치 프로그램으로 깔았다면 따로 설치해야 합니다. 없으면 SkillFinder.exe가 알려 줍니다</li>
+            <li>git — GitHub 저장소 파일 목록을 읽을 때 사용</li>
+            <li>Claude Code — 스킬 설치·삭제에 사용</li>
+          </ul>
+        </div>
+        <div class="reveal">
+          <h3 data-i18n="knowT">알아 두기</h3>
+          <ul data-i18n="knowL">
+            <li>스킬 1만 3천여 개가 담긴 색인이 함께 들어 있어 처음 켜자마자 검색됩니다. 그 뒤에 바뀐 것만 뒤에서 모읍니다.</li>
+            <li>설정 화면에 GitHub 토큰을 넣으면 GitHub 검색이 더해지고 별 수도 최신으로 유지됩니다.</li>
+            <li>검색어는 영어가 가장 정확합니다. 한국어로 적으면 영어 검색어를 제안합니다.</li>
+            <li>업데이트는 자동입니다. 켤 때마다 새 버전이 있는지 보고, 있으면 내려받아(서명·크기·SHA-256 확인) 바꿉니다. 서명이 맞지 않으면 받지 않습니다. 새 버전이 켜지지 않으면 이전 버전으로 저절로 되돌립니다. 스킬 목록·기록·토큰은 <code>%LOCALAPPDATA%\SkillFinder</code>에 있어 그대로 이어집니다.</li>
+            <li><details><summary>0.1.0을 쓰던 경우</summary>이 zip을 받아 한 번 실행하세요. 이전 폴더의 <code>data\</code>와 <code>.env</code>를 새 폴더에 넣어 두면 옮겨 줍니다.</details></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="safety">
+      <h2 class="reveal"><span>#</span> <span data-i18n="hSafety">안전하게 만들었습니다</span></h2>
+      <ul class="checks reveal-group" data-i18n="safetyL">
+        <li class="reveal">내 PC의 <code>127.0.0.1</code>에서만 열립니다. 같은 네트워크의 다른 기기도 접속할 수 없습니다.</li>
+        <li class="reveal">검색어는 찾기 위해 skills.sh·GitHub로 보냅니다. 검색 기록·색인·토큰은 이 PC의 <code>%LOCALAPPDATA%\SkillFinder</code>에만 저장하고 밖으로 보내지 않습니다(토큰은 GitHub에만 씁니다). skills CLI 사용 통계 전송은 기본으로 끕니다.</li>
+        <li class="reveal">스킬의 코드를 실행하지 않습니다. 설치는 실행될 명령을 먼저 보여 준 뒤에만 합니다.</li>
+        <li class="reveal">AI를 호출하지 않습니다. 검색과 점수는 모두 공개 정보로 계산합니다.</li>
+        <li class="reveal">위험 등급은 정해 둔 규칙으로 판정한 것이라 안전을 보증하지 않습니다. 설치 전에 보여 주는 파일과 명령을 확인하세요.</li>
+        <li class="reveal">코드는 <a href="https://github.com/Parkseojin08/skill-finder" rel="noopener">GitHub</a>에 공개되어 있습니다(MIT). 보안 문제는 저장소의 Security 탭으로 비공개로 알려 주세요.</li>
+      </ul>
+    </section>
+
+    <section id="changes" class="changes">
+      <h2 class="reveal"><span>#</span> <span data-i18n="hChanges">변경 기록</span></h2>
+      <div class="reveal">
+        <p class="fine" data-i18n="changesD">최신 <b id="notes-ver">버전</b> · 서명된 내려받기 정보(meta.json)에서 읽습니다. 전체 기록은 <a href="https://github.com/Parkseojin08/skill-finder/blob/main/CHANGELOG.md" rel="noopener">CHANGELOG.md</a>.</p>
+        <ul id="notes" class="notes-list"></ul>
+      </div>
+    </section>
+
+    <section class="final reveal">
+      <h2 data-i18n="finalT">지금 받아서 써 보세요</h2>
+      <a class="btn btn-primary big" href="/download/skill-finder-win.zip" download data-dl>
+        <span class="ring" aria-hidden="true"></span>
+        <span class="dl-label" data-i18n="dlWin">Windows용 다운로드</span>
+        <small class="dl-meta zip">zip · 약 9MB</small>
+      </a>
+      <p><button type="button" class="text-btn" data-get data-i18n="otherOs">다른 운영체제 →</button></p>
+    </section>
+  </main>
+
+  <!-- install steps for each OS; the download buttons open it on macOS and Linux (page.js) -->
+  <dialog id="get" class="get" aria-labelledby="get-title">
+    <form method="dialog"><button class="get-x" aria-label="닫기" data-i18n-label="close">×</button></form>
+    <h2 id="get-title" data-i18n="getTitle">Skill Finder 설치</h2>
+    <p id="get-mobile" class="get-note" data-i18n="gMobile" hidden>Skill Finder는 PC(Windows·macOS·Linux)용 앱입니다. 컴퓨터에서 이 페이지를 열어 설치하세요.</p>
+    <div class="os-switch" role="group" aria-label="OS">
+      <button type="button" data-get-os="win" aria-pressed="true">Windows</button>
+      <button type="button" data-get-os="mac" aria-pressed="false">macOS</button>
+      <button type="button" data-get-os="linux" aria-pressed="false">Linux</button>
+    </div>
+    <div data-get-panel="win">
+      <a class="btn btn-primary" href="/download/skill-finder-win.zip" download>
+        <span data-i18n="dlWin">Windows용 다운로드</span>
+        <small class="dl-meta zip">zip · 약 9MB</small>
+      </a>
+      <p data-i18n="gWinD">zip을 풀고 <code>SkillFinder.exe</code>를 실행하면 설치되고 바탕화면에 <b>Skill Finder</b> 바로가기가 생깁니다.</p>
+    </div>
+    <div data-get-panel="unix" hidden>
+      <ol class="get-steps">
+        <li data-i18n="gUnix1"><a href="https://nodejs.org/ko/download" rel="noopener">Node.js</a> 22.20 이상과 git을 준비합니다.</li>
+        <li><span data-i18n="gUnix2">터미널에서 실행합니다:</span>
+          <span class="cmd"><code>npx @seojin08/skill-finder</code><button type="button" class="copy" data-copy="npx @seojin08/skill-finder" data-i18n="copy">복사</button></span>
+        </li>
+        <li data-i18n="gUnix3">브라우저에 <code>127.0.0.1:4317</code>이 열립니다. 끄려면 터미널에서 <kbd>Ctrl</kbd>+<kbd>C</kbd>.</li>
+      </ol>
+      <p class="get-note" data-i18n="gUnix4">계속 쓰려면 <code>npm install -g @seojin08/skill-finder</code> 뒤 <code>skill-finder</code>로 켭니다.</p>
+    </div>
+  </dialog>
+
+  <footer>
+    <span>Skill Finder <span id="ver">0.1.0</span> · © 2026 Parkseojin08</span>
+    <span><a href="https://github.com/Parkseojin08/skill-finder" rel="noopener">GitHub</a> · <a href="https://github.com/Parkseojin08/skill-finder/issues" rel="noopener" data-i18n="issues">문제 신고</a> · <a href="/LICENSE.txt" rel="license" data-i18n="license">MIT 라이선스</a> · <a href="/download/THIRD-PARTY-LICENSES.txt" data-i18n="notices">오픈소스 고지</a></span>
+    <span data-i18n="disclaimer">Claude Code는 Anthropic의 제품이며, 이 앱은 Anthropic과 관계없는 개인 프로젝트입니다. 이 페이지의 애니메이션: <a href="/vendor/anime-LICENSE.txt">anime.js (MIT)</a></span>
+  </footer>
+</body>
+</html>

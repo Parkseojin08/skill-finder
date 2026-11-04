@@ -10,5 +10,14 @@ AGENTS.md
 .codex/
 skills-lock.json
 
+# game API (Cloudflare Worker): local secrets and build output
+game-api/.dev.vars
+game-api/.wrangler/
+
+# Windows download package and its copy for the landing page
+release/
+site/public/download/
+site/.wrangler/
+
 # measurement recordings (server/scripts/bench, several MB each)
 server/scripts/bench/recordings/

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- The skill comes in the address after # (never sent to this server); everything is drawn as text. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'" />
+  <meta name="referrer" content="no-referrer" />
+  <meta name="robots" content="noindex" />
+  <title>Skill Finder — 공유된 스킬</title>
+  <meta name="theme-color" content="#0a0a0c" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Skill Finder — 공유된 Claude Code 스킬" />
+  <meta property="og:description" content="설치 명령과 위험 신호를 함께 보여 주는 Claude Code 스킬 공유 링크입니다." />
+  <meta property="og:image" content="https://skill-finder.a01075011775.workers.dev/img/detail.webp" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23140b0d'/%3E%3Ctext x='5' y='22' font-family='monospace' font-size='16' font-weight='700' fill='%23ff4d5e'%3E%3E_%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/s/share.css" />
+  <script src="/s/share.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <a class="logo" href="/"><span class="logo-mark">&gt;_</span> skill-finder</a>
+    <nav>
+      <select id="lang" aria-label="Language">
+        <option value="ko">한국어</option>
+        <option value="en">English</option>
+        <option value="ja">日本語</option>
+      </select>
+    </nav>
+  </header>
+  <main class="share">
+    <p class="eyebrow" data-t="eyebrow">// 공유된 스킬</p>
+    <article id="skill" class="share-card" hidden>
+      <h1 id="name"></h1>
+      <p id="desc" class="share-desc"></p>
+      <div class="share-risk">
+        <span id="risk" class="risk-badge"></span>
+        <span id="flags" class="share-flags"></span>
+      </div>
+      <p class="share-note" data-t="riskNote">이 링크의 내용(설명·위험 등급)은 링크를 만든 사람이 넣은 것이라 확인되지 않았습니다. 위험 등급은 원래 Skill Finder 규칙에 따른 참고 정보이며 안전 보증이 아닙니다. 설치 전에 저장소나 Skill Finder 앱에서 직접 확인하세요.</p>
+      <section id="cmd-box" hidden>
+        <h2 data-t="install">설치 명령</h2>
+        <div class="share-cmd"><code id="cmd"></code><button type="button" id="copy" data-t="copy">복사</button></div>
+        <p class="share-note" data-t="cmdNote">터미널에서 실행하면 설치 전에 확인을 묻습니다.</p>
+      </section>
+      <p class="share-links">
+        <a id="repo" rel="noopener noreferrer" target="_blank" hidden data-t="repo">저장소 보기</a>
+        <a id="local" hidden data-t="local">내 Skill Finder에서 열기</a>
+      </p>
+      <p class="share-note" id="local-note" hidden data-t="localNote">내 PC에서 Skill Finder(기본 주소 127.0.0.1:4317)가 켜져 있어야 열립니다.</p>
+    </article>
+    <p id="empty" class="share-card" hidden data-t="empty">이 링크에 스킬 정보가 없거나 형식이 맞지 않습니다.</p>
+    <p class="share-get"><span data-t="get">Skill Finder로 스킬을 찾고 설치 전에 확인하세요.</span> <a href="/" data-t="getLink">소개·다운로드</a> · <a href="https://github.com/Parkseojin08/skill-finder" rel="noopener noreferrer">GitHub</a></p>
+  </main>
+</body>
+</html>

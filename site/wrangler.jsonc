@@ -1,0 +1,10 @@
+// Skill Finder landing page: static files only (no Worker script), served from ./public.
+// The download zip in ./public/download is produced by `npm run package` at the repo root.
+// Deploy: cd site && npx wrangler@4 deploy
+{
+  "name": "skill-finder",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public"
+  }
+}

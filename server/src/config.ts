@@ -30,7 +30,8 @@ export const SKILLS_CLI_VERSION: string = (() => {
     return 'latest'; // no bundled CLI: installing fails anyway, and the shown command still runs
   }
 })();
-export const DEV_VITE_PORT = 5173;
+/** Vite dev server port (web/vite.config.ts); allowed as a Host/Origin in --dev mode only. */
+export const DEV_VITE_PORT = 5174;
 
 function parseEnvFile(text: string): Record<string, string> {
   const out: Record<string, string> = {};

@@ -71,7 +71,8 @@ export default defineConfig({
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   server: {
     host: '127.0.0.1',
-    port: 5173,
+    // 5173 is taken by another local project; keep in sync with DEV_VITE_PORT in server/src/config.ts
+    port: 5174,
     strictPort: true,
     // Host header is forwarded unchanged; the API server allows the Vite address in --dev mode only.
     proxy: {

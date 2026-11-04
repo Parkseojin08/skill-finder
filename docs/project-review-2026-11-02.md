@@ -17,7 +17,7 @@
 |---|---|---|---|---|
 | 1 | **P0** `/API` 대문자 경로가 헤더·Origin 검사를 건너뜀. 다른 사이트가 본문 없는 POST(`/API/pick-folder` 폴더 창, `/API/sync`·`/API/popular-repos/collect` 토큰 한도)와 GET(열람 기록 오염)을 부를 수 있음. 응답은 못 읽고 JSON 본문이 필요한 설치·삭제·설정은 아직 막힘 | `security.ts:42` 대소문자 구분 vs Express 기본 무시(`app.ts:20-29`), r1 재현, 대문자 테스트 0건 | S: `case sensitive routing` + 소문자 비교 + `Sec-Fetch-Site: cross-site` 거부 + 테스트 | r1 |
 | 2 | **P1** 플러그인 색인에서 SKILL.md 하나를 못 받으면 그 행을 지우고 "색인 끝"으로 기록 → "위험 높음 포함" 경고가 사라지고, sha가 같아 저절로 안 고쳐짐 | `indexer.ts:231-237`, `limiter.ts:88-109`; 저장소 색인(`:428-434`)은 같은 상황에서 sha null·삭제 안 함 | S: `ok:false`가 있으면 지우지 않고 sha null + 테스트 | r1 |
-| 3 | **P0~P1** 릴리스 경로: `launcher/`·`scripts/package-win.mjs`·`site/`가 git 밖, 원격·태그 0. 패키징은 `vite build`만(타입 검사·테스트 없음), lock 없이 `npm install` → `qs`·`encodeurl` 버전이 개발과 다름 | `package-win.mjs:31,40-55,97`, lock 비교 | S~M: 세 경로 커밋(지시 시)·태그, 루트 `check`(tsc+테스트+빌드), dirty 검사, 루트 lock으로 설치, 스모크 테스트 | r3, r1 |
+| 3 | **P0~P1** 릴리스 경로: `launcher/`·`scripts/package-win.mjs`·`site/`가 git 밖, 원격·태그 0. 패키징은 `vite build`만(타입 검사·테스트 없음), lock 없이 `npm install` → `qs`·`encodeurl` 버전이 개발과 다름. 작업 트리로 만들면 커밋에 없는 게임 코드가 나감 | `package-win.mjs:31,40-55,97`, lock 비교 | S~M: 세 경로 커밋(지시 시)·태그, 루트 `check`(tsc+테스트+빌드), dirty 검사, 루트 lock으로 설치, 스모크 테스트 | r3, r1 |
 | 4 | **P1** 자동 업데이트를 되돌릴 수 없음: 옛 앱 즉시 삭제, 새 서버 동작 확인 없음, 같은 버전 재설치 불가, 마이그레이션 전 백업 없음, 손상 DB는 영어 스택만 찍고 종료(r1 재현) | `SkillFinder.cs:86,161,260,276`, `db/index.ts:42-56`, `index.ts:12-20` | M: `app.prev` + 동작 확인 뒤 삭제·실패 시 되돌림, 마이그레이션 전 `.bak`(앱 되돌리기와 짝), 손상 DB 격리·한국어 안내, 같은 버전 재설치, 직전 zip 보관 | r1, r3 |
 | 5 | **P1** 실행기 `IsUp`이 `/api/health` 200만 봄 → 저장된 개발용 포트를 다른 개발 서버가 쓰면 그 앱을 열고 업데이트도 건너뜀 | `SkillFinder.cs:775-791`, `:92,402,455` (빈도는 추측) | S: health에 `app:"skill-finder"` 고정값, 실행기가 확인 | r1 |
 | 6 | **P1** 마켓플레이스 등록 여부를 이름으로만 비교 → 같은 이름의 다른 저장소가 등록돼 있으면 검사 안 한 곳에서 설치 | `install/run.ts:61`, `plan.ts:87-89` | S: 이름+repo 비교, 다르면 멈춤 + 테스트 | r1 |
@@ -84,6 +84,7 @@
 | 약속 손복사 | 확인됨 | `SearchPage.tsx:368`↔`pipeline.ts:597`, `r: 15`, `resultOrder.ts:25` |
 | 기준 자료 %TEMP% | 확인됨 | `recordings/` 폴더 없음 |
 | 로그·ErrorBoundary 없음 | 확인됨 | 검색 0건, `vite.config.ts:19` |
+| 커밋이 게임과 얽힘 | 확인됨 | SearchPage diff의 `ArasakaGame` import |
 
 ## 틀리거나 과장된 지적
 1. r1의 "content-type 2.1.0 / 루트 1.0.5"는 틀렸다. 실제로 도는 버전은 같고, 진짜 차이는 qs·encodeurl 2개다.
