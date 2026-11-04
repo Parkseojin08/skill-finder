@@ -1790,7 +1790,7 @@ button.primary.danger-solid:hover:not(:disabled) {
 }
 
 /* ===== Cyberpunk: Edgerunners HUD pass =====
-   Angular cut corners, HUD corner brackets, yellow labels next to the red/cyan neon, a logo glitch and faint
+   Angular cut corners, HUD corner brackets, yellow labels next to the red/cyan neon and faint
    scanlines. Clipped shapes draw their focus ring inside (an outside ring would be cut off by clip-path). */
 
 /* tables: Korean words never break mid-word ("프로/젝트"); long paths still wrap anywhere */
@@ -2014,29 +2014,6 @@ kbd {
   box-shadow: inset 0 -2px 0 var(--neon);
 }
 
-/* logo glitch on hover: red/cyan channel split */
-.brand:hover {
-  animation: glitch 0.6s steps(2) 2;
-}
-@keyframes glitch {
-  0%, 100% {
-    text-shadow: none;
-    transform: none;
-  }
-  25% {
-    text-shadow: -2px 0 var(--neon), 2px 0 var(--cyan);
-    transform: translateX(1px) skewX(-4deg);
-  }
-  50% {
-    text-shadow: 2px 0 var(--neon), -2px 0 var(--cyan);
-    transform: translateX(-1px);
-  }
-  75% {
-    text-shadow: -1px 0 var(--yellow), 1px 0 var(--cyan);
-    transform: skewX(3deg);
-  }
-}
-
 /* page titles: slanted underline stripe */
 .page > h1 {
   position: relative;
@@ -2053,12 +2030,6 @@ kbd {
   background: linear-gradient(90deg, var(--neon) 0 70%, var(--yellow) 70% 100%);
   transform: skewX(-30deg);
   transform-origin: left;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .brand:hover {
-    animation: none;
-  }
 }
 
 .sr-only {

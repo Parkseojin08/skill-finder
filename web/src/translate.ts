@@ -147,9 +147,27 @@ async function init() {
       }
       return;
     }
-    if (availability === 'downloadable' || availability === 'downloading') return setStatus({ state: 'needs-download', engine: 'builtin' });
+    if (availability === 'downloadable' || availability === 'downloading') {
+      setStatus({ state: 'needs-download', engine: 'builtin' });
+      return enableOnFirstGesture();
+    }
   }
   await initBergamot();
+}
+
+/**
+ * Descriptions in the screen's language without a button to find (user request 2026-11-04: a Japanese screen showed
+ * them in English until "翻訳をオンにする" was pressed). Chrome downloads its model only from a click or a key press,
+ * so the first one anywhere on the page (typing the search, say) starts it; the button stays for doing it at once.
+ */
+function enableOnFirstGesture() {
+  const go = () => {
+    window.removeEventListener('pointerdown', go, true);
+    window.removeEventListener('keydown', go, true);
+    void enableTranslation();
+  };
+  window.addEventListener('pointerdown', go, true);
+  window.addEventListener('keydown', go, true);
 }
 
 /* ── Bergamot: Firefox's models, fetched once by the server, run in a worker ── */
@@ -166,7 +184,8 @@ async function initBergamot() {
     setStatus({ size: m.total });
     if (m.state === 'ready') await createBergamot();
     else if (m.state === 'downloading') await waitForModel();
-    else setStatus({ state: 'needs-download', error: m.error && serverText(m.error) });
+    // fetched at once for a Korean or Japanese screen (user request 2026-11-04); a failure shows with a retry button
+    else await enableTranslation();
   } catch (err) {
     setStatus({ state: 'error', error: String((err as Error).message ?? err) });
   }
@@ -221,8 +240,8 @@ function ensureStarted() {
 }
 
 /**
- * Downloads the language model; must run from a click (browsers require user activation for the built-in one's
- * download, and the Bergamot model is tens of MB the user agrees to).
+ * Downloads the language model. The built-in one's download needs a click or key press (browser rule): the button,
+ * or the first gesture on the page. The Bergamot model starts on its own.
  */
 export async function enableTranslation(): Promise<void> {
   if (status.state === 'ready' || status.state === 'downloading' || status.state === 'loading') return;
