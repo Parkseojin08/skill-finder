@@ -3,6 +3,7 @@ import type { MarketplaceRow, PluginRow, SkillRow, Store } from '../db/store.ts'
 import { planInstall, type InstallMethod } from '../install/plan.ts';
 import { truncate } from '../util/sanitize.ts';
 import { categorize, type Category } from './category.ts';
+import type { InstallsSuspect } from './installsSuspect.ts';
 import { freshInstalls, freshness, TRUST_SCORE, trustTier, type Breakdown, type TrustTier } from './rank.ts';
 
 export type SourceKind = 'marketplace' | 'skillssh' | 'github';
@@ -36,6 +37,11 @@ export type ResultItem = {
   categories: Category[];
   /** Search results only: 1 when the name has a query word and half the words match (sorted first), else 0. */
   tier?: number;
+  /**
+   * The download count looks inflated (F18): it is left out of `installs` (sorted as unknown) and given here
+   * for the card's "다운로드 수 의심" badge, with the rules it broke.
+   */
+  installsSuspect?: InstallsSuspect;
 };
 
 /** A GitHub repository shown as a result of its own (one-word query equal to its name, e.g. "rea"). */

@@ -7,6 +7,7 @@ import { GitHubError, GRAPHQL_BATCH } from './sources/github.ts';
 import { syncMarketplace } from './sources/marketplace.ts';
 import { collectPopularRepos, popularState } from './sources/popularRepos.ts';
 import { searchActivity } from './search/activity.ts';
+import { bumpIndexGeneration, pruneSearchCache, trackIndexChanges } from './search/indexGeneration.ts';
 import { getSettings, SEARCH_LOG_KEEP_MS } from './settings.ts';
 import { pool, sleep } from './util/limiter.ts';
 
@@ -47,24 +48,28 @@ export function startSync(ctx: AppContext, marketplace?: string, force = false):
       .filter((m) => (marketplace ? m.name === marketplace : m.enabled === 1));
     ctl.setTotal(targets.length);
     const eager: string[] = [];
-    for (const m of targets) {
-      await ctl.checkpoint();
-      try {
-        await syncMarketplace(ctx.store, ctx.github, m.name, force);
-        ctl.tick();
-        if (m.index_mode === 'eager') eager.push(m.name);
-      } catch (err) {
-        ctl.tick(`${m.name}: ${String((err as Error).message ?? err).slice(0, 200)}`);
+    // B1: the index generation goes up only when this sync changed what a search returns (it runs at every start,
+    // and emptying the search cache each time left it empty); old cached searches are only aged out
+    await trackIndexChanges(ctx.store, async (flush) => {
+      for (const m of targets) {
+        await ctl.checkpoint();
+        try {
+          await syncMarketplace(ctx.store, ctx.github, m.name, force);
+          ctl.tick();
+          if (m.index_mode === 'eager') eager.push(m.name);
+        } catch (err) {
+          ctl.tick(`${m.name}: ${String((err as Error).message ?? err).slice(0, 200)}`);
+        }
       }
-    }
-    // Every list first, then the skills of the marketplace with the fewest plugins to read: Anthropic's own skills
-    // (5 plugins) used to wait about 100 s for the 300-plugin official list on a first run (2026-11-03).
-    const pending = new Map(eager.map((name) => [name, ctx.store.listPluginsNeedingIndex(name).length]));
-    for (const name of eager.sort((a, b) => pending.get(a)! - pending.get(b)!)) {
-      await indexPending(ctx, name, ctl);
-      ctx.store.clearSearchCache();
-    }
-    ctx.store.clearSearchCache();
+      // Every list first, then the skills of the marketplace with the fewest plugins to read: Anthropic's own skills
+      // (5 plugins) used to wait about 100 s for the 300-plugin official list on a first run (2026-11-03).
+      const pending = new Map(eager.map((name) => [name, ctx.store.listPluginsNeedingIndex(name).length]));
+      for (const name of eager.sort((a, b) => pending.get(a)! - pending.get(b)!)) {
+        await indexPending(ctx, name, ctl);
+        flush(); // each marketplace's skills searchable as soon as they are in (D#323b)
+      }
+    });
+    pruneSearchCache(ctx.store);
     if (!marketplace && getSettings(ctx.store).autoCollect) {
       startAutoCollect(ctx);
       const last = popularState(ctx).lastRunAt;
@@ -84,21 +89,49 @@ const REPO_META_MIN_SPLIT = 25;
 /** GitHub gave up on the query (502/503/504, usually when it takes too long) or our own 30 s limit ran out. */
 const gaveUp = (err: unknown) => (err instanceof GitHubError && [502, 503, 504].includes(err.status)) || (err as Error)?.name === 'TimeoutError';
 
+const NET_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'EPIPE', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT']);
+/**
+ * One request that broke on the way (problem P5): an answer cut short ("Unexpected end of JSON input") or the
+ * connection failing (fetch's TypeError, its cause carrying the code). Asking the same group again usually works.
+ */
+export const brokeOnTheWay = (err: unknown): boolean => {
+  if (err instanceof SyntaxError) return true;
+  const e = err as { name?: string; message?: string; code?: string; cause?: { code?: string } } | null;
+  if (!e) return false;
+  if (NET_CODES.has(e.code ?? '') || NET_CODES.has(e.cause?.code ?? '')) return true;
+  return e.name === 'TypeError' && /fetch failed|terminated|network|socket/i.test(e.message ?? '');
+};
+/** Pause before asking a group again after it broke on the way (tests set it to 0). */
+export const REPO_META_RETRY = { waitMs: 2000 };
+/** Groups in a row that broke even when asked again: the network is down, so the run stops until the next one. */
+const REPO_META_MAX_BROKEN = 3;
+
 /**
  * One group of repos, asked again in halves when GitHub gives up on it: a hundred lookups in one query can take
  * too long, and one 502 used to end the whole run, leaving the rest stale until the next one 6 hours later
- * (2026-11-03). Other errors (limit reached, network) still end the run.
+ * (2026-11-03). A group whose answer broke on the way (cut-short JSON, a dropped connection) is asked once more
+ * and then left for the next run, so the run goes on with the next group (P5). Other errors (limit reached)
+ * still end the run.
  */
-async function refreshRepoGroup(ctx: AppContext, repos: string[]): Promise<{ stored: number; left: number; error?: unknown }> {
+async function refreshRepoGroup(ctx: AppContext, repos: string[]): Promise<{ stored: number; left: number; error?: unknown; broken?: boolean }> {
   try {
     return { stored: await ctx.github.refreshRepoMeta(repos), left: 0 };
   } catch (err) {
+    if (brokeOnTheWay(err)) {
+      await sleep(REPO_META_RETRY.waitMs);
+      try {
+        return { stored: await ctx.github.refreshRepoMeta(repos), left: 0 };
+      } catch (again) {
+        if (!brokeOnTheWay(again) && !gaveUp(again)) throw again;
+        return { stored: 0, left: repos.length, error: again, broken: true };
+      }
+    }
     if (!gaveUp(err)) throw err;
     if (repos.length <= REPO_META_MIN_SPLIT) return { stored: 0, left: repos.length, error: err };
     const half = Math.ceil(repos.length / 2);
     const a = await refreshRepoGroup(ctx, repos.slice(0, half));
     const b = await refreshRepoGroup(ctx, repos.slice(half));
-    return { stored: a.stored + b.stored, left: a.left + b.left, error: b.error ?? a.error };
+    return { stored: a.stored + b.stored, left: a.left + b.left, error: b.error ?? a.error, broken: a.broken && b.broken };
   }
 }
 
@@ -114,12 +147,19 @@ export async function refreshRepoMeta(ctx: AppContext): Promise<number> {
   try {
     const repos = ctx.store.listReposToRefresh(new Date(Date.now() - REPO_META_STALE_MS).toISOString(), 10_000);
     let left = 0;
+    let brokenInRow = 0;
     for (let i = 0; i < repos.length; i += GRAPHQL_BATCH) {
       while (searchActivity.busy()) await sleep(500);
       const group = repos.slice(i, i + GRAPHQL_BATCH);
       const r = await refreshRepoGroup(ctx, group);
       stored += r.stored;
       left += r.left;
+      if (r.left === group.length && r.broken) {
+        // this group's answers broke twice: skip it, unless the last few all did (the network is down)
+        if (++brokenInRow >= REPO_META_MAX_BROKEN) throw r.error;
+        continue;
+      }
+      brokenInRow = 0;
       // not one piece answered: GitHub is down rather than slow, so stop asking until the next run
       if (r.left === group.length) throw r.error;
     }
@@ -178,7 +218,7 @@ export async function recheckRiskRules(ctx: AppContext, now = Date.now()): Promi
   } finally {
     riskRecheckRunning = false;
   }
-  if (changed > 0) ctx.store.clearSearchCache();
+  if (changed > 0) bumpIndexGeneration(ctx.store); // B1: rows whose flags changed show differently in searches
   if (checked > 0) console.log(`[risk recheck] ${checked} skills checked, ${changed} changed`);
   return { checked, changed };
 }
@@ -198,7 +238,7 @@ export function relevelRisk(ctx: AppContext): number {
     });
   }
   if (moved.length > 0) {
-    ctx.store.clearSearchCache();
+    bumpIndexGeneration(ctx.store);
     console.log(`[risk] ${moved.length} skills got a new level from their stored signals`);
   }
   return moved.length;
@@ -221,8 +261,7 @@ export function startPopularCollect(ctx: AppContext, background = false, force =
   const running = ctx.jobs.active('collect', POPULAR_JOB_LABEL);
   if (running) return running;
   return ctx.jobs.start('collect', POPULAR_JOB_LABEL, async (ctl) => {
-    await collectPopularRepos(ctx, ctl, background, force);
-    ctx.store.clearSearchCache();
+    await trackIndexChanges(ctx.store, () => collectPopularRepos(ctx, ctl, background, force));
   });
 }
 
@@ -240,7 +279,6 @@ export function startCollect(ctx: AppContext, marketplace: string, background = 
   const running = ctx.jobs.active('collect', marketplace);
   if (running) return running;
   return ctx.jobs.start('collect', marketplace, async (ctl) => {
-    await indexPending(ctx, marketplace, ctl, background);
-    ctx.store.clearSearchCache();
+    await trackIndexChanges(ctx.store, () => indexPending(ctx, marketplace, ctl, background));
   });
 }

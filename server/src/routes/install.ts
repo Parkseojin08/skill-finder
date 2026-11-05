@@ -5,6 +5,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { AppContext } from '../context.ts';
 import { buildSteps, planInstall } from '../install/plan.ts';
+import { installIsHighRisk } from '../install/acks.ts';
 import { executeInstall } from '../install/run.ts';
 import { existingSkillFolder, forgetPlugins, installedPluginCommits, listInstalledPlugins, pathKey, pluginCommitKey, pluginIndexInfo, pluginSkills, scanInstalledSkills, scanPluginSkills, type InstalledPlugin } from '../install/installed.ts';
 import { indexItem, storeLookup, type ResultItem } from '../search/result.ts';
@@ -25,6 +26,8 @@ const Body = z.object({
    * check: a dialog opened on an earlier preview (another scope or folder) names another one (review 2026-11-02).
    */
   overwrite: z.string().max(2000).optional(),
+  /** What the confirm dialog had ticked: `high`, "위 명령과 위험 신호를 확인했습니다" (feature review P7). */
+  acks: z.object({ high: z.boolean().optional() }).optional(),
 });
 
 const UninstallBody = z.object({
@@ -86,6 +89,11 @@ export function installRouter(ctx: AppContext): Router {
     }
     if (scope !== 'user' && !isProjectDir(projectPath)) {
       res.status(400).json({ error: '프로젝트 경로는 존재하는 디렉터리의 절대경로여야 합니다' });
+      return;
+    }
+    // high risk needs the dialog's tick, which the request carries; without it nothing runs (as for the overwrite below)
+    if (parsed.data.acks?.high !== true && installIsHighRisk(store, skill, plan)) {
+      res.status(400).json({ error: '위험 높음 스킬입니다. 설치 확인 창에서 명령과 위험 신호를 확인했다고 체크한 뒤 다시 설치하세요.' });
       return;
     }
     if (plan.method === 'skills-cli' && scope !== 'local') {
@@ -299,9 +307,10 @@ export function installRouter(ctx: AppContext): Router {
     }
     const project = asked ?? getSettings(store).defaultProjectPath;
     const listed = await listInstalledPlugins();
+    // "installed" badges mean installed for Claude Code: other agents' folders are not read here (review 2026-11-04)
     const skills = [
-      ...(await scanInstalledSkills(store, 'user', null)),
-      ...(isProjectDir(project) ? await scanInstalledSkills(store, 'project', project) : []),
+      ...(await scanInstalledSkills(store, 'user', null, undefined, { agents: 'claude' })),
+      ...(isProjectDir(project) ? await scanInstalledSkills(store, 'project', project, undefined, { agents: 'claude' }) : []),
     ];
     const inFolder = (p: InstalledPlugin) => !asked || (p.scope !== 'project' && p.scope !== 'local') || pathKey(p.projectPath ?? '') === pathKey(asked);
     res.json({

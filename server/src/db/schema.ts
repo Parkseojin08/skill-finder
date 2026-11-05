@@ -95,4 +95,7 @@ export const MIGRATIONS: string[] = [
   // Favorite GitHub repositories (user request 2026-11-03) are `repo:owner/name` rows; the description and topics the
   // search showed are kept with them, since the index has neither.
   `ALTER TABLE favorites ADD COLUMN meta_json TEXT;`,
+  // Where a renamed or transferred repo now lives (feature review P9): GitHub answers for the old name with the new
+  // one's data, and its name is kept here; NULL when it is where it was asked for.
+  `ALTER TABLE repos ADD COLUMN moved_to TEXT;`,
 ];

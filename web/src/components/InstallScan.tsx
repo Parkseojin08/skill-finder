@@ -10,8 +10,21 @@ const RUN_KIND: Record<RunConfigItem['kind'], string> = {
   bin: t('실행 파일 · bin/'),
 };
 
-/** A download-and-run line in an installed file: as serious as one in SKILL.md (needs the confirm tick). */
+/**
+ * The text rules on a plugin's commands (feature review F3 minimal, P1): each run-config item's signals, and the
+ * items with one. Older servers sent neither, so both are optional (web/src/types.ts is left as it is).
+ */
+type PluginConfig = Extract<Scan, { kind: 'plugin' }>['config'] & {
+  findings?: Array<{ kind: RunConfigItem['kind']; source: string; flags: string[] }>;
+};
+const itemFlags = (it: RunConfigItem) => (it as RunConfigItem & { flags?: string[] }).flags ?? [];
+
+/**
+ * A download-and-run line in an installed file, or in a plugin's hook, MCP server or monitor command: as serious as
+ * one in SKILL.md (needs the confirm tick; decision 10 for plugins).
+ */
 export function scanIsHigh(scan: Scan | null | undefined): boolean {
+  if (scan?.kind === 'plugin') return ((scan.config as PluginConfig).findings ?? []).some((f) => f.flags.includes('curlPipeShell'));
   return scan?.kind === 'files' && scan.scan.findings.some((f) => f.flags.includes('curlPipeShell'));
 }
 
@@ -25,16 +38,29 @@ export function InstallScanView({ scan, error, compact = false }: { scan: Scan |
   if (scan.kind === 'none') return null;
   if (scan.kind === 'plugin') {
     const { items, commit } = scan.config;
+    const findings = (scan.config as PluginConfig).findings ?? [];
     return (
       <div className="install-scan">
         <div className="muted small">{t('설치하면 실행되는 것')}</div>
+        {findings.length > 0 && (
+          <>
+            <p className={scanIsHigh(scan) ? 'warn-box' : 'note'}>{t('훅·MCP 서버·모니터 명령을 같은 규칙으로 검사했습니다. 위험 신호가 있는 설정 {0}개:', findings.length)}</p>
+            <ul className="scan-findings">
+              {findings.map((f, i) => (
+                <li key={i}>
+                  <code>{f.source}</code> <RiskFlags flags={f.flags} />
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         {items.length === 0 ? (
           <p className="muted small">{t('훅·MCP 서버·실행 파일이 없습니다.')}</p>
         ) : (
           items.map((it, i) => (
             <details key={i} className="scan-config" open={!compact && items.length === 1}>
               <summary>
-                {RUN_KIND[it.kind]} <code>{it.source}</code>
+                {RUN_KIND[it.kind]} <code>{it.source}</code> <RiskFlags flags={itemFlags(it)} />
               </summary>
               <pre>
                 {it.text}

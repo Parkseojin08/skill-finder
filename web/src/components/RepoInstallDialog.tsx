@@ -8,10 +8,10 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ApiError, apiGet, streamNdjson } from '../api.ts';
 import { forgetInstalled } from '../installed.ts';
 import { METHOD } from '../labels.ts';
-import type { InstallPreview, InstallScan, RepoResult, SettingsResponse } from '../types.ts';
+import type { InstallScan, RepoResult, SettingsResponse } from '../types.ts';
 import { RiskBadge, RiskSummary } from './Badges.tsx';
 import { FolderInput, rememberProject } from './FolderInput.tsx';
-import { needsOverwriteCheck, OverwriteNote } from './InstallPanel.tsx';
+import { needsOverwriteCheck, OverwriteNote, type InstallPreviewHigh } from './InstallPanel.tsx';
 import { CopyButton } from './CopyButton.tsx';
 import { InstallScanView, scanIsHigh } from './InstallScan.tsx';
 import { serverText, t } from '../i18n.ts';
@@ -47,7 +47,7 @@ export function RepoInstallDialog({
   const [selected, setSelected] = useState<Set<string>>(() => new Set(installable.map((s) => s.id)));
   const [scope, setScope] = useState<'user' | 'project'>(defaultProjectPath ? 'project' : 'user');
   const [projectPath, setProjectPath] = useState(defaultProjectPath ?? '');
-  const [previews, setPreviews] = useState<Record<string, InstallPreview>>({});
+  const [previews, setPreviews] = useState<Record<string, InstallPreviewHigh>>({});
   /** The other files each chosen skill installs, checked (project review F1); a failed check shows as an error line. */
   const [scans, setScans] = useState<Record<string, { scan: InstallScan | null; error?: string }>>({});
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +80,8 @@ export function RepoInstallDialog({
   }, [log]);
 
   const chosen = installable.filter((s) => selected.has(s.id));
-  const chosenHigh = chosen.filter((s) => s.riskLevel === 'high' || scanIsHigh(scans[s.id]?.scan));
+  // the server's own judgement too (a plugin's other skill can be high): it refuses those without acks.high (P7)
+  const chosenHigh = chosen.filter((s) => s.riskLevel === 'high' || previews[s.id]?.highRisk === true || scanIsHigh(scans[s.id]?.scan));
   const toOverwrite = chosen.filter((s) => needsOverwriteCheck(previews[s.id]?.existing));
   const toggle = (id: string, on: boolean) =>
     setSelected((cur) => {
@@ -97,7 +98,7 @@ export function RepoInstallDialog({
     setError(null);
     try {
       const pairs = await Promise.all(
-        chosen.map(async (s) => [s.id, await apiGet<InstallPreview>('/install/preview', { id: s.id, scope, projectPath: scope === 'user' ? undefined : projectPath })] as const),
+        chosen.map(async (s) => [s.id, await apiGet<InstallPreviewHigh>('/install/preview', { id: s.id, scope, projectPath: scope === 'user' ? undefined : projectPath })] as const),
       );
       const failed = pairs.find(([, p]) => p.error);
       if (failed) throw new Error(failed[1].error);
@@ -130,7 +131,9 @@ export function RepoInstallDialog({
       let ok = false;
       let answered = false;
       try {
-        const body = { id: s.id, scope, projectPath: scope === 'user' ? undefined : projectPath, overwrite: previews[s.id]?.existing?.path };
+        // the tick names these skills ("위험 높음 N개(…)를 확인했습니다"): only they carry it
+        const acks = { high: highChecked && chosenHigh.some((h) => h.id === s.id) };
+        const body = { id: s.id, scope, projectPath: scope === 'user' ? undefined : projectPath, overwrite: previews[s.id]?.existing?.path, acks };
         await streamNdjson<InstallEvent>('/install', body, (e) => {
           if (e.type === 'log') setLog((l) => [...l, e.line]);
           else {

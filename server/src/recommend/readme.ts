@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
 import type { Store } from '../db/store.ts';
+import { installsSuspect } from '../search/installsSuspect.ts';
 import { koreanTerm } from '../search/koreanTerms.ts';
 import { freshInstalls, freshness, matchTokens, popularity, stem, totalScore, TRUST_SCORE, trustTier } from '../search/rank.ts';
 import { buildResultItem, githubSource, marketplaceSource, storeLookup, type ResultItem } from '../search/result.ts';
@@ -370,9 +371,26 @@ export function matchSkills(store: Store, keywords: Keyword[], weights: Settings
     const k = x.skill.name.toLowerCase().replace(/[\s_]+/g, '-');
     groups.set(k, [...(groups.get(k) ?? []), x]);
   }
+  // A download count that looks inflated (F18; problem P4: a copy with 883K downloads and 18 stars led the list)
+  // counts as unknown, for picking the copy and for the order, as in search.
+  const counted = (s: (typeof scored)[number]['skill']) => {
+    const installs = freshInstalls(s);
+    const tier = trustTier(s, lookup.plugin(s.plugin_id));
+    const suspect = installsSuspect(store, {
+      repo: s.repo,
+      name: s.name,
+      nameDesc: s.name_desc_sha256,
+      origin: s.origin,
+      installs,
+      stars: starsOf(s.repo),
+      exempt: tier === 'official' || tier === 'partner',
+    });
+    return suspect ? { installs: null, suspect } : { installs, suspect: null };
+  };
   const unique = [...groups.values()]
-    .map((g) => g.sort((a, b) => trustOf(b.skill) - trustOf(a.skill) || (freshInstalls(b.skill) ?? -1) - (freshInstalls(a.skill) ?? -1) || b.score - a.score)[0])
-    .map((x) => ({ ...x, installs: freshInstalls(x.skill), stars: starsOf(x.skill.repo) }))
+    .map((g) => g.map((x) => ({ ...x, ...counted(x.skill) })))
+    .map((g) => g.sort((a, b) => trustOf(b.skill) - trustOf(a.skill) || (b.installs ?? -1) - (a.installs ?? -1) || b.score - a.score)[0])
+    .map((x) => ({ ...x, stars: starsOf(x.skill.repo) }))
     .sort((a, b) => byPopularity(a, b) || b.score - a.score || a.skill.id.localeCompare(b.skill.id))
     .slice(0, CONFIG.maxResults);
 
@@ -397,7 +415,7 @@ export function matchSkills(store: Store, keywords: Keyword[], weights: Settings
       breakdown,
       score: totalScore(breakdown, weights),
     });
-    return { item, score: Math.round(x.score * 100) / 100, matchedTerms: x.matched };
+    return { item: x.suspect ? { ...item, installsSuspect: x.suspect } : item, score: Math.round(x.score * 100) / 100, matchedTerms: x.matched };
   });
 }
 

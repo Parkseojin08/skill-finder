@@ -44,8 +44,18 @@ type GraphRepo = {
   isFork?: unknown;
   licenseInfo?: { spdxId?: unknown } | null;
   defaultBranchRef?: { name?: unknown } | null;
+  nameWithOwner?: unknown;
 };
 const REPO_RE = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
+
+/**
+ * P9: GitHub answers for a renamed or transferred repo under its old name with the new one's data; its name then
+ * differs from the one asked for (case aside, GitHub names ignore it). The new name, or null when it did not move.
+ */
+export function movedName(asked: string, answered: unknown): string | null {
+  if (typeof answered !== 'string' || !REPO_RE.test(answered)) return null;
+  return answered.toLowerCase() === asked.toLowerCase() ? null : answered;
+}
 /** A relative path inside a repo: no leading slash, backslash, empty, `.` or `..` segment, control character. */
 function isSafeRepoPath(path: string): boolean {
   return path.length <= 1024 && !/[\\\x00-\x1f]/.test(path) && path.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
@@ -366,6 +376,8 @@ export class GitHub {
         fetched_at: new Date().toISOString(),
       };
       this.store.upsertRepo(row);
+      row.moved_to = movedName(repo, j.full_name);
+      this.store.setRepoMovedTo(row.full_name, row.moved_to);
       return row;
     } catch {
       return cached ?? null;
@@ -390,7 +402,7 @@ export class GitHub {
       vars[`o${i}`] = owner;
       vars[`n${i}`] = name;
       defs.push(`$o${i}: String!, $n${i}: String!`);
-      fields.push(`r${i}: repository(owner: $o${i}, name: $n${i}) { stargazerCount pushedAt isArchived isFork licenseInfo { spdxId } defaultBranchRef { name } }`);
+      fields.push(`r${i}: repository(owner: $o${i}, name: $n${i}) { stargazerCount pushedAt isArchived isFork licenseInfo { spdxId } defaultBranchRef { name } nameWithOwner }`);
     });
     const res = await fetch(`${API}/graphql`, {
       method: 'POST',
@@ -423,6 +435,7 @@ export class GitHub {
           license: typeof g.licenseInfo?.spdxId === 'string' ? g.licenseInfo.spdxId : null,
           default_branch: typeof g.defaultBranchRef?.name === 'string' ? g.defaultBranchRef.name : null,
         });
+        this.store.setRepoMovedTo(base.full_name, movedName(repo, g.nameWithOwner));
         stored++;
       } else if (notFound.has(`r${i}`)) {
         if (cached?.stars != null) {

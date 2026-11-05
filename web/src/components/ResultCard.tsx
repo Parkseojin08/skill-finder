@@ -4,6 +4,7 @@ import { CATEGORY, formatAgo, formatCount } from '../labels.ts';
 import { TRANSLATE_TO, useKorean } from '../translate.ts';
 import type { OpenedFrom, ResultItem } from '../types.ts';
 import { repoOf } from '../lib/resultOrder.ts';
+import { suspectReasonText, type SearchItem } from '../lib/searchExtras.ts';
 import { CopiesBadge, RiskSummary, SourceBadges } from './Badges.tsx';
 import { FavoriteButton } from './FavoriteButton.tsx';
 import { t } from '../i18n.ts';
@@ -49,6 +50,7 @@ export function ResultCard({
   onSelect: () => void;
 }) {
   const { ko, waiting } = useKorean(item.description, position);
+  const suspect = (item as SearchItem).installsSuspect;
   const repo = repoOf(item);
   // installing this skill installs the whole plugin, riskier skills included (UI debate 2-6)
   const pluginHigh = item.plugin?.topRisk === 'high' && item.riskLevel !== 'high';
@@ -98,6 +100,15 @@ export function ResultCard({
             <span className="stat" title={t('설치 수 (skills.sh)')}>
               <Icon name="download" size={14} /> <span className="sr-only">{t('설치 수 ')}</span>
               {formatCount(item.installs)}
+            </span>
+          )}
+          {suspect && (
+            // F18: the count is shown but not trusted; sorting treats it as unknown
+            <span
+              className="status-chip warn"
+              title={[...suspect.reasons.map(suspectReasonText), t('정렬할 때는 다운로드 수를 모르는 것으로 봅니다.')].join('\n')}
+            >
+              <Icon name="download" size={13} /> {formatCount(suspect.installs)} · {t('다운로드 수 의심')}
             </span>
           )}
           {item.stars != null && (

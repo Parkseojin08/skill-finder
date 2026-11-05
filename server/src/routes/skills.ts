@@ -1,10 +1,14 @@
 import { Router } from 'express';
+import { findHiddenContent } from '../analyze/hiddenContent.ts';
+import { RISK_RULES_VERSION } from '../analyze/risk.ts';
 import type { AppContext } from '../context.ts';
-import type { StoredFiles } from '../indexer.ts';
+import { recheckRisk, type StoredFiles } from '../indexer.ts';
+import { installIsHighRisk } from '../install/acks.ts';
 import { existingSkillFolder } from '../install/installed.ts';
 import { scanSkillFiles } from '../install/scan.ts';
 import { buildSteps, installLocation, planInstall, type InstallScope } from '../install/plan.ts';
 import { isProjectDir } from '../install/validate.ts';
+import { bumpIndexGeneration } from '../search/indexGeneration.ts';
 import { freshness, TRUST_SCORE, trustTier } from '../search/rank.ts';
 import { githubSource, marketplaceSource, treeUrl } from '../search/result.ts';
 import { getSettings } from '../settings.ts';
@@ -49,11 +53,24 @@ export function skillsRouter(ctx: AppContext): Router {
 
     let skillMd: string | null = null;
     let skillMdError: string | null = null;
+    let risk = { json: skill.risk_json, level: skill.risk_level, rules: skill.risk_rules ?? null };
     if (skill.repo && skill.ref && skill.dir_path != null) {
       try {
         const res2 = await github.getRawText(skill.repo, skill.ref, skill.dir_path ? `${skill.dir_path}/SKILL.md` : 'SKILL.md', MAX_FILE_BYTES);
         if (res2.text == null) skillMdError = `SKILL.md를 가져오지 못했습니다 (${res2.status})`;
-        else skillMd = sanitizeText(res2.text) + (res2.truncated ? '\n\n…(256KB에서 잘림)' : '');
+        else {
+          skillMd = sanitizeText(res2.text) + (res2.truncated ? '\n\n…(256KB에서 잘림)' : '');
+          // judged under older rules (the background re-check has not reached it yet): the file is here now, so judge
+          // it again and keep the result, as that re-check would (feature review P13). Only the same SKILL.md (hash).
+          if ((risk.rules ?? 0) < RISK_RULES_VERSION && !res2.truncated && skill.skill_md_sha256) {
+            const next = recheckRisk(skill, res2.text);
+            if (next && store.setSkillRisk(skill.id, skill.skill_md_sha256, next.risk_json, next.risk_level, RISK_RULES_VERSION)) {
+              // cards show the flags too, so a flag-only change counts, as in the background re-check
+              if (next.risk_level !== skill.risk_level || next.risk_json !== skill.risk_json) bumpIndexGeneration(store);
+              risk = { json: next.risk_json, level: next.risk_level, rules: RISK_RULES_VERSION };
+            }
+          }
+        }
       } catch (err) {
         skillMdError = `SKILL.md를 가져오지 못했습니다 (${String((err as Error).message ?? err).slice(0, 100)})`;
       }
@@ -86,16 +103,24 @@ export function skillsRouter(ctx: AppContext): Router {
       stars: repoMeta?.stars ?? null,
       license: repoMeta?.license ?? null,
       archived: repoMeta?.archived === 1,
+      movedTo: repoMeta?.moved_to ?? null,
       lastCommitAt: skill.last_commit_at,
       frontmatter: skill.frontmatter_json ? JSON.parse(skill.frontmatter_json) : {},
       bodyLines: skill.body_lines,
       /** Absolute parts of the score; R and P are relative to a result set and come from the result card. */
       partialBreakdown: { F: freshness(skill.last_commit_at), T: TRUST_SCORE[trustTier(skill, plugin)] },
-      riskLevel: skill.risk_level,
-      riskFlags: skill.risk_json ? JSON.parse(skill.risk_json) : [],
+      riskLevel: risk.level,
+      riskFlags: risk.json ? JSON.parse(risk.json) : [],
+      /**
+       * The level is from older risk rules than the app's (null: before versions) because the SKILL.md could not be
+       * read again to judge it under the current ones (feature review P13). Well-known rows have no SKILL.md.
+       */
+      riskRulesStale: skill.origin !== 'wellknown' && (risk.rules ?? 0) < RISK_RULES_VERSION,
       qualityWarnings: skill.quality_json ? JSON.parse(skill.quality_json) : [],
       skillMd,
       skillMdError,
+      // what the rendered SKILL.md hides but Claude reads, as offsets into skillMd (feature review F2)
+      hiddenContent: skillMd ? findHiddenContent(skillMd) : { spans: [], more: false },
       files: files.files.map((f) => ({ path: f.path, size: f.size, isText: isTextPath(f.path) })),
       filesTotal: files.total,
       plugin: plugin
@@ -210,6 +235,8 @@ export function skillsRouter(ctx: AppContext): Router {
       steps: steps.map((s) => ({ display: s.display, cwd: s.cwd, note: s.note })),
       location: installLocation(plan, scope, projectPath),
       createsLockFile: plan.method === 'skills-cli' && scope === 'project',
+      // the install needs the dialog's high-risk tick (acks.high), as the server decides it (feature review P7)
+      highRisk: installIsHighRisk(store, skill, plan),
       // the skills CLI replaces a folder of the same name without asking (-y, D-5): say so before the install
       existing: plan.method === 'skills-cli' && scope !== 'local' ? await existingSkillFolder(store, skill.id, plan.skillName!, scope, projectPath) : null,
     });

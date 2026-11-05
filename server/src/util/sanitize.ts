@@ -23,8 +23,9 @@ export function sanitizeText(input: string): string {
 }
 
 // Direction overrides/isolates and marks, zero-width space, word joiner, BOM: invisible, and able to make a
-// name read as something else ("txt.exe" shown as "exe.txt").
-const INVISIBLE_RE = /[؜​‎‏‪-‮⁠⁦-⁩﻿]/g;
+// name read as something else ("txt.exe" shown as "exe.txt"). Also Unicode tag characters (U+E0000–E007F, a
+// surrogate pair each): invisible, and able to carry a whole sentence only Claude reads (feature review P2).
+const INVISIBLE_RE = /[؜​‎‏‪-‮⁠⁦-⁩﻿]|\uDB40[\uDC00-\uDC7F]/g;
 // Zero-width (non-)joiners shape Persian, Indic scripts and emoji, so descriptions keep them; names do not.
 const JOINER_RE = /[‌‍]/g;
 

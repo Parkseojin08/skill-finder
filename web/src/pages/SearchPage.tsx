@@ -14,6 +14,7 @@ import { fileStem, resultsJson, resultsMarkdown, saveFile } from '../lib/exportL
 import { goInApp } from '../lib/links.ts';
 import { readPageSize, savePageSize } from '../lib/prefs.ts';
 import { byPopular, foldResults, nameMatches, navigationalWord, repoMainSkill, SORTS, type SortKey } from '../lib/resultOrder.ts';
+import type { SearchResults } from '../lib/searchExtras.ts';
 import type { Health, Job, OpenedFrom, ResultItem, RiskLevel, SearchEvent, SearchSource, SettingsResponse, SourceKind, SourceProgress } from '../types.ts';
 import { serverText, t } from '../i18n.ts';
 import { tj } from '../i18nNodes.tsx';
@@ -119,7 +120,10 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   const [warnings, setWarnings] = useState<Array<{ source: string; message: string; severity?: 'urgent' | 'note' }>>([]);
   const [items, setItems] = useState<ResultItem[]>([]);
   const [provisional, setProvisional] = useState(false);
-  const [final, setFinal] = useState<Extract<SearchEvent, { type: 'results' }> | null>(null);
+  const [final, setFinal] = useState<SearchResults | null>(null);
+  /** The results on screen are a cached search from before the index changed (B1); the new ones replace them. */
+  const [stale, setStale] = useState(false);
+  const staleRef = useRef(false);
   const [doneInfo, setDoneInfo] = useState<{ cached: boolean; elapsedMs: number } | null>(null);
   /** This search in the local search log; the cards opened from it point back to it. */
   const [sid, setSid] = useState<string | undefined>(undefined);
@@ -287,6 +291,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       setOpenRepos(new Set());
       setOpenNames(new Set());
       setProvisional(false);
+      setStale(false);
+      staleRef.current = false;
       setLastQuery(text);
       onQuery(text);
       searchedWith.current = { risk, sources: useSources };
@@ -313,14 +319,20 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 setWarnings((w) => [...w, { source: e.source, message: serverText(e.message), severity: e.severity }]);
                 break;
               case 'candidates':
+                // the earlier results stay until this search's own results come (no flash of first cards)
+                if (staleRef.current) break;
                 setItems(e.items);
                 setProvisional(true);
                 break;
-              case 'results':
-                setItems(e.items);
+              case 'results': {
+                const r = e as SearchResults;
+                staleRef.current = !!r.stale;
+                setStale(!!r.stale);
+                setItems(r.items);
                 setProvisional(false);
-                setFinal(e);
+                setFinal(r);
                 break;
+              }
               case 'done':
                 setDoneInfo({ cached: e.cached, elapsedMs: e.elapsedMs });
                 setSid(e.sid);
@@ -798,8 +810,39 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 </button>
               </div>
             )}
+            {status === 'done' && !stale && final?.spelling && (
+              // user decision 6: two swapped letters, offered as a button only (the query stays as typed)
+              <div className="warn-strip">
+                <Icon name="info" size={15} /> <span>{t('검색어에 철자가 바뀐 단어가 있는 것 같아요.')}</span>
+                <button
+                  type="button"
+                  className="status-chip action"
+                  onClick={() => {
+                    setQuery(final.spelling!.query);
+                    run(final.spelling!.query);
+                  }}
+                >
+                  {tj('{0}로 찾기', <span className="mono">{final.spelling.query}</span>)}
+                </button>
+              </div>
+            )}
           </div>
 
+          {!stale && (final?.aliases?.length ?? 0) > 0 && (
+            // user decision 5: the query on screen stays as typed; this says what was searched along with it
+            <p className="muted small">
+              {final!.aliases!.map((a) => (
+                <span key={a.from}>
+                  {tj('{0} → {1}도 함께 찾음', <span className="mono">{a.from}</span>, <span className="mono">{a.to.join(', ')}</span>)}{' '}
+                </span>
+              ))}
+            </p>
+          )}
+          {stale && status === 'running' && (
+            <p className="muted small">
+              <span className="spinner" aria-hidden="true" /> {t('이전 결과 · 갱신 중')}
+            </p>
+          )}
           {provisional && items.length > 0 && <p className="muted small">{t('임시 결과입니다. 후보 확인이 끝나면 갱신됩니다.')}</p>}
 
           {currentPage === 1 && (final?.repos?.length ?? 0) > 0 && (

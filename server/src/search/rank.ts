@@ -1,5 +1,6 @@
 import type { PluginRow, SkillRow } from '../db/store.ts';
 import { COMMUNITY_MARKETPLACES, PARTNER_MARKETPLACES, type Settings } from '../settings.ts';
+import { queryAliases, type AliasUse } from './queryAliases.ts';
 
 export type Breakdown = { R: number; P: number; F: number; T: number };
 
@@ -88,8 +89,26 @@ export function matchTokens(text: string): string[] {
   return words.filter((t) => t.length >= 2 && !MATCH_STOPWORDS.has(t)).map(stem);
 }
 
-/** Shares of the query words found in the name, in the description, in either; and the query as a phrase. */
-export type LexicalMatch = { name: number; text: number; any: number; phrase: number };
+/**
+ * Shares of the query words found in the name, in the description, in either; and the query as a phrase.
+ * `aliased`: query words found only through an alias (queryAliases.ts), with the alias words that matched.
+ */
+export type LexicalMatch = { name: number; text: number; any: number; phrase: number; aliased?: AliasUse[] };
+
+/** The query's aliases by the stem of the query word: [alias as written, its stem]. Kept for the last query. */
+let aliasMemo: { query: string; map: Map<string, Array<[string, string]>>; raw: Map<string, string> } | null = null;
+function aliasStems(query: string): { map: Map<string, Array<[string, string]>>; raw: Map<string, string> } {
+  if (aliasMemo?.query === query) return aliasMemo;
+  const map = new Map<string, Array<[string, string]>>();
+  const raw = new Map<string, string>();
+  for (const [w, list] of queryAliases(query)) {
+    const k = stem(w);
+    map.set(k, [...(map.get(k) ?? []), ...list.map((a): [string, string] => [a, stem(a)])]);
+    raw.set(k, w);
+  }
+  aliasMemo = { query, map, raw };
+  return aliasMemo;
+}
 
 /**
  * The query words a result is matched against:
@@ -124,12 +143,24 @@ export function lexicalMatch(query: string, name: string, text: string): Lexical
   const nameSet = textWords(name.replace(/[-_.]+/g, ' '));
   const textSet = textWords(text);
   // a longer query word also matches as a prefix ("docker" in "dockerfile"); short ones ("pdf", "ui") must be exact
-  const has = (set: Set<string>, t: string) => set.has(t) || (t.length >= 4 && [...set].some((w) => w.startsWith(t)));
+  const own = (set: Set<string>, t: string) => set.has(t) || (t.length >= 4 && [...set].some((w) => w.startsWith(t)));
+  // an alias matches as a whole word only, as measured ("ppt" → "pptx", "k8s" → "kubernetes")
+  const { map: aliases, raw } = aliasStems(query);
+  const viaAlias = (set: Set<string>, t: string) => (aliases.get(t) ?? []).filter(([, s]) => set.has(s)).map(([a]) => a);
+  const has = (set: Set<string>, t: string) => own(set, t) || viaAlias(set, t).length > 0;
   const cover = (set: Set<string>) => q.filter((t) => has(set, t)).length / q.length;
   const normalize = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   const phrase = q.length >= 2 && normalize(text).includes(normalize(query)) ? 1 : 0;
   const any = q.filter((t) => has(nameSet, t) || has(textSet, t)).length / q.length;
-  return { name: cover(nameSet), text: cover(textSet), any, phrase };
+  const aliased: AliasUse[] = [];
+  if (aliases.size > 0) {
+    for (const t of q) {
+      if (own(nameSet, t) || own(textSet, t)) continue;
+      const to = [...new Set([...viaAlias(nameSet, t), ...viaAlias(textSet, t)])];
+      if (to.length) aliased.push({ from: raw.get(t) ?? t, to });
+    }
+  }
+  return { name: cover(nameSet), text: cover(textSet), any, phrase, ...(aliased.length ? { aliased } : {}) };
 }
 
 /**

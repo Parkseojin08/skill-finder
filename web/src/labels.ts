@@ -16,6 +16,21 @@ export const RISK_FLAGS: Record<string, { label: string; meaning: string; info?:
   rmRf: { label: 'rm -rf', meaning: t('강제 삭제 명령이 들어 있습니다(정보).'), info: true },
   commandSource: { label: t('command 출처'), meaning: t('설치할 때 마켓플레이스가 지정한 명령이 실행됩니다.') },
   unscanned: { label: t('끝까지 검사 못 함'), meaning: t('SKILL.md가 512KB를 넘거나 frontmatter가 너무 커서 일부만 검사했습니다. 검사하지 못한 부분에 명령이 있을 수 있습니다.') },
+  hiddenContent: {
+    label: t('숨은 내용'),
+    meaning: t('화면에는 보이지 않지만 Claude는 읽는 내용이 있습니다(글이 든 HTML 주석, 숨김 HTML, 보이지 않는 글자, 긴 base64, 글자와 실제 주소가 다른 링크). SKILL.md 탭의 "Claude가 읽는 원문"에서 확인하세요.'),
+  },
+};
+
+/** The kinds of hidden content the SKILL.md tab marks in the raw text (server analyze/hiddenContent.ts). */
+export const HIDDEN_KIND: Record<string, string> = {
+  comment: t('HTML 주석'),
+  hiddenHtml: t('숨김 HTML'),
+  tagChars: t('태그 문자'),
+  bidi: t('방향 제어 문자'),
+  zeroWidth: t('폭 없는 글자 묶음'),
+  base64: t('긴 base64'),
+  linkMismatch: t('글자와 주소가 다른 링크'),
 };
 
 export const QUALITY: Record<string, { label: string; meaning: string; info?: boolean }> = {

@@ -6,7 +6,9 @@ import { InstallPanel, riskierSiblings, SiblingRiskNote } from '../components/In
 import { CopyButton } from '../components/CopyButton.tsx';
 import { ShareMenu } from '../components/ShareMenu.tsx';
 import { useInstalled } from '../installed.ts';
-import { Markdown, splitFrontmatter } from '../components/Markdown.tsx';
+import { splitFrontmatter } from '../components/Markdown.tsx';
+import { SkillMdView } from '../components/SkillMdView.tsx';
+import { SimilarSkills } from '../components/SimilarSkills.tsx';
 import { Translated } from '../components/Translated.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { HelpTip } from '../components/HelpTip.tsx';
@@ -336,6 +338,9 @@ export function SkillPage({
             {detail.plugin?.strictConflict && <p className="warn-box">{t('로드 실패 가능: strict:false 항목과 plugin.json이 모두 구성요소를 선언합니다.')}</p>}
           </section>
 
+          {/* after the risk: "then what else does this?" (F4) */}
+          <SimilarSkills skillId={detail.id} projectPath={projectPath} onOpenSkill={onOpenSkill} />
+
           <section>
             <h2>
               {t('점수')}
@@ -369,25 +374,19 @@ export function SkillPage({
             <p className="muted small">{t('SKILL.md는 원문(영어) 그대로 보여 줍니다. 요약은 개요 탭의 설명을 보세요.')}</p>
             {detail.origin === 'wellknown' && <p className="muted">{t('well-known 출처라 미리보기를 제공하지 않습니다.')}</p>}
             {detail.skillMdError && <p className="warn-box">{detail.skillMdError}</p>}
-            {md?.frontmatter && (
-              <details className="frontmatter">
-                <summary>frontmatter</summary>
-                <pre>{md.frontmatter}</pre>
-              </details>
-            )}
-            {md && (
-              <Markdown
-                text={md.body}
-                onRelativeLink={(path) => {
-                  if (detail.files.some((f) => f.path === path && f.isText)) {
-                    setTab('files');
-                    openFile(path);
-                  } else if (detail.url) {
-                    window.open(`${detail.url}/${path}`, '_blank', 'noopener,noreferrer');
-                  }
-                }}
-              />
-            )}
+            {/* rendered, or the raw text Claude reads with what the page hides marked (feature review F2) */}
+            <SkillMdView
+              detail={detail}
+              md={md}
+              onRelativeLink={(path) => {
+                if (detail.files.some((f) => f.path === path && f.isText)) {
+                  setTab('files');
+                  openFile(path);
+                } else if (detail.url) {
+                  window.open(`${detail.url}/${path}`, '_blank', 'noopener,noreferrer');
+                }
+              }}
+            />
           </section>
         </div>
       )}

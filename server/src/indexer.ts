@@ -7,6 +7,7 @@ import { genericAcceptor, type GenericAcceptor } from './discovery/genericRules.
 import { discoverPluginSkills, type MarketplaceEntry } from './discovery/pluginRules.ts';
 import { basename, joinPath, skillMdPath, TreeIndex } from './discovery/tree.ts';
 import type { PluginRow, SkillRow, Store } from './db/store.ts';
+import { textFileFlags } from './install/scan.ts';
 import { RepoUnreachableError } from './sources/gitTree.ts';
 import { RAW_MAX_BYTES, type GitHub, type RepoTree } from './sources/github.ts';
 import { normalizeSource, resolveRelativeRoot } from './sources/pluginSource.ts';
@@ -146,10 +147,56 @@ const WRITE_BATCH = 50;
  */
 export type RepoIndexResult = { skills: number; sha: string | null; unchanged: boolean; removed: number };
 
-/** One piece of what a plugin runs (hooks, MCP servers, monitors, bin/ files) and where it is written. */
-export type RunConfigItem = { kind: 'hooks' | 'mcp' | 'monitors' | 'bin'; source: string; text: string; truncated: boolean };
-export type PluginRunConfig = { commit: string; items: RunConfigItem[] };
+/**
+ * One piece of what a plugin runs (hooks, MCP servers, monitors, bin/ files) and where it is written. `flags`: the
+ * text rules (download-and-run, rm -rf) on its commands (feature review F3 minimal, P1).
+ */
+export type RunConfigItem = { kind: 'hooks' | 'mcp' | 'monitors' | 'bin'; source: string; text: string; truncated: boolean; flags: RiskFlag[] };
+/** `findings`: the items with a signal, as the file scan reports them (the page's confirm tick reads them). */
+export type PluginRunConfig = { commit: string; items: RunConfigItem[]; findings: Array<{ kind: RunConfigItem['kind']; source: string; flags: RiskFlag[] }> };
 const RUN_CONFIG_MAX_CHARS = 16_000;
+
+/**
+ * The command lines of a hooks / MCP / monitors config: each object's `command` with its `args` after it, as they
+ * would run. Walked without recursion (a deeply nested file cannot overflow the stack). Text that is not JSON is
+ * checked whole.
+ */
+export function runConfigCommands(value: unknown): string[] {
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return [value as string];
+    }
+  }
+  const lines: string[] = [];
+  const stack: unknown[] = [value];
+  while (stack.length) {
+    const v = stack.pop();
+    if (typeof v === 'string') continue;
+    if (Array.isArray(v)) {
+      for (const x of v) if (x && typeof x === 'object') stack.push(x);
+      continue;
+    }
+    if (!v || typeof v !== 'object') continue;
+    const o = v as Record<string, unknown>;
+    if (typeof o.command === 'string') {
+      const args = Array.isArray(o.args) ? o.args.filter((a): a is string => typeof a === 'string') : [];
+      lines.push([o.command, ...args].join(' '));
+    } else if (Array.isArray(o.command)) {
+      lines.push(o.command.filter((a): a is string => typeof a === 'string').join(' '));
+    }
+    for (const x of Object.values(o)) if (x && typeof x === 'object') stack.push(x);
+  }
+  return lines;
+}
+
+/** The text rules on a config's command lines (each line on its own, so one command's pipe never meets another's). */
+export function runConfigFlags(value: unknown): RiskFlag[] {
+  const flags = new Set<RiskFlag>();
+  for (const line of runConfigCommands(value)) for (const f of textFileFlags(line)) flags.add(f);
+  return [...flags];
+}
 
 type RepoSnapshot ={ tree: RepoTree; index: TreeIndex; read: (path: string) => Promise<string | null> };
 /** What single-skill lookups need from a repo: its tree, plugin layout, and the generic rules per folder. */
@@ -223,7 +270,9 @@ export class Indexer {
     const items: RunConfigItem[] = [];
     const show = (kind: RunConfigItem['kind'], source: string, value: unknown) => {
       const text = sanitizeText(typeof value === 'string' ? value : JSON.stringify(value, null, 2));
-      items.push({ kind, source, text: text.slice(0, RUN_CONFIG_MAX_CHARS), truncated: text.length > RUN_CONFIG_MAX_CHARS });
+      // the whole config is checked, not only the part shown; bin/ is a file list, not commands
+      const flags = kind === 'bin' ? [] : runConfigFlags(value);
+      items.push({ kind, source, text: text.slice(0, RUN_CONFIG_MAX_CHARS), truncated: text.length > RUN_CONFIG_MAX_CHARS, flags });
     };
     const readFile = async (kind: RunConfigItem['kind'], rel: string) => {
       const path = joinPath(root, rel.replace(/^\.\//, ''));
@@ -248,7 +297,8 @@ export class Indexer {
     await fromField('monitors', manifest?.monitors, `${manifestPath} monitors`);
     const bin = [...snap.index.files.keys()].filter((f) => f.startsWith(joinPath(root, 'bin') + '/'));
     if (bin.length) show('bin', joinPath(root, 'bin'), bin.slice(0, 50).join('\n') + (bin.length > 50 ? `\n… 외 ${bin.length - 50}개` : ''));
-    return { commit: sha, items };
+    const findings = items.filter((it) => it.flags.length > 0).map((it) => ({ kind: it.kind, source: it.source, flags: it.flags }));
+    return { commit: sha, items, findings };
   }
 
   /** Indexes the skills of one marketplace plugin; replaces its previous skill rows. Returns the skill count. */

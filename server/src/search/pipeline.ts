@@ -9,7 +9,11 @@ import { installSummary } from '../install/summary.ts';
 import { getSettings } from '../settings.ts';
 import { classifySkillsShSource, type SkillsShHit } from '../sources/skillsSh.ts';
 import { pool, Semaphore, sleep, withTimeout } from '../util/limiter.ts';
+import { indexGeneration } from './indexGeneration.ts';
+import { installsSuspect, type InstallsSuspect } from './installsSuspect.ts';
 import { koreanSuggestion } from './koreanTerms.ts';
+import { queryAliases, type AliasUse } from './queryAliases.ts';
+import { spellingSuggestion, type SpellingSuggestion } from './spelling.ts';
 import {
   blendRelevance,
   bm25ToRelevance,
@@ -50,7 +54,13 @@ export type SourceState = 'running' | 'done' | 'failed' | 'timeout' | 'skipped';
  * Part of the search cache key: bump it whenever what a cached search replays changes shape (results fields,
  * warning fields) or meaning, so older cached searches are not shown. test/pipeline.test.ts pins the shape.
  */
-export const RESULTS_VERSION = 21;
+export const RESULTS_VERSION = 22;
+/** How many generations back a cached search is still shown first as "이전 결과" while it is searched again. */
+const STALE_GENERATIONS = 8;
+/** Below this many indexed skills (a first run still collecting, D#323b) an older cached search is not shown first. */
+const STALE_MIN_SKILLS = 1000;
+/** Final results fewer than this offer a spelling fix for swapped letters (B4, user decision 6). */
+const SPELLING_FEW = 5;
 
 const SOURCE_NAME_KO: Record<SourceName, string> = { local: '내 PC 색인', skillssh: 'skills.sh', github: 'GitHub', repos: '같은 이름 저장소' };
 
@@ -83,6 +93,15 @@ export type SearchEvent =
       broadQuery?: boolean;
       /** Repositories named like a one-word query, shown above the skills. */
       repos?: RepoResult[];
+      /** Aliases that found shown results ("ppt → pptx도 함께 찾음"; B4, user decision 5). */
+      aliases?: AliasUse[];
+      /** Few results and a word with two letters swapped: the fixed query, offered as a button (user decision 6). */
+      spelling?: SpellingSuggestion;
+      /**
+       * A cached search from before the index last changed (B1), sent first while the search runs again; the
+       * fresh results replace it. Never stored.
+       */
+      stale?: boolean;
     }
   /** `sid`: this search in the search log (added by the route when the log is on), for the opened results. */
   | { type: 'done'; cached: boolean; elapsedMs: number; sid?: string };
@@ -94,6 +113,8 @@ export type SearchDeps = {
   githubWaitMs?: number;
   /** Overrides SEARCH_DEADLINE_MS (tests). */
   deadlineMs?: number;
+  /** Overrides STALE_MIN_SKILLS (tests). */
+  staleMinSkills?: number;
 };
 
 type Pending =
@@ -113,6 +134,14 @@ type Candidate = {
   /** Best position score (0..1) per source. */
   pos: Partial<Record<SourceKind, number>>;
   pending: Pending | null;
+  /**
+   * Found by name: a marketplace plugin named by the query, or the repo named like a one-word query. Such a
+   * skill is kept without a query word in its text (user decision A); a full-text hit alone no longer is (B4,
+   * user decision 4: porter stemming matched "localization" to "local").
+   */
+  viaName?: boolean;
+  /** Its download count looks inflated (F18): `installs` is then null for sorting. */
+  suspect?: InstallsSuspect;
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -177,19 +206,26 @@ export function isBroadQuery(query: string): boolean {
   return words.every((w) => STOPWORDS.has(w)) && words.some((w) => GENERIC_WORDS.has(w)) && !/\p{Script=Hangul}/u.test(query);
 }
 
-/** OR-query of distinct tokens for FTS5 (each token quoted, so no FTS syntax leaks through). */
+/** Each FTS token with its aliases (queryAliases.ts: "ppt" → "pptx", "powerpoint"), all quoted. */
+function aliasGroups(texts: string[]): string[][] {
+  const aliases = queryAliases(texts.join(' '));
+  return ftsTokens(texts).map((t) => [t, ...(aliases.get(t.slice(1, -1)) ?? []).map((a) => `"${a}"`)]);
+}
+
+/** OR-query of distinct tokens and their aliases for FTS5 (each token quoted, so no FTS syntax leaks through). */
 export function ftsQuery(texts: string[]): string | null {
-  const list = ftsTokens(texts);
+  const list = [...new Set(aliasGroups(texts).flat())];
   return list.length ? list.join(' OR ') : null;
 }
 
 /**
- * The same tokens, all required: searched first so skills with every word lead (null for one word). A word
- * with a Korean ending ("pdf에서") is left out, as its Latin part ("pdf") is already a token.
+ * The same tokens, all required (a word or one of its aliases): searched first so skills with every word lead
+ * (null for one word). A word with a Korean ending ("pdf에서") is left out, as its Latin part ("pdf") is already a
+ * token.
  */
 export function ftsAllQuery(texts: string[]): string | null {
-  const list = ftsTokens(texts).filter((t) => !(/[a-z0-9]/.test(t) && /\p{Script=Hangul}/u.test(t)));
-  return list.length >= 2 ? list.join(' AND ') : null;
+  const groups = aliasGroups(texts).filter((g) => !(/[a-z0-9]/.test(g[0]) && /\p{Script=Hangul}/u.test(g[0])));
+  return groups.length >= 2 ? groups.map((g) => (g.length > 1 ? `(${g.join(' OR ')})` : g[0])).join(' AND ') : null;
 }
 
 export function normalizeQuery(q: string): string {
@@ -258,7 +294,11 @@ export async function runSearch(
   const maxRisk: RiskLevel = filters.maxRisk ?? 'medium';
   // `r` is the result-item shape; bump it when items gain fields so cached searches are rebuilt.
   // c: cached results carry install commands naming the skills CLI version (`npx skills@x.y.z …`)
-  const key = cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: RESULTS_VERSION, k: RISK_RULES_VERSION, c: SKILLS_CLI_VERSION });
+  // g: the index generation (B1): a sync or collection that changed the index bumps it, so searches cached before
+  // are not replayed as they are (they used to be dropped after every sync, changed or not)
+  const generation = indexGeneration(store);
+  const keyOf = (g: number) => cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: RESULTS_VERSION, k: RISK_RULES_VERSION, c: SKILLS_CLI_VERSION, g });
+  const key = keyOf(generation);
 
   // The English query for a Korean one goes out first, cached search or not: it comes from the query alone,
   // and the button helps most exactly when there is little else to show.
@@ -266,13 +306,25 @@ export async function runSearch(
   const suggestQuery = suggestion?.query ?? null;
   if (suggestion) emit({ type: 'suggest', query: suggestion.query, dropped: suggestion.dropped });
 
+  const usable = (c: CachedSearch | undefined): c is CachedSearch => !!c && !(c.ttlMs && c.cachedAt && Date.now() - c.cachedAt > c.ttlMs);
   const cached = store.getCached(key, DAY_MS) as CachedSearch | undefined;
-  const fresh = cached && !(cached.ttlMs && cached.cachedAt && Date.now() - cached.cachedAt > cached.ttlMs);
-  if (cached && fresh) {
+  if (usable(cached)) {
     for (const w of cached.warnings) emit(w);
     emit(cached.results);
     emit({ type: 'done', cached: true, elapsedMs: Date.now() - t0 });
     return;
+  }
+  // The same search from an earlier generation (within a day) is shown first, marked, while it runs again; its
+  // warnings are not replayed (the new run sends its own). Not on a first run still collecting (D#323b): those
+  // results were partial, and a new search showed the new skills at once.
+  if (generation > 0 && store.countSkills() >= (deps.staleMinSkills ?? STALE_MIN_SKILLS)) {
+    for (let g = generation - 1; g >= Math.max(0, generation - STALE_GENERATIONS); g--) {
+      const old = store.getCached(keyOf(g), DAY_MS) as CachedSearch | undefined;
+      if (usable(old) && old.results.items.length > 0) {
+        emit({ ...old.results, stale: true });
+        break;
+      }
+    }
   }
 
   const warnings: CachedSearch['warnings'] = [];
@@ -302,11 +354,27 @@ export async function runSearch(
     lexicalMatch(query, c.skill!.name.slice(0, MATCH_NAME_MAX), [capped(c.skill!.description), capped(c.skill!.when_to_use)].join(' '));
   /**
    * Not one query word in the name or description (user decision A): mostly skills.sh's semantic matches and
-   * GitHub code-search hits on a SKILL.md body. Kept: anything the local index matched (`pos.marketplace`: its
-   * full-text search with stemming, a plugin matched by name, the repo named like a one-word query) and
-   * searches without an English word.
+   * GitHub code-search hits on a SKILL.md body. Kept: a skill found by name (a plugin matched by name, the repo
+   * named like a one-word query) and searches without an English word. A local full-text hit is kept only when
+   * the app's own word matching (stems, prefixes, aliases) also finds a query word (B4, user decision 4): the
+   * index's porter stemming joins words that are not the same ("localization" and "local").
    */
-  const noQueryWord = (c: Candidate, m: LexicalMatch) => m.any === 0 && latinQuery && c.pos.marketplace == null;
+  const noQueryWord = (c: Candidate, m: LexicalMatch) => m.any === 0 && latinQuery && !c.viaName;
+  /** The same download count rule everywhere (F18): a suspected count becomes unknown for sorting. */
+  const withSuspicion = (c: Candidate): Candidate => {
+    const s = c.skill;
+    if (!s || c.installs == null) return c;
+    const suspect = installsSuspect(store, {
+      repo: s.repo,
+      name: s.name,
+      nameDesc: s.name_desc_sha256,
+      origin: s.origin,
+      installs: c.installs,
+      stars: s.repo ? (store.getRepo(s.repo)?.stars ?? null) : null,
+      exempt: starsExempt(c),
+    });
+    return suspect ? { ...c, installs: null, suspect } : c;
+  };
 
   // 1. collect
   emit({ type: 'stage', stage: 'collect', message: '마켓플레이스·skills.sh·GitHub에서 후보를 모으는 중' });
@@ -441,7 +509,7 @@ export async function runSearch(
       if (skills.length === 0) return missed();
       if (p.type === 'plugin') {
         const plugin = store.getPlugin(p.plugin.id) ?? p.plugin;
-        for (const s of skills) late.push({ ...blank(s.id, s), sources: [marketplaceSource(s, plugin)], pos: { ...c.pos } });
+        for (const s of skills) late.push({ ...blank(s.id, s), sources: [marketplaceSource(s, plugin)], pos: { ...c.pos }, viaName: c.viaName });
       } else {
         late.push({ ...c, key: skills[0].id, skill: skills[0], pending: null });
       }
@@ -484,6 +552,7 @@ export async function runSearch(
       const source = plugin ? marketplaceSource(s, plugin) : githubSource(s);
       if (source) c.sources = mergeSources(c.sources, [source]);
       c.pos.marketplace = 1;
+      c.viaName = true;
       return c;
     });
   };
@@ -550,10 +619,12 @@ export async function runSearch(
           const c = upsert(s.id, () => blank(s.id, s));
           c.sources = mergeSources(c.sources, [marketplaceSource(s, h.plugin)]);
           c.pos.marketplace = Math.max(c.pos.marketplace ?? 0, score);
+          c.viaName = true;
         }
       } else if (h.plugin.repo) {
         const c = upsert(`pl:${h.plugin.id}`, () => blank(`pl:${h.plugin.id}`, null, { type: 'plugin', plugin: h.plugin }));
         c.pos.marketplace = Math.max(c.pos.marketplace ?? 0, score);
+        c.viaName = true;
         startLookup(c);
       }
     });
@@ -648,7 +719,7 @@ export async function runSearch(
       return !belowMinStars(c, 1) && !noQueryWord(c, matchOf(c));
     });
     const items: ResultItem[] = [];
-    for (const c of dedupeByContent(shown.map((c) => ({ ...c, installs: c.installs ?? freshInstalls(c.skill!) })), lookup)) {
+    for (const c of dedupeByContent(shown.map((c) => withSuspicion({ ...c, installs: c.installs ?? freshInstalls(c.skill!) })), lookup)) {
       if (items.length >= MAX_RESULTS) break;
       const s = c.skill!;
       const st = s.repo ? storedStarsOf(s.repo) : null;
@@ -757,7 +828,9 @@ export async function runSearch(
       const s = c.skill;
       const copyOf = s?.skill_md_sha256 ? byContent.get(s.skill_md_sha256) : undefined;
       if (copyOf) {
-        if (c.installs != null) copyOf.installs = (copyOf.installs ?? 0) + c.installs;
+        // a low-star copy with a suspected count (F18) adds nothing (it is what inflated the original before)
+        const own = withSuspicion(c).installs;
+        if (own != null) copyOf.installs = (copyOf.installs ?? 0) + own;
         copyOf.sources = mergeSources(copyOf.sources, c.sources);
         continue;
       }
@@ -769,11 +842,12 @@ export async function runSearch(
 
   /** Scores the indexed candidates plus the resolved ones; `final` also refreshes star counts from GitHub. */
   async function buildResults(resolved: Candidate[], final: boolean): Promise<Extract<SearchEvent, { type: 'results' }>> {
-    const merged = mergeById([...ready, ...resolved]);
-    for (const c of merged) {
+    const merged = mergeById([...ready, ...resolved]).map((c) => {
       if (c.installs != null && c.skill) store.setSkillInstalls(c.skill.id, c.installs); // the latest count, even 0 (U4)
       if (c.installs == null && c.skill) c.installs = freshInstalls(c.skill);
-    }
+      // before copies are merged, so a suspected count is not added to the copy shown (F18)
+      return withSuspicion(c);
+    });
     // The risk filter comes before merging copies: a hidden high-risk representative used to take its
     // lower-risk copies with it, and high-risk candidates held places in the top MAX_ENRICH.
     const risky: Candidate[] = [];
@@ -834,19 +908,27 @@ export async function runSearch(
     let hiddenNoDescription = 0;
     let hiddenNoMatch = 0;
     const items: ResultItem[] = [];
-    for (const c of finalists) {
-      const s = c.skill!;
+    /** Results a query word matched only through an alias, by id. */
+    const aliasOf = new Map<string, AliasUse[]>();
+    for (const found of finalists) {
+      const s = found.skill!;
       // Name-only hits (well-known sources without a description) can't be judged or read.
       if (!s.description) {
         hiddenNoDescription++;
         continue;
       }
-      const m = matchOf(c);
-      if (noQueryWord(c, m)) {
+      const m = matchOf(found);
+      if (noQueryWord(found, m)) {
         hiddenNoMatch++;
         continue;
       }
+      if (m.aliased) aliasOf.set(s.id, m.aliased);
       const st = s.repo ? (stars.get(s.repo.toLowerCase()) ?? null) : null;
+      // checked again with the star count just fetched (the first check used the stored one)
+      const fresh = !found.suspect && found.installs != null && st != null
+        ? installsSuspect(store, { repo: s.repo, name: s.name, nameDesc: s.name_desc_sha256, origin: s.origin, installs: found.installs, stars: st, exempt: starsExempt(found) })
+        : null;
+      const c = fresh ? { ...found, installs: null, suspect: fresh } : found;
       const breakdown: Breakdown = {
         R: relevance(c, best, worst, m),
         P: popularity({ installs: c.installs, stars: st }, maxInstalls, maxStars),
@@ -874,9 +956,15 @@ export async function runSearch(
       }))
       // a skill finder: a same-named repo without skills (facebook/react for "react") is not a result
       .filter((r) => r.skills.length > 0);
+    const shownItems = items.slice(0, MAX_RESULTS);
+    const aliasUses = new Map<string, Set<string>>();
+    for (const it of shownItems) for (const a of aliasOf.get(it.id) ?? []) aliasUses.set(a.from, new Set([...(aliasUses.get(a.from) ?? []), ...a.to]));
+    const aliases: AliasUse[] = [...aliasUses].map(([from, to]) => ({ from, to: [...to] }));
+    // only when there is little to show, and only from the final results (the dictionary takes ~0.4 s to build once)
+    const spelling = final && shownItems.length < SPELLING_FEW && latinQuery ? spellingSuggestion(store, query) : null;
     return {
       type: 'results' as const,
-      items: items.slice(0, MAX_RESULTS),
+      items: shownItems,
       hiddenHighRisk,
       hiddenNoDescription,
       hiddenLowStars,
@@ -886,6 +974,8 @@ export async function runSearch(
       ...(isBroadQuery(query) ? { broadQuery: true } : {}),
       repos: repoCards,
       ...(suggestQuery ? { suggestQuery } : {}),
+      ...(aliases.length ? { aliases } : {}),
+      ...(spelling ? { spelling } : {}),
     };
   }
 }
@@ -986,6 +1076,7 @@ function mergeById(list: Candidate[]): Candidate[] {
     }
     prev.sources = mergeSources(prev.sources, c.sources);
     prev.installs = maxNullable(prev.installs, c.installs);
+    if (c.viaName) prev.viaName = true;
     prev.bm25 = prev.bm25 == null ? c.bm25 : c.bm25 == null ? prev.bm25 : Math.min(prev.bm25, c.bm25);
     for (const [kind, v] of Object.entries(c.pos) as Array<[SourceKind, number]>) prev.pos[kind] = Math.max(prev.pos[kind] ?? 0, v);
   }
@@ -1062,13 +1153,18 @@ function dedupeByContent(cands: Candidate[], lookup: Lookup): Candidate[] {
       for (const [kind, v] of Object.entries(x.pos) as Array<[SourceKind, number]>) combined.pos[kind] = Math.max(combined.pos[kind] ?? 0, v);
     }
     combined.installs = anyInstalls ? installs : null;
+    if (g.some((x) => x.viaName)) combined.viaName = true;
+    // the copies' trusted downloads stand for the group; with none, the group's count is the suspected one
+    const suspect = anyInstalls ? undefined : (rep.suspect ?? g.find((x) => x.suspect)?.suspect);
+    if (suspect) combined.suspect = suspect;
+    else delete combined.suspect;
     merged.push(combined);
   }
   return merged;
 }
 
 function toItem(c: Candidate, lookup: Lookup, breakdown: Breakdown, weights: Breakdown, stars: number | null = null): ResultItem {
-  return buildResultItem({
+  const item = buildResultItem({
     skill: c.skill!,
     lookup,
     sources: c.sources.length ? c.sources : [githubSource(c.skill!) ?? { kind: 'github', label: 'GitHub', url: '' }],
@@ -1077,4 +1173,5 @@ function toItem(c: Candidate, lookup: Lookup, breakdown: Breakdown, weights: Bre
     breakdown,
     score: totalScore(breakdown, weights),
   });
+  return c.suspect && c.installs == null ? { ...item, installsSuspect: c.suspect } : item;
 }

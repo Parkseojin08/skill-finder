@@ -5,6 +5,7 @@ import { claudeVersion } from '../claude/cli.ts';
 import { ENV_PATH, saveGithubToken, SKILLS_CLI_VERSION } from '../config.ts';
 import type { AppContext } from '../context.ts';
 import { isPluginName, isRepo } from '../install/validate.ts';
+import { bumpIndexGeneration } from '../search/indexGeneration.ts';
 import { getSettings, saveSettings, SettingsSchema } from '../settings.ts';
 import { fetchMarketplaceManifest } from '../sources/marketplace.ts';
 import { parseGithubRepo } from '../sources/pluginSource.ts';
@@ -150,7 +151,8 @@ export function adminRouter(ctx: AppContext): Router {
       enabled: parsed.data.enabled ?? m.enabled === 1,
       index_mode: parsed.data.indexMode ?? m.index_mode,
     });
-    store.clearSearchCache();
+    // the index changed: cached searches show as earlier results until searched again (feature review B1)
+    bumpIndexGeneration(store);
     res.json({ marketplaces: marketplaces() });
   });
 
@@ -160,7 +162,7 @@ export function adminRouter(ctx: AppContext): Router {
       return;
     }
     store.deleteMarketplace(req.params.name);
-    store.clearSearchCache();
+    bumpIndexGeneration(store);
     res.json({ marketplaces: marketplaces() });
   });
 

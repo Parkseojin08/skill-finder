@@ -12,6 +12,10 @@ import { serverText, t } from '../i18n.ts';
 import { tj } from '../i18nNodes.tsx';
 
 type LogLine = { line: string; stream: string };
+/** The preview with the server's own high-risk judgement (feature review P7); types.ts is left as it is. */
+export type InstallPreviewHigh = InstallPreview & { highRisk?: boolean };
+/** What the confirm dialog had ticked, sent with /install (the server refuses high risk without `high`). */
+export type InstallAcks = { high?: boolean };
 type PluginSkill = NonNullable<SkillDetail['plugin']>['skills'][number];
 
 /**
@@ -94,7 +98,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
   const [scope, setScope] = useState<InstallScope>(plan.scopes.includes(defaultScope) ? defaultScope : (plan.scopes[0] ?? 'user'));
   const [projectPath, setProjectPath] = useState(defaultProjectPath);
   /** `key`: the scope and folder it was asked for; a preview for other input is not used (it may be on its way). */
-  const [preview, setPreview] = useState<(InstallPreview & { key: string }) | null>(null);
+  const [preview, setPreview] = useState<(InstallPreviewHigh & { key: string }) | null>(null);
   const inputKey = `${scope}|${scope === 'user' ? '' : projectPath}`;
   const [confirming, setConfirming] = useState(false);
   const [running, setRunning] = useState(false);
@@ -128,7 +132,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
       return;
     }
     const t = setTimeout(() => {
-      apiGet<InstallPreview>('/install/preview', { id: skill.id, scope, projectPath: scope === 'user' ? undefined : projectPath })
+      apiGet<InstallPreviewHigh>('/install/preview', { id: skill.id, scope, projectPath: scope === 'user' ? undefined : projectPath })
         .then((p) => alive && setPreview({ ...p, key }))
         .catch((e) => alive && setPreview({ plan, steps: [], location: '', error: String(e.message ?? e), key }));
     }, 250);
@@ -171,7 +175,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
     );
   }
 
-  const install = async () => {
+  const install = async (acks: InstallAcks) => {
     setConfirming(false);
     setRunning(true);
     setLog([]);
@@ -180,7 +184,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
     let failure: string | null = null;
     try {
       // the folder the dialog showed as replaced; the server checks it is still the one there
-      const body = { id: skill.id, scope, projectPath: scope === 'user' ? undefined : projectPath, overwrite: current?.existing?.path };
+      const body = { id: skill.id, scope, projectPath: scope === 'user' ? undefined : projectPath, overwrite: current?.existing?.path, acks };
       await streamNdjson<InstallEvent>('/install', body, (e) => {
         if (e.type === 'log') setLog((l) => [...l, { line: e.line, stream: e.stream }]);
         else {
@@ -277,6 +281,9 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
       <div className="badges">
         <RiskSummary level={skill.riskLevel} flags={skill.riskFlags} />
       </div>
+      {(skill as SkillDetail & { riskRulesStale?: boolean }).riskRulesStale && (
+        <p className="muted small">{t('이 위험 등급은 이전 위험 규칙으로 판정한 것입니다. SKILL.md를 다시 읽지 못해 지금 규칙(숨은 내용 등)으로는 아직 검사하지 못했습니다.')}</p>
+      )}
       <button type="button" className="primary" disabled={!ready || running} onClick={() => setConfirming(true)}>
         {running ? t('설치 중…') : (waiting ?? (current?.existing?.same ? t('다시 설치…') : t('설치…')))}
       </button>
@@ -317,7 +324,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
 
 function ConfirmDialog(props: {
   name: string;
-  preview: InstallPreview;
+  preview: InstallPreviewHigh;
   riskLevel: RiskLevel;
   riskFlags: string[];
   siblings: PluginSkill[];
@@ -326,12 +333,12 @@ function ConfirmDialog(props: {
   /** The file check could not run: installing anyway needs the tick, as for high risk. */
   scanFailed: boolean;
   onCancel: () => void;
-  onConfirm: () => void;
+  onConfirm: (acks: InstallAcks) => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   // High risk (this skill or one the plugin brings in) needs one deliberate tick (UI debate 2-9); about 1% of
   // skills, so the extra step is rare.
-  const high = props.riskLevel === 'high' || props.siblings.some((s) => s.riskLevel === 'high') || scanIsHigh(props.scan) || props.scanFailed;
+  const high = props.riskLevel === 'high' || props.siblings.some((s) => s.riskLevel === 'high') || props.preview.highRisk === true || scanIsHigh(props.scan) || props.scanFailed;
   const [checked, setChecked] = useState(false);
   const overwrite = needsOverwriteCheck(props.preview.existing);
   const [overwriteChecked, setOverwriteChecked] = useState(false);
@@ -388,7 +395,7 @@ function ConfirmDialog(props: {
         <button type="button" className="ghost" onClick={props.onCancel} autoFocus>
           {t('취소')}
         </button>
-        <button type="button" className="primary" onClick={props.onConfirm} disabled={(high && !checked) || (overwrite && !overwriteChecked)}>
+        <button type="button" className="primary" onClick={() => props.onConfirm({ high: high && checked })} disabled={(high && !checked) || (overwrite && !overwriteChecked)}>
           {props.preview.existing?.same ? t('다시 설치') : t('설치')}
         </button>
       </div>

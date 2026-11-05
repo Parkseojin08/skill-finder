@@ -10,6 +10,7 @@ import { favoritesRouter } from './routes/favorites.ts';
 import { recommendRouter } from './routes/recommend.ts';
 import { searchRouter } from './routes/search.ts';
 import { skillsRouter } from './routes/skills.ts';
+import { similarRouter } from './routes/similar.ts';
 import { translateFiles, translateRouter } from './routes/translate.ts';
 import type { SearchDeps } from './search/pipeline.ts';
 import { CSP, securityMiddleware } from './security.ts';
@@ -30,6 +31,7 @@ export function createApp(
   app.use('/api', healthRouter(ctx));
   app.use('/api', searchRouter(ctx, opts.searchDeps));
   app.use('/api', skillsRouter(ctx));
+  app.use('/api', similarRouter(ctx));
   app.use('/api', installRouter(ctx));
   app.use('/api', presetsRouter(ctx));
   app.use('/api', favoritesRouter(ctx));

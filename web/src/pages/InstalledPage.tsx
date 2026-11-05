@@ -24,32 +24,58 @@ const CHANGE: Record<InstallChange, string | null> = {
 };
 
 type Plugin = InstalledResponse['plugins'][number];
-type Skill = InstalledResponse['skills'][number];
+/**
+ * What the server adds to each skill row (feature review F9 stage 1, P8): the agents reading its folder, whether it
+ * is in Claude Code's folder (the only one the app removes from, D#0763), and the files besides SKILL.md with a signal.
+ */
+type AgentFields = {
+  agents?: Array<{ id: string; name: string }>;
+  removable?: boolean;
+  fileFindings?: Array<{ path: string; flags: string[] }>;
+};
+type Skill = InstalledResponse['skills'][number] & AgentFields;
 /** A row of the skills table: installed directly, or brought in by a plugin (removed with it). */
-type Row = (Skill & { plugin?: undefined }) | InstalledResponse['pluginSkills'][number];
+type Row = (Skill & { plugin?: undefined }) | (InstalledResponse['pluginSkills'][number] & AgentFields);
+
+const CLAUDE_CODE = 'claude-code';
+/** Rows from before the agents field are Claude Code's (the only folder read then). */
+const agentsOf = (r: Row) => r.agents ?? [{ id: CLAUDE_CODE, name: 'Claude Code' }];
+const forClaude = (r: Row) => agentsOf(r).some((a) => a.id === CLAUDE_CODE);
+/** The agents of server/src/install/agents.ts, in its order. */
+const AGENT_LABEL: Record<string, string> = {
+  'claude-code': 'Claude Code',
+  codex: 'Codex',
+  cursor: 'Cursor',
+  'gemini-cli': 'Gemini CLI',
+  'github-copilot': 'GitHub Copilot',
+  opencode: 'OpenCode',
+};
 
 /**
  * The table's own side filters above the search's provider/category/method ones (user request 2026-11-04): OR within
- * a group, AND across groups, like FacetPanel.
+ * a group, AND across groups, like FacetPanel. A row has several values when several agents read its folder.
  */
-type RowFilters = { scope: string[]; source: string[]; risk: string[]; indexed: string[] };
+type RowFilters = { agent: string[]; scope: string[]; source: string[]; risk: string[]; indexed: string[] };
 type RowGroup = keyof RowFilters;
-const NO_ROW_FILTERS: RowFilters = { scope: [], source: [], risk: [], indexed: [] };
-const ROW_VALUE: Record<RowGroup, (r: Row) => string> = {
-  scope: (r) => r.scope,
-  source: (r) => (r.plugin ? 'plugin' : 'direct'),
-  risk: (r) => r.risk.level,
-  indexed: (r) => (r.skillId ? 'yes' : 'no'),
+const NO_ROW_FILTERS: RowFilters = { agent: [], scope: [], source: [], risk: [], indexed: [] };
+const ROW_VALUE: Record<RowGroup, (r: Row) => string[]> = {
+  agent: (r) => agentsOf(r).map((a) => a.id),
+  scope: (r) => [r.scope],
+  source: (r) => [r.plugin ? 'plugin' : 'direct'],
+  risk: (r) => [r.risk.level],
+  indexed: (r) => [r.skillId ? 'yes' : 'no'],
 };
 const ROW_GROUPS = Object.keys(ROW_VALUE) as RowGroup[];
 const ROW_OPTIONS: Record<RowGroup, Record<string, string>> = {
+  agent: AGENT_LABEL,
   scope: { project: t('이 프로젝트'), user: t('개인 (모든 프로젝트)') },
   source: { direct: t('직접 설치'), plugin: t('플러그인에 포함') },
   risk: RISK_LEVEL,
   indexed: { yes: t('색인에 있음'), no: t('색인에 없음') },
 };
-const ROW_TITLE: Record<RowGroup, string> = { scope: t('범위'), source: t('설치 경로'), risk: t('위험'), indexed: t('색인') };
-const matchRow = (r: Row, f: RowFilters, skip?: RowGroup) => ROW_GROUPS.every((g) => g === skip || f[g].length === 0 || f[g].includes(ROW_VALUE[g](r)));
+const ROW_TITLE: Record<RowGroup, string> = { agent: t('에이전트'), scope: t('범위'), source: t('설치 경로'), risk: t('위험'), indexed: t('색인') };
+const matchRow = (r: Row, f: RowFilters, skip?: RowGroup) =>
+  ROW_GROUPS.every((g) => g === skip || f[g].length === 0 || ROW_VALUE[g](r).some((v) => f[g].includes(v)));
 type RemoveRequest = {
   key: string;
   label: string;
@@ -170,7 +196,8 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
 
   // Every skill Claude Code loads here, plugins' included (user report 2026-11-04), narrowed by the side filters and
   // shown a page at a time. Rows not in the index have no provider, category or method: those filters leave them out.
-  const rows: Row[] = [...(data?.skills ?? []), ...(data?.pluginSkills ?? [])];
+  const rows: Row[] = [...((data?.skills ?? []) as Skill[]), ...(data?.pluginSkills ?? [])];
+  const otherAgentRows = rows.filter((r) => !forClaude(r)).length;
   const itemOf = (r: Row) => (r.skillId ? (data?.items[r.skillId] ?? null) : null);
   const facetOk = (r: Row) => {
     if (facetCount(facets) === 0) return true;
@@ -179,8 +206,8 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
   };
   const shownRows = rows.filter((r) => matchRow(r, rowFilters) && facetOk(r));
   const unindexedSkills = rows.filter((r) => !r.skillId).length;
-  // a plugin that is off loads none of its skills
-  const perTurn = rows.filter((r) => r.plugin?.enabled !== false).reduce((n, r) => n + r.tokens.perTurn, 0);
+  // a plugin that is off loads none of its skills, and Claude Code does not read the other agents' folders
+  const perTurn = rows.filter((r) => r.plugin?.enabled !== false && forClaude(r)).reduce((n, r) => n + r.tokens.perTurn, 0);
   const pageCount = Math.max(1, Math.ceil(shownRows.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const pageRows = shownRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -205,7 +232,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
     <>
       {ROW_GROUPS.map((g) => {
         const counts = new Map<string, number>();
-        for (const r of rows) if (matchRow(r, rowFilters, g) && facetOk(r)) counts.set(ROW_VALUE[g](r), (counts.get(ROW_VALUE[g](r)) ?? 0) + 1);
+        for (const r of rows) if (matchRow(r, rowFilters, g) && facetOk(r)) for (const v of ROW_VALUE[g](r)) counts.set(v, (counts.get(v) ?? 0) + 1);
         return (
           <fieldset key={g} className="facet">
             <legend>{ROW_TITLE[g]}</legend>
@@ -391,6 +418,11 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
                 {t('색인에 없는 스킬 {0}개(앱 밖에서 설치했거나 아직 모으지 않은 스킬)는 상세 화면이 없고, 설치된 파일에 지금 규칙을 돌린 위험 등급만 보입니다.', unindexedSkills)}
               </p>
             )}
+            {otherAgentRows > 0 && (
+              <p className="muted small">
+                {t('다른 에이전트(Codex·Cursor·Gemini CLI·GitHub Copilot·OpenCode) 폴더의 스킬 {0}개도 함께 보입니다. 보기만 하고, 이 앱에서 지우지는 않습니다.', otherAgentRows)}
+              </p>
+            )}
             {rows.length === 0 ? (
               <p className="muted small">{t('설치된 스킬이 없습니다.')}</p>
             ) : (
@@ -442,6 +474,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
                       <thead>
                         <tr>
                           <th>{t('이름')}</th>
+                          <th>{t('에이전트')}</th>
                           <th>{t('범위')}</th>
                           <th>{t('설명')}</th>
                           <th>{t('위험')}</th>
@@ -479,6 +512,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
                                   </div>
                                 )}
                               </td>
+                              <td className="small">{agentsOf(s).map((a) => AGENT_LABEL[a.id] ?? a.name).join(', ')}</td>
                               <td>
                                 {s.scope === 'user' ? t('개인') : t('프로젝트')}
                                 {s.plugin && (
@@ -496,10 +530,20 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
                                 <RiskSummary level={s.risk.level} flags={s.risk.flags} />
                                 {s.installedRisk && s.installedRisk !== s.risk.level && <div className="muted small">{t('설치할 때는 {0}', RISK_LEVEL[s.installedRisk])}</div>}
                                 {CHANGE[s.change] && <div className="warn-text small">{CHANGE[s.change]}</div>}
+                                {(s.fileFindings?.length ?? 0) > 0 && (
+                                  <div className="muted small mono" title={s.fileFindings!.map((f) => `${f.path}: ${f.flags.join(', ')}`).join('\n')}>
+                                    {t('파일에서 찾음: {0}', s.fileFindings!.map((f) => f.path).join(', '))}
+                                  </div>
+                                )}
                               </td>
                               <td className="actions">
-                                {/* a plugin's skill goes with the plugin (its row above) */}
-                                {!s.plugin && (
+                                {/* a plugin's skill goes with the plugin (its row above); other agents' folders are shown only */}
+                                {!s.plugin && s.removable === false && (
+                                  <button type="button" className="ghost danger" disabled title={t('다른 에이전트 폴더의 스킬은 이 앱에서 지우지 않습니다. 그 에이전트에서 지우세요.')}>
+                                    {t('삭제')}
+                                  </button>
+                                )}
+                                {!s.plugin && s.removable !== false && (
                                   <button type="button" className="ghost danger" disabled={busy !== null} onClick={() => removeSkill(s)} aria-label={busy === key ? t('{0} 삭제 중', s.name) : t('{0} 삭제', s.name)} aria-busy={busy === key}>
                                     {busy === key ? t('삭제 중…') : t('삭제')}
                                   </button>
@@ -539,7 +583,8 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
               </div>
             )}
           </section>
-          <TeamPreset data={data} projectPath={projectPath} onInstalled={() => load(projectPath)} />
+          {/* a preset installs into Claude Code: the other agents' skills stay out of it */}
+          <TeamPreset data={{ ...data, skills: (data.skills as Skill[]).filter((s) => forClaude(s)) }} projectPath={projectPath} onInstalled={() => load(projectPath)} />
           <section>
             <InstallHistory />
           </section>

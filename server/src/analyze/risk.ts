@@ -1,3 +1,5 @@
+import { hasHiddenContent } from './hiddenContent.ts';
+
 export type RiskFlag =
   | 'scripts'
   | 'preapprovedBash'
@@ -12,15 +14,17 @@ export type RiskFlag =
   | 'curlPipeShell'
   | 'rmRf'
   | 'commandSource'
-  | 'unscanned';
+  | 'unscanned'
+  | 'hiddenContent';
 
 export type RiskLevel = 'low' | 'medium' | 'high';
 
 /**
  * Bumped whenever a rule reading the SKILL.md text changes, so rows checked under older rules are checked
  * again (stored per row, and part of the search cache key). 2: the wider download-and-run rule (U3).
+ * 3: hiddenContent, text the rendered page hides but Claude reads (feature review F2, decision 8).
  */
-export const RISK_RULES_VERSION = 2;
+export const RISK_RULES_VERSION = 3;
 
 /** Flags that come from the SKILL.md text; the others come from the file list or the plugin. */
 export const TEXT_RISK_FLAGS: ReadonlySet<RiskFlag> = new Set<RiskFlag>([
@@ -32,6 +36,7 @@ export const TEXT_RISK_FLAGS: ReadonlySet<RiskFlag> = new Set<RiskFlag>([
   'curlPipeShell',
   'rmRf',
   'unscanned',
+  'hiddenContent',
 ]);
 
 export type PluginSignals = { hooks: boolean; mcp: boolean; bin: boolean; monitors: boolean };
@@ -116,6 +121,7 @@ export function skillRiskFlags(input: SkillRiskInput): RiskFlag[] {
   if (hasCurlPipeShell(input.raw)) flags.add('curlPipeShell');
   if (hasRmRf(input.raw)) flags.add('rmRf');
   if (input.partial) flags.add('unscanned');
+  if (hasHiddenContent(input.raw)) flags.add('hiddenContent');
   return [...flags];
 }
 

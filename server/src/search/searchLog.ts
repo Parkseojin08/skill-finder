@@ -18,7 +18,8 @@ export function searchLogger(store: Store, query: string, filters: SearchFilters
   const srcFail: string[] = [];
   let logged = false;
   return (e) => {
-    if ((e.type === 'candidates' || e.type === 'results') && firstMs == null) firstMs = Date.now() - started;
+    // earlier results shown first (stale cache) are not this search's own first results
+    if ((e.type === 'candidates' || (e.type === 'results' && !e.stale)) && firstMs == null) firstMs = Date.now() - started;
     if (e.type === 'results') results = e;
     if (e.type === 'source' && (e.state === 'failed' || e.state === 'timeout')) srcFail.push(`${e.source}:${e.state}`);
     if (e.type !== 'done' || logged) return e;

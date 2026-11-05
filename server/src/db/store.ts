@@ -77,6 +77,8 @@ export type RepoRow = {
   default_branch: string | null;
   etag: string | null;
   fetched_at: string | null;
+  /** The repo's name now, when GitHub answered for this one under another (renamed or transferred); upsertRepo keeps it. */
+  moved_to?: string | null;
 };
 
 export type FtsSkillHit = { skill: SkillRow; bm25: number };
@@ -526,6 +528,11 @@ export class Store {
       r.etag,
       r.fetched_at,
     );
+  }
+
+  /** P9: the name GitHub gave for this repo when it differs (renamed or transferred), or null. */
+  setRepoMovedTo(fullName: string, movedTo: string | null): void {
+    this.run('UPDATE repos SET moved_to = ? WHERE full_name = ?', movedTo, fullName);
   }
 
   touchRepo(fullName: string): void {

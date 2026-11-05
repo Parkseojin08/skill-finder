@@ -1,7 +1,7 @@
 // What is installed on this PC and how it matches the index (UI debate stage 3: shown only, nothing is run).
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { readdir, readFile, realpath } from 'node:fs/promises';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, posix, resolve, sep } from 'node:path';
 import { extractSkillMeta } from '../analyze/frontmatter.ts';
@@ -9,9 +9,13 @@ import { riskLevel, skillRiskFlags, type RiskFlag, type RiskLevel } from '../ana
 import { runClaude } from '../claude/cli.ts';
 import { SKILLS_CLI_VERSION } from '../config.ts';
 import type { Store } from '../db/store.ts';
+import { looksBinary } from '../util/http.ts';
 import { truncate } from '../util/sanitize.ts';
+import { isTextPath, MAX_FILE_BYTES } from '../util/textFiles.ts';
 import { skillTokens } from '../util/tokens.ts';
+import { agentFolders, agentRef, CLAUDE_CODE, type AgentRef } from './agents.ts';
 import { parseJsonArray } from './run.ts';
+import { SCAN_MAX_FILES, textFileFlags } from './scan.ts';
 
 /** `same`: the installed SKILL.md is the indexed one; `changed`: the index holds different text (newer or edited). */
 export type Change = 'same' | 'changed' | 'unknown';
@@ -25,13 +29,19 @@ export type InstalledSkill = {
   removeCommand: string;
   /** The indexed skill it came from; null when it cannot be told (installed some other way, or not indexed). */
   skillId: string | null;
-  /** The current risk rules run on the installed files themselves. */
+  /** The current risk rules run on the installed files themselves: SKILL.md, and the text files beside it. */
   risk: { level: RiskLevel; flags: RiskFlag[] };
+  /** Text files other than SKILL.md with a signal (scripts first, at most SCAN_MAX_FILES read). */
+  fileFindings: Array<{ path: string; flags: RiskFlag[] }>;
   /** Its level when the app installed it, if the app did. */
   installedRisk: RiskLevel | null;
   change: Change;
   /** Context it takes (estimate): with every request, and when used. */
   tokens: { perTurn: number; onUse: number | null };
+  /** The agents that read this folder: one row for a folder several share (F9 stage 1). */
+  agents: AgentRef[];
+  /** In Claude Code's folder, the only place the app removes from (D#0763); other agents' folders are shown only. */
+  removable: boolean;
 };
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -56,7 +66,47 @@ async function listFiles(dir: string, prefix = '', out: string[] = []): Promise<
   return out;
 }
 
-type LockEntry = { source?: unknown; sourceType?: unknown; skillPath?: unknown };
+/** As scan.ts orders a folder's files before an install: scripts first, then the rest in path order. */
+const SCRIPT_EXT = /\.(sh|bash|zsh|fish|py|js|mjs|cjs|ts|rb|pl|ps1|psm1|bat|cmd)$/i;
+
+/** Text rules per local file, kept while its size and modification time stay the same (the page asks often). */
+const fileFlagCache = new Map<string, { size: number; mtimeMs: number; flags: RiskFlag[] }>();
+const FILE_CACHE_MAX = 5000;
+
+/**
+ * The text rules of the install check (scan.ts textFileFlags) run on a local skill folder's other text files
+ * (feature review P8): skills installed some other way were judged on SKILL.md alone. At most SCAN_MAX_FILES files of
+ * up to MAX_FILE_BYTES each, read from disk only; binary-looking, larger and unreadable files are passed over.
+ */
+async function localFileFindings(dir: string, files: string[]): Promise<Array<{ path: string; flags: RiskFlag[] }>> {
+  const text = files
+    .filter((f) => f !== 'SKILL.md' && isTextPath(f))
+    .sort((a, b) => Number(SCRIPT_EXT.test(b)) - Number(SCRIPT_EXT.test(a)) || a.localeCompare(b))
+    .slice(0, SCAN_MAX_FILES);
+  const out: Array<{ path: string; flags: RiskFlag[] }> = [];
+  for (const rel of text) {
+    const full = join(dir, ...rel.split('/'));
+    let flags: RiskFlag[];
+    try {
+      const st = await stat(full);
+      if (!st.isFile() || st.size > MAX_FILE_BYTES) continue;
+      const hit = fileFlagCache.get(full);
+      if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) flags = hit.flags;
+      else {
+        const body = await readFile(full, 'utf8');
+        flags = looksBinary(body) ? [] : textFileFlags(body);
+        if (fileFlagCache.size >= FILE_CACHE_MAX) fileFlagCache.clear();
+        fileFlagCache.set(full, { size: st.size, mtimeMs: st.mtimeMs, flags });
+      }
+    } catch {
+      continue; // gone or unreadable: not checked
+    }
+    if (flags.length) out.push({ path: rel, flags });
+  }
+  return out.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+type LockEntry ={ source?: unknown; sourceType?: unknown; skillPath?: unknown };
 /** skills CLI lock files: `skills-lock.json` in a project, `~/.agents/.skill-lock.json` for the user. */
 function readLock(file: string): Map<string, string> {
   const byFolder = new Map<string, string>();
@@ -80,43 +130,68 @@ export function skillFolderName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9._]+/g, '-').replace(/^[.\-]+|[.\-]+$/g, '').slice(0, 255) || 'unnamed-skill';
 }
 
+export type ScanOptions = {
+  /** `all` (default): every agent folder of agents.ts; `claude`: Claude Code's only (what an install overwrites). */
+  agents?: 'all' | 'claude';
+  /** The home folder (tests); the user's own otherwise. */
+  home?: string;
+};
+
 /**
- * Installed skill folders of one scope, each matched to the index by, in order: the skills CLI lock file
- * (source + path), the app's own install log (same name), or an identical SKILL.md (hash). `onlyFolder` limits
+ * Installed skill folders of one scope, in Claude Code's folder and the other agents' (F9 stage 1), each matched to
+ * the index by, in order: the skills CLI lock file (source + path), the app's own install log (same name, Claude
+ * Code's folder only: the app installs nowhere else), or an identical SKILL.md (hash). A folder reached twice (the
+ * CLI links an agent's folder to `~/.agents/skills`) is one row with every agent that reads it. `onlyFolder` limits
  * the scan to that folder.
  */
-export async function scanInstalledSkills(store: Store, scope: 'user' | 'project', projectPath: string | null, onlyFolder?: string): Promise<InstalledSkill[]> {
-  const root = scope === 'user' ? homedir() : projectPath!;
-  const dir = join(root, '.claude', 'skills');
-  const lock = readLock(scope === 'user' ? join(homedir(), '.agents', '.skill-lock.json') : join(root, 'skills-lock.json'));
+export async function scanInstalledSkills(store: Store, scope: 'user' | 'project', projectPath: string | null, onlyFolder?: string, opts: ScanOptions = {}): Promise<InstalledSkill[]> {
+  const home = opts.home ?? homedir();
+  const root = scope === 'user' ? home : projectPath!;
+  const lock = readLock(scope === 'user' ? join(home, '.agents', '.skill-lock.json') : join(root, 'skills-lock.json'));
   const logged = new Map<string, { id: string; risk: string | null }>();
   for (const l of store.listInstalledSkillLog()) {
     if (l.scope !== scope || (scope === 'project' && l.project_path?.toLowerCase() !== root.toLowerCase())) continue;
     const name = store.getSkill(l.skill_id)?.name.toLowerCase();
     if (name && !logged.has(name)) logged.set(name, { id: l.skill_id, risk: l.risk_level });
   }
-  let entries: string[] = [];
-  try {
-    entries = (await readdir(dir, { withFileTypes: true })).filter((e) => e.isDirectory() || e.isSymbolicLink()).map((e) => e.name);
-  } catch {
-    return [];
-  }
+  const folders = agentFolders(scope, root).filter((f) => opts.agents !== 'claude' || f.agents.some((a) => a.id === CLAUDE_CODE));
   const out: InstalledSkill[] = [];
-  for (const folder of entries.sort()) {
-    if (onlyFolder && folder.toLowerCase() !== onlyFolder.toLowerCase()) continue;
-    const path = join(dir, folder);
-    const hit = await inspectSkill(store, path, folder, (name) => {
-      const log = logged.get(name.toLowerCase()) ?? logged.get(folder.toLowerCase());
-      const fromLock = lock.get(folder.toLowerCase());
-      const id = (fromLock && store.getSkill(fromLock)?.id) || (log && store.getSkill(log.id) ? log.id : null);
-      return { id: id || null, installedRisk: log && log.id === id ? (log.risk as RiskLevel | null) : null };
-    });
-    if (!hit) continue; // not a skill folder
-    out.push({
-      ...hit,
-      scope,
-      removeCommand: `npx skills@${SKILLS_CLI_VERSION} remove ${/\s/.test(folder) ? `"${folder}"` : folder} -a claude-code -y${scope === 'user' ? ' -g' : ''}`,
-    });
+  const byReal = new Map<string, InstalledSkill>();
+  for (const { dir, agents } of folders) {
+    const isClaude = agents.some((a) => a.id === CLAUDE_CODE);
+    let entries: string[];
+    try {
+      entries = (await readdir(dir, { withFileTypes: true })).filter((e) => e.isDirectory() || e.isSymbolicLink()).map((e) => e.name);
+    } catch {
+      continue; // no such folder
+    }
+    for (const folder of entries.sort()) {
+      if (onlyFolder && folder.toLowerCase() !== onlyFolder.toLowerCase()) continue;
+      const path = join(dir, folder);
+      const real = pathKey(await realpath(path).catch(() => path));
+      const seen = byReal.get(real);
+      if (seen) {
+        for (const a of agents) if (!seen.agents.some((x) => x.id === a.id)) seen.agents.push(agentRef(a));
+        continue;
+      }
+      const hit = await inspectSkill(store, path, folder, (name) => {
+        const log = isClaude ? (logged.get(name.toLowerCase()) ?? logged.get(folder.toLowerCase())) : undefined;
+        const fromLock = lock.get(folder.toLowerCase());
+        const id = (fromLock && store.getSkill(fromLock)?.id) || (log && store.getSkill(log.id) ? log.id : null);
+        return { id: id || null, installedRisk: log && log.id === id ? (log.risk as RiskLevel | null) : null };
+      });
+      if (!hit) continue; // not a skill folder
+      const quoted = /\s/.test(folder) ? `"${folder}"` : folder;
+      const row: InstalledSkill = {
+        ...hit,
+        scope,
+        agents: agents.map(agentRef),
+        removable: isClaude,
+        removeCommand: `npx skills@${SKILLS_CLI_VERSION} remove ${quoted} ${agents.map((a) => `-a ${a.id}`).join(' ')} -y${scope === 'user' ? ' -g' : ''}`,
+      };
+      byReal.set(real, row);
+      out.push(row);
+    }
   }
   return out;
 }
@@ -130,7 +205,7 @@ async function inspectSkill(
   path: string,
   folder: string,
   known: (name: string) => { id: string | null; installedRisk: RiskLevel | null },
-): Promise<Omit<InstalledSkill, 'scope' | 'removeCommand'> | null> {
+): Promise<Omit<InstalledSkill, 'scope' | 'removeCommand' | 'agents' | 'removable'> | null> {
   let raw: string;
   try {
     raw = await readFile(join(path, 'SKILL.md'), 'utf8');
@@ -142,7 +217,9 @@ async function inspectSkill(
   const { id, installedRisk } = known(meta.name);
   const skillId = id ?? store.findSkillIdByMdSha(hash);
   const indexed = skillId ? store.getSkill(skillId) : undefined;
-  const flags = skillRiskFlags({ files: await listFiles(path), allowedTools: meta.allowedTools, body: meta.body, hasHooks: meta.hasHooks, raw });
+  const files = await listFiles(path);
+  const fileFindings = await localFileFindings(path, files);
+  const flags = [...new Set([...skillRiskFlags({ files, allowedTools: meta.allowedTools, body: meta.body, hasHooks: meta.hasHooks, raw }), ...fileFindings.flatMap((f) => f.flags)])];
   return {
     path,
     folder,
@@ -150,11 +227,14 @@ async function inspectSkill(
     description: truncate(meta.description, 200),
     skillId,
     risk: { level: riskLevel(flags), flags },
+    fileFindings,
     installedRisk: id && id === skillId ? installedRisk : null,
     change: !indexed?.skill_md_sha256 ? 'unknown' : indexed.skill_md_sha256 === hash ? 'same' : 'changed',
     tokens: skillTokens(meta.name, meta.description, raw),
   };
 }
+
+const claudeRef: AgentRef = { id: CLAUDE_CODE, name: 'Claude Code' };
 
 /** A skill a plugin brought in: removed with the plugin, and loaded only while the plugin is on. */
 export type PluginSkill = Omit<InstalledSkill, 'removeCommand'> & { plugin: { id: string; scope: string; enabled: boolean | null } };
@@ -201,7 +281,8 @@ export async function scanPluginSkills(store: Store, plugin: { id: string; scope
   for (const path of [...dirs].sort()) {
     const folder = basename(path);
     const hit = await inspectSkill(store, path, folder, (name) => ({ id: indexedByName.get(name.toLowerCase()) ?? indexedByName.get(folder.toLowerCase()) ?? null, installedRisk: null }));
-    if (hit) out.push({ ...hit, scope: plugin.scope === 'project' || plugin.scope === 'local' ? 'project' : 'user', plugin: { id: plugin.id, scope: plugin.scope, enabled: plugin.enabled } });
+    // plugins are Claude Code's own; removed with the plugin, never on their own
+    if (hit) out.push({ ...hit, scope: plugin.scope === 'project' || plugin.scope === 'local' ? 'project' : 'user', agents: [claudeRef], removable: false, plugin: { id: plugin.id, scope: plugin.scope, enabled: plugin.enabled } });
   }
   return out;
 }
@@ -219,7 +300,7 @@ export async function existingSkillFolder(store: Store, skillId: string, skillNa
   const folder = skillFolderName(skillName);
   const path = join(scope === 'user' ? homedir() : projectPath!, '.claude', 'skills', folder);
   if (!existsSync(path)) return null;
-  const [hit] = await scanInstalledSkills(store, scope, projectPath, folder);
+  const [hit] = await scanInstalledSkills(store, scope, projectPath, folder, { agents: 'claude' });
   if (!hit) return { path, name: folder, same: null, change: 'unknown' };
   const same = hit.skillId == null ? null : hit.skillId === skillId;
   return { path: hit.path, name: hit.name, same, change: same ? hit.change : 'unknown' };
