@@ -15,6 +15,12 @@ import { InstallHistory } from '../components/InstallHistory.tsx';
 import { TeamPreset } from '../components/TeamPreset.tsx';
 import { serverText, t } from '../i18n.ts';
 import { tj } from '../i18nNodes.tsx';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { AgentConfigTab } from '../components/AgentConfigTab.tsx';
+import { ChangesTab } from '../components/ChangesTab.tsx';
+import { InstalledChangeChip, PluginPinChip, type Drift, type PinMoved } from '../components/InstalledChange.tsx';
+import { CHECK_LABEL, CheckChips, OverlapPairs } from '../components/InstalledChecks.tsx';
+import { installedChecks, shownPairs, type CheckKey, type InstalledCheckResponse } from '../lib/installedCheck.ts';
 
 /** How an install compares with the index (UI debate 3-3); shown only, nothing is updated from here. */
 const CHANGE: Record<InstallChange, string | null> = {
@@ -22,6 +28,23 @@ const CHANGE: Record<InstallChange, string | null> = {
   changed: t('색인된 내용과 다름 (새 버전이 있거나 고친 사본)'),
   unknown: null,
 };
+/** The change-tracking work may make `change` an object (feature review F6); only today's strings are said here. */
+const changeText = (c: unknown) => (typeof c === 'string' && c in CHANGE ? CHANGE[c as InstallChange] : null);
+
+/** The screen's inner tabs (feature review decision 2); the menu keeps its name "설치됨". Kept in the address (?tab=). */
+type InstalledTab = 'installed' | 'config' | 'changes';
+const TABS: InstalledTab[] = ['installed', 'config', 'changes'];
+const readTab = (): InstalledTab => {
+  const v = new URLSearchParams(window.location.search).get('tab');
+  return TABS.includes(v as InstalledTab) ? (v as InstalledTab) : 'installed';
+};
+function installedUrl(project: string, tab: InstalledTab): string {
+  const q = new URLSearchParams();
+  if (project) q.set('project', project);
+  if (tab !== 'installed') q.set('tab', tab);
+  const s = q.toString();
+  return s ? `/installed?${s}` : '/installed';
+}
 
 type Plugin = InstalledResponse['plugins'][number];
 /**
@@ -80,7 +103,7 @@ type RemoveRequest = {
   key: string;
   label: string;
   detail: string;
-  body: { kind: 'plugin' | 'skill'; id: string; scope: string; projectPath?: string };
+  body: { kind: 'plugin' | 'skill'; id: string; scope: string; projectPath?: string; agent?: string };
 };
 
 const SCOPE_LABEL: Record<string, string> = { user: t('개인'), project: t('프로젝트'), local: t('로컬'), synced: t('앱 동기화') };
@@ -118,6 +141,14 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(readPageSize);
   const tableRef = useRef<HTMLDivElement>(null);
+  const skillsRef = useRef<HTMLHeadingElement>(null);
+  const [tab, setTab] = useState<InstalledTab>(readTab);
+  const tabRef = useRef(tab);
+  /** /installed/check (same hash, overlapping descriptions); null while loading or when it failed (chips hidden). */
+  const [check, setCheck] = useState<InstalledCheckResponse | null>(null);
+  const [checkLoading, setCheckLoading] = useState(false);
+  const [checkFilter, setCheckFilter] = useState<CheckKey | null>(null);
+  const checkSeq = useRef(0);
 
   // Only the latest request may update the screen: typing a path fires one request per pause, and an
   // older answer for a half-typed path ("…skill finde") arriving last used to show "스킬 (0)".
@@ -127,11 +158,16 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
     const id = ++seq.current;
     // the folder goes in the address, so coming back from a skill page shows the same list (review 2026-11-02)
     if (window.location.pathname === '/installed') {
-      const p = path.trim();
-      window.history.replaceState(window.history.state, '', p ? `/installed?project=${encodeURIComponent(p)}` : '/installed');
+      window.history.replaceState(window.history.state, '', installedUrl(path.trim(), tabRef.current));
     }
     setLoading(true);
     setError(null);
+    const cid = ++checkSeq.current;
+    setCheckLoading(true);
+    apiGet<InstalledCheckResponse>('/installed/check', { projectPath: path.trim() || undefined })
+      .then((c) => cid === checkSeq.current && setCheck(c))
+      .catch(() => cid === checkSeq.current && setCheck(null))
+      .finally(() => cid === checkSeq.current && setCheckLoading(false));
     apiGet<InstalledResponse>('/installed', { projectPath: path.trim() || undefined })
       .then((d) => {
         if (id !== seq.current) return;
@@ -185,7 +221,8 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
       key: `s:${s.path}`,
       label: t('스킬 {0}', s.name),
       detail: t('{0} 폴더를 지웁니다.', s.path),
-      body: { kind: 'skill', id: s.folder, scope: s.scope, projectPath: s.scope === 'user' ? undefined : projectPath },
+      // which agent's folder: a shared one (.agents/skills) goes for every agent that reads it
+      body: { kind: 'skill', id: s.folder, scope: s.scope, projectPath: s.scope === 'user' ? undefined : projectPath, agent: s.agents?.[0]?.id },
     });
 
   // Plugins this app can remove vs. ones synced from the Claude app account (managed there).
@@ -204,7 +241,31 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
     const it = itemOf(r);
     return !!it && matchFacets(it, facets);
   };
-  const shownRows = rows.filter((r) => matchRow(r, rowFilters) && facetOk(r));
+  // the check chips (F8): each a set of rows; one at a time narrows the table like the side filters
+  const chips = installedChecks(rows, check);
+  const activeCheck = chips.find((c) => c.key === checkFilter) ?? null;
+  const checkOk = (r: Row) => !activeCheck || activeCheck.paths.has(r.path);
+  const pairs = check ? shownPairs(rows, check) : [];
+  const toggleCheck = (k: CheckKey) => {
+    const on = activeCheck?.key !== k;
+    setCheckFilter(on ? k : null);
+    setPage(1);
+    if (on) skillsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  /** A pair side's delete: the table's own (and its confirm dialog), where the app may delete it. */
+  const pairRemover = (path: string) => {
+    const r = rows.find((x) => x.path === path);
+    if (!r) return { remove: null, blocked: null };
+    if (r.plugin) return { remove: null, blocked: t('플러그인에 든 스킬은 플러그인과 함께 지웁니다. 위 플러그인 표에서 지우세요.') };
+    if (r.removable === false) return { remove: null, blocked: t('다른 에이전트 폴더의 스킬은 이 앱에서 지우지 않습니다. 그 에이전트에서 지우세요.') };
+    return { remove: busy === null ? () => removeSkill(r as Skill) : null, blocked: null };
+  };
+  const changeTab = (v: InstalledTab) => {
+    setTab(v);
+    tabRef.current = v;
+    if (window.location.pathname === '/installed') window.history.replaceState(window.history.state, '', installedUrl(projectPath.trim(), v));
+  };
+  const shownRows = rows.filter((r) => matchRow(r, rowFilters) && facetOk(r) && checkOk(r));
   const unindexedSkills = rows.filter((r) => !r.skillId).length;
   // a plugin that is off loads none of its skills, and Claude Code does not read the other agents' folders
   const perTurn = rows.filter((r) => r.plugin?.enabled !== false && forClaude(r)).reduce((n, r) => n + r.tokens.perTurn, 0);
@@ -226,13 +287,14 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
   const resetFilters = () => {
     setFacets(NO_FACETS);
     setRowFilters(NO_ROW_FILTERS);
+    setCheckFilter(null);
     setPage(1);
   };
   const rowGroups = (
     <>
       {ROW_GROUPS.map((g) => {
         const counts = new Map<string, number>();
-        for (const r of rows) if (matchRow(r, rowFilters, g) && facetOk(r)) for (const v of ROW_VALUE[g](r)) counts.set(v, (counts.get(v) ?? 0) + 1);
+        for (const r of rows) if (matchRow(r, rowFilters, g) && facetOk(r) && checkOk(r)) for (const v of ROW_VALUE[g](r)) counts.set(v, (counts.get(v) ?? 0) + 1);
         return (
           <fieldset key={g} className="facet">
             <legend>{ROW_TITLE[g]}</legend>
@@ -311,9 +373,23 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
           <p className="muted small">{t('되돌릴 수 없습니다. 다시 쓰려면 다시 설치해야 합니다.')}</p>
         </ConfirmDialog>
       )}
+      <Tabs value={tab} onValueChange={(v) => changeTab(v as InstalledTab)}>
+        <TabsList variant="line" aria-label={t('설치됨 보기')} className="mb-2 w-full justify-start border-b border-[var(--line)] group-data-horizontal/tabs:h-auto">
+          <TabsTrigger value="installed" className="h-10 flex-none px-4 text-sm">
+            {t('설치한 것')}
+          </TabsTrigger>
+          <TabsTrigger value="config" className="h-10 flex-none px-4 text-sm">
+            {t('자동 실행·권한')}
+          </TabsTrigger>
+          <TabsTrigger value="changes" className="h-10 flex-none px-4 text-sm">
+            {t('변경·기록')}
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="installed" className="text-[length:inherit] leading-[inherit]">
       {error && <p className="warn-box">{error}</p>}
       {data && (
         <>
+          {rows.length + managed.length > 0 && <CheckChips chips={chips} active={activeCheck?.key ?? null} onToggle={toggleCheck} loadingCheck={checkLoading && !check} />}
           <section>
             <h2>{t('플러그인 ({0})', managed.length)}</h2>
             {data.pluginError && <p className="warn-box">{data.pluginError}</p>}
@@ -377,6 +453,8 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
                           <span className="muted small">–</span>
                         )}
                         {p.change === 'changed' && <div className="warn-text small">{t('설치된 커밋이 색인한 커밋과 다름')}</div>}
+                        {/* the marketplace moved its pin: high-risk skills the next update brings (F6) */}
+                        <PluginPinChip pinMoved={(p as { pinMoved?: PinMoved }).pinMoved} />
                       </td>
                       <td className="actions">
                         <button type="button" className="ghost danger" disabled={busy !== null} onClick={() => removePlugin(p)} aria-label={busy === key ? t('{0} 삭제 중', p.id) : t('{0} 삭제', p.id)} aria-busy={busy === key}>
@@ -407,12 +485,15 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
             )}
           </section>
           <section>
-            <h2>{t('스킬 ({0})', rows.length)}</h2>
+            <h2 ref={skillsRef}>{t('스킬 ({0})', rows.length)}</h2>
             {rows.length > 0 && (
               <p className="muted small" title={t('설치된 스킬마다 이름과 설명이 매 요청에 들어갑니다. 글자 수로 센 추정치입니다.')}>
                 {t('이 스킬들이 매 요청에 차지하는 컨텍스트: 약 {0} 토큰(이름·설명)', perTurn.toLocaleString())}
+                {/* P14: a name in both scopes is counted twice; whether Claude Code loads both is a guess */}
+                {chips.some((c) => c.key === 'twoScopes') && t(' · 같은 이름이 개인·프로젝트 범위에 모두 있으면 이 합계에 두 번 들어갑니다(Claude Code가 둘 다 싣는지는 확인하지 못함).')}
               </p>
             )}
+            {activeCheck?.key === 'overlap' && pairs.length > 0 && <OverlapPairs pairs={pairs} remover={pairRemover} />}
             {unindexedSkills > 0 && (
               <p className="muted small">
                 {t('색인에 없는 스킬 {0}개(앱 밖에서 설치했거나 아직 모으지 않은 스킬)는 상세 화면이 없고, 설치된 파일에 지금 규칙을 돌린 위험 등급만 보입니다.', unindexedSkills)}
@@ -420,7 +501,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
             )}
             {otherAgentRows > 0 && (
               <p className="muted small">
-                {t('다른 에이전트(Codex·Cursor·Gemini CLI·GitHub Copilot·OpenCode) 폴더의 스킬 {0}개도 함께 보입니다. 보기만 하고, 이 앱에서 지우지는 않습니다.', otherAgentRows)}
+                {t('다른 에이전트(Codex·Cursor·Gemini CLI·GitHub Copilot·OpenCode) 폴더의 스킬 {0}개도 함께 보입니다. 여러 에이전트가 함께 쓰는 폴더의 스킬을 지우면 그 에이전트 모두에서 지워집니다.', otherAgentRows)}
               </p>
             )}
             {rows.length === 0 ? (
@@ -428,7 +509,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
             ) : (
               <div className="results-layout">
                 <FacetPanel
-                  items={rows.filter((r) => matchRow(r, rowFilters)).flatMap((r) => itemOf(r) ?? [])}
+                  items={rows.filter((r) => matchRow(r, rowFilters) && checkOk(r)).flatMap((r) => itemOf(r) ?? [])}
                   value={facets}
                   onChange={changeFacets}
                   extra={{ node: rowGroups, active: rowFiltersOn.length, reset: () => setRowFilters(NO_ROW_FILTERS) }}
@@ -437,6 +518,11 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
                   <div className="results-toolbar" ref={tableRef}>
                     <div className="toolbar-left">
                       <span className="muted small">{t('{0}개 중 {1}개', rows.length, shownRows.length)}</span>
+                      {activeCheck && (
+                        <button type="button" className="status-chip action" aria-label={t('점검 필터 {0} 끄기', CHECK_LABEL[activeCheck.key](activeCheck.count))} onClick={() => setCheckFilter(null)}>
+                          {t('점검 {0}', CHECK_LABEL[activeCheck.key](activeCheck.count))} ×
+                        </button>
+                      )}
                       {rowFiltersOn.map(([g, k]) => (
                         <button key={`${g}:${k}`} type="button" className="status-chip action" aria-label={t('필터 {0} 끄기', ROW_OPTIONS[g][k])} onClick={() => toggleRowFilter(g, k)}>
                           {t('필터 {0}', ROW_OPTIONS[g][k])} ×
@@ -529,7 +615,12 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
                                 {/* the current rules run on the installed files, wherever they came from */}
                                 <RiskSummary level={s.risk.level} flags={s.risk.flags} />
                                 {s.installedRisk && s.installedRisk !== s.risk.level && <div className="muted small">{t('설치할 때는 {0}', RISK_LEVEL[s.installedRisk])}</div>}
-                                {CHANGE[s.change] && <div className="warn-text small">{CHANGE[s.change]}</div>}
+                                {/* upstream new version, edited here, or up to date, with the diff (F6); the plain text when that is unknown */}
+                                {(s as { drift?: Drift }).drift ? (
+                                  <InstalledChangeChip drift={(s as { drift?: Drift }).drift} path={s.path} skillId={s.skillId} onOpenSkill={(id) => onOpenSkill(id, loadedPath || undefined)} />
+                                ) : (
+                                  changeText(s.change) && <div className="warn-text small">{changeText(s.change)}</div>
+                                )}
                                 {(s.fileFindings?.length ?? 0) > 0 && (
                                   <div className="muted small mono" title={s.fileFindings!.map((f) => `${f.path}: ${f.flags.join(', ')}`).join('\n')}>
                                     {t('파일에서 찾음: {0}', s.fileFindings!.map((f) => f.path).join(', '))}
@@ -590,6 +681,15 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
           </section>
         </>
       )}
+        </TabsContent>
+        <TabsContent value="config" className="text-[length:inherit] leading-[inherit]">
+          {/* after the list loaded: the folder it lists is the one read here too */}
+          {(data || error) && <AgentConfigTab projectPath={loadedPath} />}
+        </TabsContent>
+        <TabsContent value="changes" className="text-[length:inherit] leading-[inherit]">
+          <ChangesTab onOpenSkill={(id) => onOpenSkill(id, loadedPath || undefined)} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

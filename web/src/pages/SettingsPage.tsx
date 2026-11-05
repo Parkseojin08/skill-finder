@@ -4,6 +4,8 @@ import { searchLogChanged } from './SearchPage.tsx';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
 import { DiagnosticsButton } from '../components/Diagnostics.tsx';
 import { FolderInput } from '../components/FolderInput.tsx';
+import { LogViewer } from '../components/LogViewer.tsx';
+import { TokenCheck, type TokenCheckHandle } from '../components/TokenCheck.tsx';
 import type { Settings, SettingsResponse } from '../types.ts';
 import { LANG, LANGS, setLang, t, type Lang } from '../i18n.ts';
 import { tj } from '../i18nNodes.tsx';
@@ -14,6 +16,7 @@ export function SettingsPage() {
   const [token, setToken] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  const tokenCheck = useRef<TokenCheckHandle>(null);
 
   /** Changes typed but not sent yet; kept over a save's answer so typing during a save is not lost. */
   const pending = useRef<Partial<Settings>>({});
@@ -30,14 +33,16 @@ export function SettingsPage() {
       .catch((e) => setMsg({ ok: false, text: String(e.message ?? e) }));
   }, []);
 
-  const save = async (body: unknown, okText: string) => {
+  const save = async (body: unknown, okText: string): Promise<boolean> => {
     try {
       const r = await apiSend<SettingsResponse>('PUT', '/settings', body);
       apply(r);
       searchLogChanged(r.settings.searchLog);
       setMsg({ ok: true, text: okText });
+      return true;
     } catch (e) {
       setMsg({ ok: false, text: String((e as Error).message ?? e) });
+      return false;
     }
   };
 
@@ -112,7 +117,12 @@ export function SettingsPage() {
           className="row"
           onSubmit={(e) => {
             e.preventDefault();
-            save({ githubToken: token.trim() }, token.trim() ? t('토큰을 .env에 저장했습니다') : t('토큰을 지웠습니다')).then(() => setToken(''));
+            const value = token.trim();
+            save({ githubToken: value }, value ? t('토큰을 .env에 저장했습니다') : t('토큰을 지웠습니다')).then((ok) => {
+              setToken('');
+              // what GitHub says of the saved token: valid, its hourly quota, too broad (F22)
+              if (ok && value) void tokenCheck.current?.check();
+            });
           }}
         >
           <input
@@ -126,6 +136,7 @@ export function SettingsPage() {
           />
           <button type="submit">{t('저장')}</button>
         </form>
+        <TokenCheck ref={tokenCheck} hasToken={data.githubToken} />
       </section>
 
       <section>
@@ -237,6 +248,7 @@ export function SettingsPage() {
           {t('버전·색인 개수·설정·최근 로그를 복사합니다. 토큰, 검색어, 사용자 폴더 이름은 넣지 않고 밖으로 보내지도 않습니다. 문제를 알릴 때 붙여 넣으세요. 로그 파일은 위 색인·기록 폴더의 logs 안에 있습니다.')}
         </p>
         <DiagnosticsButton />
+        <LogViewer />
       </section>
 
       <section>

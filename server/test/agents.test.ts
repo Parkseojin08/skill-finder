@@ -72,7 +72,7 @@ describe('다른 에이전트 표 (F9 1단계)', () => {
     );
   });
 
-  it('에이전트 폴더마다 스캔하고, 같은 실제 폴더는 한 줄, 다른 에이전트 폴더는 지우지 않는다', async () => {
+  it('에이전트 폴더마다 스캔하고, 같은 실제 폴더는 한 줄, 다른 에이전트 폴더도 그 폴더에서 지운다(2단계)', async () => {
     const s = store();
     const home = mkdtempSync(join(tmpdir(), 'sf-home-'));
     const project = mkdtempSync(join(tmpdir(), 'sf-proj-'));
@@ -91,7 +91,8 @@ describe('다른 에이전트 표 (F9 1단계)', () => {
     assert.equal(by.mine.removable, true);
     assert.match(by.mine.removeCommand, / -a claude-code -y -g$/);
     assert.deepEqual(by.shared.agents.map((a) => a.id), ['codex', 'cursor'], '링크로 같은 폴더면 에이전트를 합친다');
-    assert.equal(by.shared.removable, false);
+    // stage 2 (decision 12): the app removes from every agents.ts folder (uninstall.ts agentSkillsRoot)
+    assert.equal(by.shared.removable, true);
     assert.match(by.shared.removeCommand, /remove shared -a codex -y -g$/);
     assert.deepEqual(by.gem.agents.map((a) => a.name), ['Gemini CLI']);
 
@@ -101,7 +102,7 @@ describe('다른 에이전트 표 (F9 1단계)', () => {
     skill(project, '.claude/skills', 'p1');
     skill(project, '.agents/skills', 'p2');
     const rows = await scanInstalledSkills(s, 'project', project, undefined, { home });
-    assert.deepEqual(rows.map((r) => [r.folder, r.agents.length, r.removable]), [['p1', 1, true], ['p2', 5, false]]);
+    assert.deepEqual(rows.map((r) => [r.folder, r.agents.length, r.removable]), [['p1', 1, true], ['p2', 5, true]]);
     assert.match(rows[1].removeCommand, /-a codex -a cursor -a gemini-cli -a github-copilot -a opencode -y$/);
   });
 });

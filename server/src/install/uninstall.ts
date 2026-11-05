@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { runClaude } from '../claude/cli.ts';
 import { SKILLS_CLI_PATH } from '../config.ts';
 import { run } from '../util/proc.ts';
+import { agentFolders, CLAUDE_CODE, type AgentId } from './agents.ts';
 import { lastJsonLine } from './run.ts';
 
 export const PLUGIN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}@[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -14,6 +15,15 @@ export type UninstallResult = { ok: boolean; message: string; output: string };
 
 export function skillsRoot(scope: 'user' | 'project', projectPath: string | null): string {
   return scope === 'user' ? join(homedir(), '.claude', 'skills') : join(projectPath!, '.claude', 'skills');
+}
+
+/**
+ * The skill folder of `agent` in a scope and every agent that reads it (a project's `.agents/skills` is five
+ * agents'), from agents.ts only (F9 stage 2: D#0763's one place, widened to the table's folders and nothing else).
+ */
+export function agentSkillsRoot(agent: AgentId, scope: 'user' | 'project', projectPath: string | null, home = homedir()): { dir: string; agents: AgentId[] } | null {
+  const hit = agentFolders(scope, scope === 'user' ? home : projectPath!).find((f) => f.agents.some((a) => a.id === agent));
+  return hit ? { dir: hit.dir, agents: hit.agents.map((a) => a.id) } : null;
 }
 
 /** `claude plugin uninstall <id> --scope <scope>`; project/local scopes run in the project folder. */
@@ -30,7 +40,8 @@ export async function uninstallPlugin(id: string, scope: 'user' | 'project' | 'l
 }
 
 /**
- * Removes one skill folder directly under ~/.claude/skills or <project>/.claude/skills.
+ * Removes one skill folder directly under an agent's skill folder of agents.ts: ~/.claude/skills or
+ * <project>/.claude/skills for Claude Code (the default), the other agents' as that table has them (F9 stage 2).
  * The skills CLI goes first (it also updates skills-lock.json); if the folder is still there
  * (e.g. it was copied in by hand) it is deleted after checking it is exactly one level below the skills root.
  */
@@ -39,16 +50,21 @@ export async function uninstallSkill(
   scope: 'user' | 'project',
   projectPath: string | null,
   env: NodeJS.ProcessEnv,
+  agent: AgentId = CLAUDE_CODE,
+  home = homedir(),
 ): Promise<UninstallResult> {
   if (!SKILL_FOLDER_RE.test(folder) || folder.includes('..')) return { ok: false, message: '스킬 폴더 이름이 올바르지 않습니다', output: '' };
-  const root = resolve(skillsRoot(scope, projectPath));
+  const place = agentSkillsRoot(agent, scope, projectPath, home);
+  if (!place) return { ok: false, message: '지원하지 않는 에이전트입니다', output: '' };
+  const root = resolve(place.dir);
   const target = resolve(root, folder);
   if (dirname(target) !== root) return { ok: false, message: '스킬 폴더 위치가 올바르지 않습니다', output: '' };
   if (!existsSync(target)) return { ok: false, message: '이미 없는 스킬입니다', output: '' };
   if (!existsSync(join(target, 'SKILL.md'))) return { ok: false, message: 'SKILL.md가 없는 폴더라 지우지 않았습니다', output: '' };
 
-  const cli = await run(process.execPath, [SKILLS_CLI_PATH, 'remove', folder, '-a', 'claude-code', '-y', ...(scope === 'user' ? ['-g'] : [])], {
-    cwd: scope === 'user' ? homedir() : projectPath!,
+  // every agent reading this folder: removing it is removing it for all of them
+  const cli = await run(process.execPath, [SKILLS_CLI_PATH, 'remove', folder, ...place.agents.flatMap((a) => ['-a', a]), '-y', ...(scope === 'user' ? ['-g'] : [])], {
+    cwd: scope === 'user' ? home : projectPath!,
     env,
     timeoutMs: 2 * 60_000,
   }).catch((err) => ({ exitCode: -1, stdout: '', stderr: String(err), timedOut: false }));

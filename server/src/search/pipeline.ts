@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isOffline, noteNetworkError, noteNetworkOk } from '../scheduler.ts';
 import { RISK_ORDER, RISK_RULES_VERSION, type RiskLevel } from '../analyze/risk.ts';
 import { SKILLS_CLI_VERSION } from '../config.ts';
 import type { AppContext } from '../context.ts';
@@ -633,10 +634,17 @@ export async function runSearch(
 
   const collectSkillsSh = async (): Promise<SourceDone> => {
     if (!sources.has('skillssh')) return null;
+    // offline (the scheduler saw the network fail): the local index only, without waiting for timeouts (P10)
+    if (isOffline()) {
+      warn('skillssh', '오프라인 · 로컬 색인만', 'note');
+      return null;
+    }
     let hits: SkillsShHit[];
     try {
       hits = await withTimeout(deps.skillsSh(query), 6000, 'timeout');
+      noteNetworkOk();
     } catch (err) {
+      noteNetworkError(err);
       warn('skillssh', `skills.sh 검색 실패 (${shortErr(err)})`, 'urgent');
       return { state: shortErr(err) === 'timeout' ? 'timeout' : 'failed', count: 0 };
     }
@@ -666,6 +674,7 @@ export async function runSearch(
       warn('github', 'GitHub 토큰이 없어 GitHub 코드 검색을 건너뜁니다 (설정에서 토큰을 넣으면 사용됩니다)', 'note');
       return null;
     }
+    if (isOffline()) return null;
     try {
       // past ~8s of queue (the 10/min limit) it gives up at once instead of taking a slot the next search needs
       const items = await withTimeout(github.searchSkillFiles(queryKeywords(query), 50, { maxWaitMs: 8000 }), 10_000, 'timeout');

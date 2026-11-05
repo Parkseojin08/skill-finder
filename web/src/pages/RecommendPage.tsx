@@ -8,7 +8,12 @@ import { Translated } from '../components/Translated.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { readPageSize, savePageSize } from '../lib/prefs.ts';
 import { ActiveFacets, FacetPanel, matchFacets, NO_FACETS, type Facets } from '../components/FacetPanel.tsx';
-import type { RecommendResult, ResultItem, SettingsResponse } from '../types.ts';
+import { stackExclude, type StackTag } from '../lib/searchExtras.ts';
+import '../components/search/search-stage2.css';
+import type { RecommendResult as BaseResult, ResultItem, SettingsResponse } from '../types.ts';
+
+/** The answer with F21's detected stack (types.ts stays as it is). */
+type RecommendResult = BaseResult & { stack?: StackTag[] };
 
 type SkillMatch = RecommendResult['skills'][number];
 import { t } from '../i18n.ts';
@@ -23,7 +28,7 @@ const ERROR_HINT: Record<number, string> = {
 
 /** The summary's heading: what was read ("package.json + CLAUDE.md 요약 (README 없음)"), or the typed words. */
 function readFrom(result: RecommendResult): string {
-  if (!result.readmePath) return t('넣은 단어로 찾은 결과');
+  if (!result.readmePath) return result.stack?.length ? t('감지한 스택으로 찾은 결과 (README 없음)') : t('넣은 단어로 찾은 결과');
   const files = [result.readmePath, ...(result.alsoRead ?? [])].map((p) => p.split(/[\\/]/).pop()!);
   return /^readme/i.test(files[0]) ? t('README 요약') : t('{0} 요약 (README 없음)', files.join(' + '));
 }
@@ -52,6 +57,9 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem, from: und
   const [off, setOff] = useState<Set<string>>(new Set());
   const [added, setAdded] = useState<string[]>([]);
   const [newWord, setNewWord] = useState('');
+  /** The stack found in the project's manifests (F21), and the tags turned off. */
+  const [stack, setStack] = useState<StackTag[]>([]);
+  const [offStack, setOffStack] = useState<Set<string>>(new Set());
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -61,12 +69,12 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem, from: und
   }, []);
 
   /** `tuning`: the same project again with keywords turned off or added; without it a fresh analysis. */
-  const analyze = async (path = projectPath, tuning?: { off: Set<string>; added: string[] }) => {
+  const analyze = async (path = projectPath, tuning?: { off: Set<string>; added: string[]; offStack?: Set<string> }) => {
     if (!path.trim() || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const body = { projectPath: path.trim(), exclude: tuning ? [...tuning.off] : undefined, extra: tuning?.added };
+      const body = { projectPath: path.trim(), exclude: tuning ? [...tuning.off, ...[...(tuning.offStack ?? offStack)].map(stackExclude)] : undefined, extra: tuning?.added };
       const r = await apiSend<RecommendResult>('POST', '/readme-skills', body);
       setResult(r);
       setAnalyzedPath(path.trim());
@@ -76,6 +84,8 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem, from: und
         setTerms(r.keywords.map((k) => k.term));
         setOff(new Set());
         setAdded([]);
+        setStack(r.stack ?? []);
+        setOffStack(new Set());
       }
     } catch (e) {
       setResult(null);
@@ -94,6 +104,14 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem, from: und
     else next.add(t);
     setOff(next);
     void analyze(projectPath, { off: next, added });
+  };
+  const toggleStack = (tag: string) => {
+    if (busy) return;
+    const next = new Set(offStack);
+    if (next.has(tag)) next.delete(tag);
+    else next.add(tag);
+    setOffStack(next);
+    void analyze(projectPath, { off, added, offStack: next });
   };
   const addWord = () => {
     const w = newWord.trim().toLowerCase();
@@ -220,6 +238,25 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem, from: und
                 </button>
               </form>
             </div>
+            {stack.length > 0 && (
+              // F21: from package.json, requirements.txt, go.mod, Dockerfile …, local only; turned off like the words
+              <div className="keyword-line stack-line">
+                <span className="muted small">{t('감지한 스택 · 눌러서 빼거나 다시 넣기')}</span>
+                {stack.map((s) => (
+                  <button
+                    key={s.tag}
+                    type="button"
+                    className={`chip-btn mono${offStack.has(s.tag) ? ' off' : ''}`}
+                    aria-pressed={!offStack.has(s.tag)}
+                    title={`${t('근거')}: ${s.evidence.join(', ')}\n${offStack.has(s.tag) ? t('빼 둔 스택 · 눌러서 다시 넣기') : t('눌러서 이 스택 빼기')}`}
+                    onClick={() => toggleStack(s.tag)}
+                    aria-busy={busy}
+                  >
+                    {s.tag}
+                  </button>
+                ))}
+              </div>
+            )}
             {wordMsg && (
               <p className="warn-text small" role="status">
                 {wordMsg}

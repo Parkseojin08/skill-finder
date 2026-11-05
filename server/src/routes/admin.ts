@@ -10,6 +10,7 @@ import { getSettings, saveSettings, SettingsSchema } from '../settings.ts';
 import { fetchMarketplaceManifest } from '../sources/marketplace.ts';
 import { parseGithubRepo } from '../sources/pluginSource.ts';
 import { popularState } from '../sources/popularRepos.ts';
+import { networkState, schedulerFor } from '../scheduler.ts';
 import { startCollect, startPopularCollect, startSync } from '../tasks.ts';
 import { addSecret, logFilePath, logTail, maskSecrets } from '../util/log.ts';
 import { APP_VERSION } from '../version.ts';
@@ -95,6 +96,10 @@ export function adminRouter(ctx: AppContext): Router {
         .list()
         .slice(-5)
         .map((j) => `작업 ${j.kind} ${j.status} ${j.done}/${j.total} ${j.label}${j.errors.length ? ` · 오류 ${j.errors.length} (${j.errors[0]})` : ''}`),
+      ...(networkState().offline ? [`네트워크 끊김 (${networkState().since}) · ${networkState().lastError ?? ''}`] : []),
+      ...schedulerFor(ctx)
+        .recentRuns(5, { failedOnly: true })
+        .map((r) => `실패한 작업 ${r.kind} ${r.started_at} (${r.trigger}) ${r.error ?? ''}`),
       '',
       '최근 로그',
       logTail(80) || '(없음)',

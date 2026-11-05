@@ -28,10 +28,38 @@ export type JobControl = {
 
 class CancelledError extends Error {}
 
-type Entry = { job: Job; paused: boolean; cancelled: boolean; waiters: Array<() => void> };
+/** A job starting or ending, for whoever records runs (the scheduler writes them to task_runs, feature review F22). */
+export type JobEvent = { phase: 'start' | 'finish'; job: Job; error?: unknown };
+
+type Entry = { job: Job; paused: boolean; cancelled: boolean; waiters: Array<() => void>; done: Promise<void> };
 
 export class Jobs {
   private readonly entries = new Map<string, Entry>();
+  private readonly listeners = new Set<(e: JobEvent) => void>();
+
+  /** Called on every job's start (synchronously, inside start()) and end; returns a function that stops it. */
+  observe(listener: (e: JobEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private emit(e: JobEvent): void {
+    for (const l of this.listeners) {
+      try {
+        l(e);
+      } catch (err) {
+        console.warn('[jobs]', String((err as Error).message ?? err).slice(0, 200));
+      }
+    }
+  }
+
+  /** Resolves with the job once it has ended (also when it already has, while it is still kept). */
+  async wait(id: string): Promise<Job | undefined> {
+    const e = this.entries.get(id);
+    if (!e) return undefined;
+    await e.done;
+    return e.job;
+  }
 
   start(kind: Job['kind'], label: string, fn: (ctl: JobControl) => Promise<void>): Job {
     const job: Job = {
@@ -46,8 +74,9 @@ export class Jobs {
       startedAt: new Date().toISOString(),
       finishedAt: null,
     };
-    const entry: Entry = { job, paused: false, cancelled: false, waiters: [] };
+    const entry: Entry = { job, paused: false, cancelled: false, waiters: [], done: Promise.resolve() };
     this.entries.set(job.id, entry);
+    this.emit({ phase: 'start', job });
     const ctl: JobControl = {
       checkpoint: async () => {
         while (entry.paused && !entry.cancelled) await new Promise<void>((r) => entry.waiters.push(r));
@@ -71,7 +100,14 @@ export class Jobs {
         if (job.skipped.length < 200) job.skipped.push(note);
       },
     };
-    fn(ctl)
+    let failure: unknown;
+    let started: Promise<void>;
+    try {
+      started = fn(ctl); // synchronously, as before: its first steps run inside start()
+    } catch (err) {
+      started = Promise.reject(err);
+    }
+    entry.done = started
       .then(() => {
         job.status = entry.cancelled ? 'cancelled' : 'done';
       })
@@ -80,10 +116,12 @@ export class Jobs {
         else {
           job.status = 'error';
           job.errors.push(String((err as Error).message ?? err));
+          failure = err;
         }
       })
       .finally(() => {
         job.finishedAt = new Date().toISOString();
+        this.emit({ phase: 'finish', job, error: failure });
         this.prune();
       });
     return job;

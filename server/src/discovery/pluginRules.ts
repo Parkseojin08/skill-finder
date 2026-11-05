@@ -67,6 +67,7 @@ export function discoverPluginSkills(
   }
 
   const experimental = (manifest?.experimental ?? null) as Record<string, unknown> | null;
+  const lsp = tree.hasFile(joinPath(root, '.lsp.json')) || manifest?.lspServers != null || entry?.lspServers != null;
   const signals: PluginSignals = {
     hooks: tree.hasFile(joinPath(root, 'hooks/hooks.json')) || manifest?.hooks != null || entry?.hooks != null,
     mcp: tree.hasFile(joinPath(root, '.mcp.json')) || manifest?.mcpServers != null || entry?.mcpServers != null,
@@ -76,6 +77,9 @@ export function discoverPluginSkills(
       experimental?.monitors != null ||
       manifest?.monitors != null ||
       entry?.monitors != null,
+    // LSP servers run once installed (F3 full): shown with what runs, not a risk flag of its own. Only when present,
+    // so the signals stored for every other plugin (and the rows built from them) stay as they were.
+    ...(lsp ? { lsp: true } : {}),
   };
 
   const strictConflict = entry?.strict === false && hasComponentFields(manifest) && hasComponentFields(entry);

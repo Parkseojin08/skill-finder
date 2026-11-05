@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { SKILLS_CLI_VERSION } from '../config.ts';
 import { claudeVersion } from '../claude/cli.ts';
 import type { AppContext } from '../context.ts';
+import { isOffline } from '../scheduler.ts';
 import { updateInfo } from '../update.ts';
 import { APP_VERSION } from '../version.ts';
 
@@ -21,6 +22,8 @@ export function healthRouter(ctx: AppContext): Router {
       claudeVersion: await claudeVersion(),
       skillsCli: SKILLS_CLI_VERSION,
       githubToken: !!ctx.config.githubToken,
+      /** Network errors in a row and no answer from github.com (scheduler.ts): searches use the local index only. */
+      offline: isOffline(),
       plugins: ctx.store.countPlugins(),
       skills: ctx.store.countSkills(),
     });

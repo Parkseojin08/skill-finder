@@ -6,6 +6,7 @@ import { koreanTerm } from '../search/koreanTerms.ts';
 import { freshInstalls, freshness, matchTokens, popularity, stem, totalScore, TRUST_SCORE, trustTier } from '../search/rank.ts';
 import { buildResultItem, githubSource, marketplaceSource, storeLookup, type ResultItem } from '../search/result.ts';
 import type { Settings } from '../settings.ts';
+import { detectStack, stackTerms, type StackTag } from './stack.ts';
 
 /**
  * README-based skill recommendation, no AI: read the project's root README, pull out its structure,
@@ -271,7 +272,11 @@ export function extractReadme(md: string, fallbackTitle: string): ReadmeInfo {
   return out;
 }
 
-export type Keyword = { key: string; term: string; weight: number };
+/**
+ * `alts`: the forms matched instead of `term` (a stack tag's words, F21): any one of them counts, and a form with a
+ * space is a phrase ("next js" for "Next.js", which the index splits into two words).
+ */
+export type Keyword = { key: string; term: string; weight: number; alts?: string[] };
 
 /**
  * Word weights: title 5, intro/features/headings 3, body/code languages 1, summed per word; top 40.
@@ -310,12 +315,23 @@ export type RecommendResult = {
   /** Other files read along with it (an agent file next to package.json, when there is no README). */
   alsoRead?: string[];
   summary: { title: string; intro: string; features: string[] };
+  /** README words (a detected stack's words are in `stack`, not here). */
   keywords: Array<{ term: string; weight: number }>;
+  /**
+   * The project's technology stack from its manifests (F21): every detected tag, with where it was seen; `off` when
+   * the page turned it off (`exclude: ["stack:<tag>"]`), so it is not matched.
+   */
+  stack: Array<StackTag & { off?: boolean }>;
   /** Skills similar to the README, most downloaded first (then stars). Empty when nothing is similar. */
   skills: SkillMatch[];
 };
 
 const ftsTerm = (t: string) => `"${t.replace(/"/g, '')}"`;
+const formsOf = (k: Keyword) => (k.alts?.length ? k.alts : [k.term]);
+/** One keyword as FTS: its forms OR'ed (each quoted; a form with a space is a phrase). */
+const ftsKeyword = (k: Keyword) => formsOf(k).map(ftsTerm).join(' OR ');
+/** Lowercase words joined by single spaces, padded, for whole-phrase checks (" next js "). */
+const phraseText = (s: string) => ` ${s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `;
 const byPopularity = (a: { installs: number | null; stars: number | null }, b: { installs: number | null; stars: number | null }) =>
   (b.installs ?? -1) - (a.installs ?? -1) || (b.stars ?? -1) - (a.stars ?? -1);
 
@@ -328,14 +344,21 @@ const byPopularity = (a: { installs: number | null; stars: number | null }, b: {
  */
 export function matchSkills(store: Store, keywords: Keyword[], weights: Settings['weights']): SkillMatch[] {
   if (keywords.length === 0) return [];
-  const hits = store.searchSkillsFts(keywords.map((k) => ftsTerm(k.term)).join(' OR '), CONFIG.poolSize);
+  const hits = store.searchSkillsFts(keywords.map(ftsKeyword).join(' OR '), CONFIG.poolSize);
   const total = Math.max(1, store.countSkills());
   const idf = new Map(
     keywords.map((k) => {
-      const df = store.countSkillsFts(ftsTerm(k.term));
+      const df = store.countSkillsFts(ftsKeyword(k));
       return [k.key, Math.log(1 + (total - df + 0.5) / (df + 0.5))];
     }),
   );
+  // a stack tag's forms: single words by stem, phrases as written
+  type Form = { phrase: string } | { stem: string };
+  const forms = new Map<string, Form[]>();
+  for (const k of keywords) {
+    if (k.alts?.length) forms.set(k.key, k.alts.map((f): Form => (f.includes(' ') ? { phrase: ` ${f.toLowerCase()} ` } : { stem: stem(f.toLowerCase()) })));
+  }
+  const anyPhrase = [...forms.values()].some((list) => list.some((f) => 'phrase' in f));
 
   const scored = hits
     .map(({ skill }) => skill)
@@ -343,11 +366,15 @@ export function matchSkills(store: Store, keywords: Keyword[], weights: Settings
     .map((s) => {
       const name = new Set(matchTokens(s.name.replace(/[-_.]+/g, ' ')));
       const text = new Set(matchTokens([s.description ?? '', s.when_to_use ?? ''].join(' ')));
+      const namePhrase = anyPhrase ? phraseText(s.name.replace(/[-_.]+/g, ' ')) : '';
+      const textPhrase = anyPhrase ? phraseText([s.description ?? '', s.when_to_use ?? ''].join(' ')) : '';
+      const has = (k: Keyword, words: Set<string>, phrases: string) =>
+        forms.get(k.key)?.some((f) => ('phrase' in f ? phrases.includes(f.phrase) : words.has(f.stem))) ?? words.has(k.key);
       let score = 0;
       const matched: string[] = [];
       for (const k of keywords) {
-        const inName = name.has(k.key);
-        if (!inName && !text.has(k.key)) continue;
+        const inName = has(k, name, namePhrase);
+        if (!inName && !has(k, text, textPhrase)) continue;
         matched.push(k.term);
         score += Math.log2(1 + k.weight) * (idf.get(k.key) ?? 0) * (inName ? CONFIG.nameBoost : 1);
       }
@@ -511,21 +538,29 @@ export function agentFileAsReadme(projectPath: string): { path: string; md: stri
  * `exclude`: keywords turned off on the page (their surface form); `extra`: words added there, weighted like the
  * strongest keyword so they count (project review 2026-11-02).
  */
+/** How much a detected stack tag weighs as a keyword (a heading's weight); a language tag ("Python") like body text. */
+const STACK_WEIGHT = { tag: CONFIG.weights.heading, broad: CONFIG.weights.body };
+/** What the page sends in `exclude` to turn a stack tag off (keywords are excluded by their word). */
+export const STACK_EXCLUDE_PREFIX = 'stack:';
+
 export function recommendForProject(store: Store, projectPath: unknown, weights: Settings['weights'], opts: { exclude?: string[]; extra?: string[] } = {}): RecommendResult {
   let source: { path: string; md: string; also?: string[] };
+  let stack: StackTag[];
   try {
     const readmePath = findReadme(projectPath);
+    stack = detectStack(projectPath as string);
     source = { path: readmePath, md: readFileSync(readmePath, 'utf8') };
   } catch (err) {
     if (!(err instanceof ReadmeError) || err.code !== 'README_NOT_FOUND') throw err;
+    stack = detectStack(projectPath as string);
     // no README: the manifest's name, description and keywords lead, the agent file adds the rest as plain text
     const manifest = manifestAsReadme(projectPath as string);
     const agent = agentFileAsReadme(projectPath as string);
     if (manifest && agent) source = { path: manifest.path, md: `${manifest.md}\n\n${agent.md}`, also: [agent.path] };
     else if (manifest) source = manifest;
     else if (agent) source = { path: agent.path, md: agent.title ? `# ${agent.title}\n\n${agent.md}` : agent.md };
-    // nothing to read: the words typed on the page are the whole description (readmePath '' says so)
-    else if (opts.extra?.length) source = { path: '', md: '' };
+    // nothing to read: the words typed on the page, or the stack found, are the whole description (readmePath '' says so)
+    else if (opts.extra?.length || stack.length) source = { path: '', md: '' };
     else throw new ReadmeError('README_NOT_FOUND', '폴더 바로 아래에 README도, 설명이 있는 package.json·pyproject.toml·Cargo.toml도, CLAUDE.md·AGENTS.md도 없습니다.');
   }
   const info = extractReadme(source.md, basename(projectPath as string));
@@ -541,12 +576,26 @@ export function recommendForProject(store: Store, projectPath: unknown, weights:
       if (!keywords.some((k) => k.key === key)) keywords = [{ key, term, weight: top }, ...keywords];
     }
   }
-  keywords = keywords.slice(0, CONFIG.maxQueryTerms);
+  // The stack's tags join as keywords of their own (their words as alternatives), or add to the README word they
+  // already are ("react" in both); a tag turned off on the page is left out.
+  const offStack = new Set([...off].filter((t) => t.startsWith(STACK_EXCLUDE_PREFIX)).map((t) => t.slice(STACK_EXCLUDE_PREFIX.length)));
+  const stackKeywords: Keyword[] = [];
+  for (const s of stack) {
+    if (offStack.has(s.tag.toLowerCase())) continue;
+    const words = stackTerms(s.tag);
+    if (!words) continue;
+    const weight = words.broad ? STACK_WEIGHT.broad : STACK_WEIGHT.tag;
+    const same = keywords.find((k) => !k.alts && words.terms.some((t) => !t.includes(' ') && stem(t) === k.key));
+    if (same) same.weight += weight;
+    else stackKeywords.push({ key: `${STACK_EXCLUDE_PREFIX}${s.tag.toLowerCase()}`, term: s.tag, weight, alts: words.terms });
+  }
+  const readmeKeywords = keywords.slice(0, CONFIG.maxQueryTerms - stackKeywords.length);
   return {
     readmePath: source.path,
     ...(source.also ? { alsoRead: source.also } : {}),
     summary: { title: info.title, intro: info.intro, features: info.features },
-    keywords: keywords.slice(0, 10).map(({ term, weight }) => ({ term, weight })),
-    skills: matchSkills(store, keywords, weights),
+    keywords: readmeKeywords.slice(0, 10).map(({ term, weight }) => ({ term, weight })),
+    stack: stack.map((s) => (offStack.has(s.tag.toLowerCase()) ? { ...s, off: true } : s)),
+    skills: matchSkills(store, [...readmeKeywords, ...stackKeywords], weights),
   };
 }

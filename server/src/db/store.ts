@@ -505,6 +505,7 @@ export class Store {
       `SELECT DISTINCT s.repo AS repo FROM skills s
        LEFT JOIN repos r ON r.full_name = s.repo COLLATE NOCASE
        WHERE s.repo IS NOT NULL AND (r.full_name IS NULL OR r.fetched_at IS NULL OR r.fetched_at < ?)
+       ORDER BY r.fetched_at NULLS FIRST
        LIMIT ?`,
       beforeIso,
       limit,

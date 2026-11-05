@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet, apiSend } from '../api.ts';
+import { activeJob, isActiveJob, refreshActivity, useActivity } from '../activity.ts';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
+import { StatusPanel } from '../components/StatusPanel.tsx';
 import { formatAgo, jobTarget, POPULAR_JOB } from '../labels.ts';
 import type { Job, MarketplaceInfo } from '../types.ts';
 import { serverText, t } from '../i18n.ts';
@@ -41,51 +43,48 @@ function PopularReposSection({ job, act }: { job?: Job; act: Act }) {
 
 export function MarketplacesPage() {
   const [list, setList] = useState<MarketplaceInfo[] | null>(null);
-  const [jobs, setJobs] = useState<Job[]>([]);
+  // the jobs come from the page's one activity poll (activity.ts), shared with the menu bar
+  const activity = useActivity();
+  const jobs = activity?.jobs ?? [];
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [newRepo, setNewRepo] = useState('');
   const [newMode, setNewMode] = useState<'eager' | 'lazy'>('lazy');
 
   const loadList = useCallback(() => apiGet<{ marketplaces: MarketplaceInfo[] }>('/marketplaces').then((r) => setList(r.marketplaces)), []);
 
-  const refreshJobs = useCallback(async () => {
-    const j = await apiGet<{ jobs: Job[] }>('/jobs').catch(() => ({ jobs: [] as Job[] }));
-    setJobs(j.jobs);
-    return j.jobs.some((x) => x.status === 'running' || x.status === 'paused');
-  }, []);
-
   useEffect(() => {
     loadList().catch((e) => setMsg({ ok: false, text: String(e.message ?? e) }));
-    let timer: ReturnType<typeof setTimeout>;
-    let wasActive = false;
-    const tick = async () => {
-      const active = await refreshJobs();
-      if (active || wasActive) loadList().catch(() => {});
-      wasActive = active;
-      timer = setTimeout(tick, active ? 1500 : 5000);
-    };
-    tick();
-    return () => clearTimeout(timer);
-  }, [loadList, refreshJobs]);
+  }, [loadList]);
+
+  // while a job runs (and once after it ended) the list is read again with each poll: its counts change
+  const wasActive = useRef(false);
+  useEffect(() => {
+    if (!activity) return;
+    const active = activity.jobs.some(isActiveJob);
+    if (active || wasActive.current) loadList().catch(() => {});
+    wasActive.current = active;
+  }, [activity, loadList]);
 
   const act: Act = async (p, okText, after) => {
     try {
       const r = await p;
       after?.(r);
       setMsg({ ok: true, text: okText });
-      refreshJobs();
+      void refreshActivity();
     } catch (e) {
       setMsg({ ok: false, text: String((e as Error).message ?? e) });
     }
   };
 
-  const jobFor = (kind: Job['kind'], label: string) => jobs.find((j) => j.kind === kind && j.label === label && (j.status === 'running' || j.status === 'paused'));
+  const jobFor = (kind: Job['kind'], label: string) => activeJob(activity, kind, label);
 
   return (
     <div className="page">
       <h1>{t('마켓플레이스')}</h1>
       <p className="muted">{t('스킬을 찾아올 플러그인 마켓플레이스를 관리합니다. 즉시 색인은 동기화할 때 스킬까지 모으고, 지연 색인은 목록만 받아 두었다가 검색에 걸리거나 "스킬 수집"을 누를 때 모읍니다.')}</p>
       <div role="status">{msg && <p className={msg.ok ? 'ok-box' : 'warn-box'}>{msg.text}</p>}</div>
+
+      <StatusPanel />
 
       <section>
         <h2>{t('목록')}</h2>

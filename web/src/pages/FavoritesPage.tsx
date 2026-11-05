@@ -3,9 +3,11 @@ import { apiGet } from '../api.ts';
 import { ActiveFacets, FacetPanel, facetCount, matchFacets, NO_FACETS, type Facets } from '../components/FacetPanel.tsx';
 import { RepoCard } from '../components/RepoCard.tsx';
 import { ResultCard, skillHref } from '../components/ResultCard.tsx';
-import { toggleFavorite, useFavorites } from '../favorites.ts';
+import { NoticeChip } from '../components/NoticeChip.tsx';
+import { repoFavoriteId, toggleFavorite, useFavorites } from '../favorites.ts';
 import { useInstalled } from '../installed.ts';
 import { RISK_RANK } from '../labels.ts';
+import { noticesFor, useNotices, type Notice } from '../notices.ts';
 import type { RepoResult, ResultItem } from '../types.ts';
 import { t } from '../i18n.ts';
 
@@ -16,9 +18,32 @@ type Kind = 'skill' | 'repo';
  * This PC's favorite skills and GitHub repositories, newest first (user decisions 2026-11-02, 2026-11-03), narrowed
  * by the side checkboxes: what kind, then the search's provider, category and install method (skills only).
  */
+/**
+ * What changed about a favorite since it was starred (feature review F7, the same notices as the 설치됨 badge): the
+ * newest three, the unseen ones marked, and "확인" to mark them seen.
+ */
+function ChangeChips({ notices, onSeen }: { notices: Notice[]; onSeen: (ids: number[]) => Promise<void> }) {
+  if (notices.length === 0) return null;
+  const unseen = notices.filter((n) => !n.seenAt).map((n) => n.id);
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2 pt-1.5" aria-label={t('바뀐 점')}>
+      {notices.slice(0, 3).map((n) => (
+        <NoticeChip key={n.id} notice={n} />
+      ))}
+      {notices.length > 3 && <span className="muted small">{t('외 {0}건', notices.length - 3)}</span>}
+      {unseen.length > 0 && (
+        <button type="button" className="linkish small" onClick={() => void onSeen(unseen).catch(() => {})}>
+          {t('확인')}
+        </button>
+      )}
+    </span>
+  );
+}
+
 export function FavoritesPage({ onOpen, onOpenId }: { onOpen: (item: ResultItem) => void; onOpenId: (id: string) => void }) {
   const favorites = useFavorites();
   const installedAs = useInstalled();
+  const { notices, markSeen } = useNotices();
   const [data, setData] = useState<Favorites | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [facets, setFacets] = useState<Facets>(NO_FACETS);
@@ -101,15 +126,21 @@ export function FavoritesPage({ onOpen, onOpenId }: { onOpen: (item: ResultItem)
             {shownRepos.length > 0 && (
               <div className="repo-results" aria-label={t('GitHub 저장소')}>
                 {shownRepos.map((r) => (
-                  // the search's default risk limit applies to what a repository's 설치 button installs here too
-                  <RepoCard key={r.repo} repo={{ ...r, skills: r.skills.filter((s) => RISK_RANK[s.riskLevel] <= RISK_RANK.medium) }} onOpenSkill={onOpenId} />
+                  <div key={r.repo}>
+                    {/* the search's default risk limit applies to what a repository's 설치 button installs here too */}
+                    <RepoCard repo={{ ...r, skills: r.skills.filter((s) => RISK_RANK[s.riskLevel] <= RISK_RANK.medium) }} onOpenSkill={onOpenId} />
+                    <ChangeChips notices={noticesFor(notices, repoFavoriteId(r.repo))} onSeen={markSeen} />
+                  </div>
                 ))}
               </div>
             )}
             {shownItems.length > 0 && (
               <div className="results">
                 {shownItems.map((it, i) => (
-                  <ResultCard key={it.id} item={it} position={i} href={skillHref(it.id)} installed={installedAs(it)} onSelect={() => onOpen(it)} />
+                  <div key={it.id}>
+                    <ResultCard item={it} position={i} href={skillHref(it.id)} installed={installedAs(it)} onSelect={() => onOpen(it)} />
+                    <ChangeChips notices={noticesFor(notices, it.id)} onSeen={markSeen} />
+                  </div>
                 ))}
               </div>
             )}
@@ -124,7 +155,7 @@ export function FavoritesPage({ onOpen, onOpenId }: { onOpen: (item: ResultItem)
           <ul className="explain">
             {shownGone.map((g) => (
               <li key={g.id}>
-                <span className="mono">{g.name}</span>{' '}
+                <span className="mono">{g.name}</span> <ChangeChips notices={noticesFor(notices, g.id)} onSeen={markSeen} />{' '}
                 <button type="button" className="linkish small" onClick={() => void toggleFavorite(g.id).catch(() => {})}>
                   {t('즐겨찾기에서 빼기')}
                 </button>

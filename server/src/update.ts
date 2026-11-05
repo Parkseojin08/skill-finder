@@ -22,10 +22,21 @@ export function newerVersion(a: string, b: string): boolean {
  * read or the signature does not match. `publicKey`: tests sign with their own key.
  */
 export async function checkForUpdate(fetchImpl: typeof fetch = fetch, publicKey?: KeyLike): Promise<string | null> {
+  try {
+    return await fetchUpdate(fetchImpl, publicKey);
+  } catch {
+    // offline: try again later
+    return latest?.version ?? null;
+  }
+}
+
+/** checkForUpdate, but a page that could not be reached throws (the scheduler tries again sooner). */
+async function fetchUpdate(fetchImpl: typeof fetch = fetch, publicKey?: KeyLike): Promise<string | null> {
   if (process.env.SKILL_FINDER_UPDATES !== '1') return null;
   let base = process.env.SKILL_FINDER_UPDATE_URL || DEFAULT_BASE;
   if (!base.endsWith('/')) base += '/';
-  try {
+  {
+    // a page that answers with an error is "no news", as before; only no answer at all throws
     const res = await fetchImpl(`${base}meta.json`, { signal: AbortSignal.timeout(5000) });
     const meta = res.ok ? ((await res.json()) as Record<string, unknown>) : {};
     const { version, bytes, sha256 } = meta;
@@ -41,16 +52,18 @@ export async function checkForUpdate(fetchImpl: typeof fetch = fetch, publicKey?
     ) {
       latest = { version, notes: signedNotes(meta, version, publicKey) };
     }
-  } catch {
-    // offline: try again later
   }
   return latest?.version ?? null;
 }
 
-export function startUpdateChecks(): void {
-  if (process.env.SKILL_FINDER_UPDATES !== '1') return;
-  void checkForUpdate();
-  setInterval(() => void checkForUpdate(), CHECK_EVERY_MS).unref();
+/** How often the scheduler's "새 버전 확인" runs (tasks.ts registers it; installed app only). */
+export const UPDATE_CHECK_EVERY_MS = CHECK_EVERY_MS;
+
+/** Scheduler task "새 버전 확인": as checkForUpdate, but failing when the download page cannot be reached. */
+export async function runUpdateCheck(): Promise<{ counts?: Record<string, number>; skipped?: boolean; note?: string }> {
+  if (process.env.SKILL_FINDER_UPDATES !== '1') return { skipped: true, note: '설치판이 아님' };
+  const version = await fetchUpdate();
+  return { counts: { newer: version ? 1 : 0 }, note: version ? `다운로드 페이지 최신 ${version}` : undefined };
 }
 
 /** `{ version, notes }` when the download page has a newer signed version than `current`. */

@@ -5,6 +5,7 @@ import { fetchText, USER_AGENT } from '../util/http.ts';
 import { SizedCache } from '../util/sizedCache.ts';
 import { sanitizeLine } from '../util/sanitize.ts';
 import { RateLimitWait, Semaphore, sleep, TokenBucket } from '../util/limiter.ts';
+import { noteRepoChange, setRepoHeadSha, watchedRepos, type WatchedRepo } from '../watch/notices.ts';
 import { gitTree, lsRemote, type RemoteRef, type TreeEntry } from './gitTree.ts';
 
 /** Tree entries the tree cache may hold (perf debate 1-3); kubernetes, the largest seen, has about 42,000. */
@@ -43,9 +44,10 @@ type GraphRepo = {
   isArchived?: unknown;
   isFork?: unknown;
   licenseInfo?: { spdxId?: unknown } | null;
-  defaultBranchRef?: { name?: unknown } | null;
+  defaultBranchRef?: { name?: unknown; target?: { oid?: unknown } | null } | null;
   nameWithOwner?: unknown;
 };
+const OID_RE = /^[0-9a-f]{40}$/;
 const REPO_RE = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 
 /**
@@ -402,7 +404,10 @@ export class GitHub {
       vars[`o${i}`] = owner;
       vars[`n${i}`] = name;
       defs.push(`$o${i}: String!, $n${i}: String!`);
-      fields.push(`r${i}: repository(owner: $o${i}, name: $n${i}) { stargazerCount pushedAt isArchived isFork licenseInfo { spdxId } defaultBranchRef { name } nameWithOwner }`);
+      // B3: the default branch's commit comes along (head_sha), so the repo watch knows which repos changed
+      fields.push(
+        `r${i}: repository(owner: $o${i}, name: $n${i}) { stargazerCount pushedAt isArchived isFork licenseInfo { spdxId } defaultBranchRef { name target { ... on Commit { oid } } } nameWithOwner }`,
+      );
     });
     const res = await fetch(`${API}/graphql`, {
       method: 'POST',
@@ -421,21 +426,32 @@ export class GitHub {
     const notFound = new Set((body.errors ?? []).filter((e) => e.type === 'NOT_FOUND').map((e) => String(e.path?.[0] ?? '')));
     const at = new Date().toISOString();
     let stored = 0;
+    // F7: the installed and favorite skills' repos, read once per call and only when one was archived or moved
+    let watched: Map<string, WatchedRepo> | null = null;
     list.forEach((repo, i) => {
       const g = body.data?.[`r${i}`];
       const cached = this.store.getRepo(repo);
       const base = { full_name: cached?.full_name ?? repo, etag: cached?.etag ?? null, fetched_at: at };
       if (g && typeof g.stargazerCount === 'number') {
+        const archived = g.isArchived ? 1 : 0;
+        const movedTo = movedName(repo, g.nameWithOwner);
         this.store.upsertRepo({
           ...base,
           stars: g.stargazerCount,
           pushed_at: typeof g.pushedAt === 'string' ? g.pushedAt : null,
-          archived: g.isArchived ? 1 : 0,
+          archived,
           fork: g.isFork ? 1 : 0,
           license: typeof g.licenseInfo?.spdxId === 'string' ? g.licenseInfo.spdxId : null,
           default_branch: typeof g.defaultBranchRef?.name === 'string' ? g.defaultBranchRef.name : null,
         });
-        this.store.setRepoMovedTo(base.full_name, movedName(repo, g.nameWithOwner));
+        this.store.setRepoMovedTo(base.full_name, movedTo);
+        const oid = g.defaultBranchRef?.target?.oid;
+        // an empty repo has no default branch commit: its head is unknown, not "changed"
+        setRepoHeadSha(this.store, base.full_name, typeof oid === 'string' && OID_RE.test(oid) ? oid : null);
+        if (cached && ((cached.archived === 0 && archived === 1) || (movedTo && movedTo !== (cached.moved_to ?? null)))) {
+          watched ??= watchedRepos(this.store);
+          noteRepoChange(this.store, watched, base.full_name, cached, { archived, movedTo });
+        }
         stored++;
       } else if (notFound.has(`r${i}`)) {
         if (cached?.stars != null) {

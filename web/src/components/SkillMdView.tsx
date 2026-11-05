@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { HIDDEN_KIND } from '../labels.ts';
 import type { SkillDetail } from '../types.ts';
@@ -42,14 +42,13 @@ function showInvisible(text: string, budget: { left: number }, key: string): Rea
   return out;
 }
 
-/** The raw text with the hidden spans marked (overlaps clipped) and invisible characters made visible. */
-function RawText({ text, spans }: { text: string; spans: HiddenSpan[] }) {
-  const budget = { left: MAX_TOKENS };
+/** `[from, to)` of the text with the hidden spans in it marked (overlaps clipped) and invisible characters made visible. */
+function renderRange(text: string, spans: HiddenSpan[], from: number, to: number, budget: { left: number }): ReactNode[] {
   const parts: ReactNode[] = [];
-  let pos = 0;
+  let pos = from;
   for (const s of spans) {
     const start = Math.max(s.start, pos);
-    const end = Math.min(s.end, text.length);
+    const end = Math.min(s.end, to);
     if (end <= start) continue;
     if (start > pos) parts.push(...showInvisible(text.slice(pos, start), budget, `p${pos}`));
     parts.push(
@@ -59,7 +58,42 @@ function RawText({ text, spans }: { text: string; spans: HiddenSpan[] }) {
     );
     pos = end;
   }
-  if (pos < text.length) parts.push(...showInvisible(text.slice(pos), budget, `p${pos}`));
+  if (pos < to) parts.push(...showInvisible(text.slice(pos, to), budget, `p${pos}`));
+  return parts;
+}
+
+/** Offsets `[start, end)` of a 1-based line (without its newline); null past the end. */
+function lineRange(text: string, line: number): [number, number] | null {
+  let start = 0;
+  for (let n = 1; n < line; n++) {
+    const nl = text.indexOf('\n', start);
+    if (nl < 0) return null;
+    start = nl + 1;
+  }
+  const nl = text.indexOf('\n', start);
+  return [start, nl < 0 ? text.length : nl];
+}
+
+/**
+ * The raw text with the hidden spans marked and invisible characters made visible; `focusLine` (a risk signal's line,
+ * feature review F1) is highlighted and scrolled to.
+ */
+function RawText({ text, spans, focusLine }: { text: string; spans: HiddenSpan[]; focusLine?: number | null }) {
+  const budget = { left: MAX_TOKENS };
+  const focusRef = useRef<HTMLSpanElement>(null);
+  const range = focusLine ? lineRange(text, focusLine) : null;
+  useEffect(() => {
+    focusRef.current?.scrollIntoView({ block: 'center' });
+  }, [focusLine]);
+  const parts: ReactNode[] = range
+    ? [
+        ...renderRange(text, spans, 0, range[0], budget),
+        <span key="focus" ref={focusRef} id="skillmd-focus" className="-mx-1 rounded bg-primary/20 px-1 outline outline-2 outline-primary/60">
+          {renderRange(text, spans, range[0], range[1], budget)}
+        </span>,
+        ...renderRange(text, spans, range[1], text.length, budget),
+      ]
+    : renderRange(text, spans, 0, text.length, budget);
   return (
     <div className="file-view">
       <pre>{parts}</pre>
@@ -82,13 +116,19 @@ export function SkillMdView({
   detail,
   md,
   onRelativeLink,
+  focusLine,
 }: {
   detail: Detail;
   /** skillMd split by the page (splitFrontmatter). */
   md: { frontmatter: string | null; body: string } | null;
   onRelativeLink: (path: string) => void;
+  /** A line to show and highlight in the raw text (a risk signal's place, F1); it switches to the raw view. */
+  focusLine?: number | null;
 }) {
-  const [raw, setRaw] = useState(false);
+  const [raw, setRaw] = useState(!!focusLine);
+  useEffect(() => {
+    if (focusLine) setRaw(true);
+  }, [focusLine]);
   if (!detail.skillMd || !md) return null;
   const hidden = detail.hiddenContent ?? { spans: [], more: false };
   const count = hidden.spans.length;
@@ -117,7 +157,8 @@ export function SkillMdView({
       {raw ? (
         <>
           <p className="muted small">{t('파일 그대로입니다. 강조한 곳은 렌더링 화면에서 보이지 않는 부분이고, 보이지 않는 글자는 ⟦U+…⟧로 표시합니다.')}</p>
-          <RawText text={detail.skillMd} spans={hidden.spans} />
+          {focusLine ? <p className="muted small">{t('{0}번째 줄을 강조했습니다.', focusLine)}</p> : null}
+          <RawText text={detail.skillMd} spans={hidden.spans} focusLine={focusLine} />
         </>
       ) : (
         <>

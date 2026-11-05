@@ -1,11 +1,15 @@
 import { createHash } from 'node:crypto';
 import { extractSkillMeta } from './analyze/frontmatter.ts';
 import { qualityWarnings } from './analyze/quality.ts';
-import { pluginRiskFlags, RISK_RULES_VERSION, riskLevel, skillRiskFlags, TEXT_RISK_FLAGS, type PluginSignals, type RiskFlag } from './analyze/risk.ts';
+import { pluginRiskFlags, riskEvidence, RISK_RULES_VERSION, riskLevel, skillRiskFlags, TEXT_RISK_FLAGS, textEvidence, type Evidence, type FlagEvidence, type PluginSignals, type RiskFlag, type RiskLevel } from './analyze/risk.ts';
+import { hookRows, lspRows, mcpRows, pluginRootPaths, type HookRow, type LspRow, type McpRow } from './analyze/runConfig.ts';
+import { maskSecrets } from './util/log.ts';
+import { isTextPath, MAX_FILE_BYTES } from './util/textFiles.ts';
+import { looksBinary } from './util/http.ts';
 import { discoverRepo, parseJsonObject, PLUGIN_JSON, type RepoDiscovery } from './discovery/classifyRepo.ts';
 import { genericAcceptor, type GenericAcceptor } from './discovery/genericRules.ts';
 import { discoverPluginSkills, type MarketplaceEntry } from './discovery/pluginRules.ts';
-import { basename, joinPath, skillMdPath, TreeIndex } from './discovery/tree.ts';
+import { basename, joinPath, resolveRel, skillMdPath, TreeIndex } from './discovery/tree.ts';
 import type { PluginRow, SkillRow, Store } from './db/store.ts';
 import { textFileFlags } from './install/scan.ts';
 import { RepoUnreachableError } from './sources/gitTree.ts';
@@ -148,13 +152,32 @@ const WRITE_BATCH = 50;
 export type RepoIndexResult = { skills: number; sha: string | null; unchanged: boolean; removed: number };
 
 /**
- * One piece of what a plugin runs (hooks, MCP servers, monitors, bin/ files) and where it is written. `flags`: the
- * text rules (download-and-run, rm -rf) on its commands (feature review F3 minimal, P1).
+ * One piece of what a plugin runs (hooks, MCP servers, monitors, bin/ files, LSP servers) and where it is written, or
+ * a file it brings that was checked: a script a hook runs through `${CLAUDE_PLUGIN_ROOT}` (`script`), a command or
+ * agent document (F3 full). `flags`: the text rules on its commands (feature review F3 minimal, P1), the SKILL.md
+ * rules for a command or agent document. `evidence`: their lines (F1). `level`: the risk level those flags give.
  */
-export type RunConfigItem = { kind: 'hooks' | 'mcp' | 'monitors' | 'bin'; source: string; text: string; truncated: boolean; flags: RiskFlag[] };
+export type RunConfigItem = {
+  kind: 'hooks' | 'mcp' | 'monitors' | 'bin' | 'lsp' | 'script' | 'command' | 'agent';
+  source: string;
+  text: string;
+  truncated: boolean;
+  flags: RiskFlag[];
+  evidence?: Array<Evidence & { flag: RiskFlag }>;
+  level?: RiskLevel;
+};
+/** The run configuration as rows a person reads (F3 full). `docs`: command and agent documents checked. */
+export type RunConfigTable = { hooks: HookRow[]; mcp: McpRow[]; lsp: LspRow[]; docs: { commands: number; agents: number; scripts: number } };
 /** `findings`: the items with a signal, as the file scan reports them (the page's confirm tick reads them). */
-export type PluginRunConfig = { commit: string; items: RunConfigItem[]; findings: Array<{ kind: RunConfigItem['kind']; source: string; flags: RiskFlag[] }> };
+export type PluginRunConfig = {
+  commit: string;
+  items: RunConfigItem[];
+  findings: Array<{ kind: RunConfigItem['kind']; source: string; flags: RiskFlag[] }>;
+  table?: RunConfigTable;
+};
 const RUN_CONFIG_MAX_CHARS = 16_000;
+/** Scripts, commands and agents read per plugin (each at most MAX_FILE_BYTES). */
+const PLUGIN_FILES_MAX = 50;
 
 /**
  * The command lines of a hooks / MCP / monitors config: each object's `command` with its `args` after it, as they
@@ -198,6 +221,26 @@ export function runConfigFlags(value: unknown): RiskFlag[] {
   return [...flags];
 }
 
+/**
+ * Where a config's flags are (F1): the lines of the file as written when it was read from one (a match there whose
+ * flag the per-command check also gave), else the command line itself without a line number.
+ */
+function configEvidence(value: unknown, lines: string[], flags: RiskFlag[], source: string): Array<Evidence & { flag: RiskFlag }> {
+  const inFile = typeof value === 'string' ? textEvidence(value, source).filter((e) => flags.includes(e.flag)) : [];
+  const found = new Set(inFile.map((e) => e.flag));
+  const rest = lines.flatMap((l) =>
+    textEvidence(l, source)
+      .filter((e) => !found.has(e.flag))
+      .map((e) => ({ ...e, line: null, excerpt: l.length > 200 ? `${l.slice(0, 199)}…` : l, before: null, after: null })),
+  );
+  return [...inFile, ...rest].slice(0, 20);
+}
+
+/** Every flag's places as one list (a run-config item keeps them so). */
+export function flattenEvidence(found: Partial<Record<RiskFlag, FlagEvidence>>): Array<Evidence & { flag: RiskFlag }> {
+  return (Object.entries(found) as Array<[RiskFlag, FlagEvidence]>).flatMap(([flag, e]) => e.items.map((it) => ({ ...it, flag })));
+}
+
 type RepoSnapshot ={ tree: RepoTree; index: TreeIndex; read: (path: string) => Promise<string | null> };
 /** What single-skill lookups need from a repo: its tree, plugin layout, and the generic rules per folder. */
 type RepoLookup = { snap: RepoSnapshot; discovery: RepoDiscovery; generic: GenericAcceptor };
@@ -207,6 +250,8 @@ export class Indexer {
   private readonly github: GitHub;
   /** Bounded by tree entries (perf debate 1-3): a lookup holds its tree and the SKILL.md texts read, ~770B each. */
   private readonly discoveryCache = new SizedCache<RepoLookup>({ maxSize: 60_000, ttlMs: 10 * 60 * 1000, sizeOf: (l) => l.snap.index.files.size });
+  /** A plugin's run configuration per commit, for 30 minutes (the install tab, then the install's record of it). */
+  private readonly runConfigCache = new SizedCache<PluginRunConfig>({ maxSize: 100, ttlMs: 30 * 60 * 1000, sizeOf: () => 1 });
 
   constructor(store: Store, github: GitHub) {
     this.store = store;
@@ -242,13 +287,16 @@ export class Indexer {
     return meta?.pushed_at ?? tree.commitDate;
   }
 
-  /** A GitHub plugin's marketplace entry, commit, tree, folder and plugin.json, as the index reads them. */
-  private async openPlugin(plugin: PluginRow) {
+  /**
+   * A GitHub plugin's marketplace entry, commit, tree, folder and plugin.json, as the index reads them. `atSha`: the
+   * commit to read instead of the entry's (or the ref's head): the one `git ls-remote` just saw (B6).
+   */
+  private async openPlugin(plugin: PluginRow, atSha?: string) {
     const repo = plugin.repo!;
     const stored = (plugin.entry_json ? JSON.parse(plugin.entry_json) : null) as StoredPluginEntry | null;
     const entry = stored?.entry ?? ({ name: plugin.name, source: JSON.parse(plugin.source_json) } as MarketplaceEntry);
     const src = normalizeSource(entry.source, stored?.pluginRoot);
-    const sha = plugin.sha ?? (await this.github.resolveRef(repo, plugin.ref))?.sha;
+    const sha = atSha ?? plugin.sha ?? (await this.github.resolveRef(repo, plugin.ref))?.sha;
     if (!sha) throw new Error('커밋을 찾을 수 없습니다');
     const snap = await this.snapshot(repo, sha);
     const root = src.kind === 'relative' ? resolveRelativeRoot(src.raw, stored?.pluginRoot ?? null, snap.index) : (plugin.path ?? '');
@@ -266,16 +314,38 @@ export class Indexer {
   async pluginRunConfig(pluginId: string): Promise<PluginRunConfig> {
     const plugin = this.store.getPlugin(pluginId);
     if (!plugin?.repo) throw new Error('GitHub에 있는 플러그인이 아니라 읽을 수 없습니다');
-    const { entry, sha, snap, root, manifest } = await this.openPlugin(plugin);
+    // the install tab and the install itself ask for the same commit within minutes (F7 records the check)
+    const known = plugin.sha ?? plugin.skills_indexed_sha;
+    const key = known ? `${pluginId}@${known}` : null;
+    const hit = key ? this.runConfigCache.get(key) : undefined;
+    if (hit) return hit;
+    const value = this.readRunConfig(plugin);
+    if (key) this.runConfigCache.set(key, value); // a failure is dropped by the cache
+    return value;
+  }
+
+  private async readRunConfig(plugin: PluginRow): Promise<PluginRunConfig> {
+    // the commit the risk check read, for an unpinned plugin too (its head may have moved since)
+    const { entry, sha, snap, root, manifest } = await this.openPlugin(plugin, plugin.sha ? undefined : (plugin.skills_indexed_sha ?? undefined));
     const items: RunConfigItem[] = [];
+    const table: RunConfigTable = { hooks: [], mcp: [], lsp: [], docs: { commands: 0, agents: 0, scripts: 0 } };
+    /** Command lines of hooks, MCP servers and monitors: the scripts they run are checked below. */
+    const commandLines: string[] = [];
     const show = (kind: RunConfigItem['kind'], source: string, value: unknown) => {
-      const text = sanitizeText(typeof value === 'string' ? value : JSON.stringify(value, null, 2));
+      const text = maskSecrets(sanitizeText(typeof value === 'string' ? value : JSON.stringify(value, null, 2)));
       // the whole config is checked, not only the part shown; bin/ is a file list, not commands
+      const lines = kind === 'bin' ? [] : runConfigCommands(value);
+      commandLines.push(...lines);
       const flags = kind === 'bin' ? [] : runConfigFlags(value);
-      items.push({ kind, source, text: text.slice(0, RUN_CONFIG_MAX_CHARS), truncated: text.length > RUN_CONFIG_MAX_CHARS, flags });
+      const evidence = flags.length ? configEvidence(value, lines, flags, source) : [];
+      items.push({ kind, source, text: text.slice(0, RUN_CONFIG_MAX_CHARS), truncated: text.length > RUN_CONFIG_MAX_CHARS, flags, ...(evidence.length ? { evidence } : {}), level: riskLevel(flags) });
+      if (kind === 'hooks') table.hooks.push(...hookRows(value, source));
+      else if (kind === 'mcp') table.mcp.push(...mcpRows(value, source));
+      else if (kind === 'lsp') table.lsp.push(...lspRows(value, source));
     };
     const readFile = async (kind: RunConfigItem['kind'], rel: string) => {
-      const path = joinPath(root, rel.replace(/^\.\//, ''));
+      const path = resolveRel(root, rel);
+      if (path == null) return;
       const text = await snap.read(path).catch(() => null);
       if (text != null) show(kind, path, text);
     };
@@ -297,12 +367,69 @@ export class Indexer {
     await fromField('monitors', manifest?.monitors, `${manifestPath} monitors`);
     const bin = [...snap.index.files.keys()].filter((f) => f.startsWith(joinPath(root, 'bin') + '/'));
     if (bin.length) show('bin', joinPath(root, 'bin'), bin.slice(0, 50).join('\n') + (bin.length > 50 ? `\n… 외 ${bin.length - 50}개` : ''));
+    // LSP servers (F3 full): started by Claude Code for the files they handle
+    if (snap.index.hasFile(joinPath(root, '.lsp.json'))) await readFile('lsp', '.lsp.json');
+    await fromField('lsp', manifest?.lspServers, `${manifestPath} lspServers`);
+    await fromField('lsp', entry.lspServers, 'marketplace.json lspServers');
+
+    /** A text file of the plugin, up to MAX_FILE_BYTES; null when it is not there, too large, binary or unreadable. */
+    const readText = async (path: string) => {
+      const info = snap.index.files.get(path);
+      if (!info || !isTextPath(path) || (info.size != null && info.size > MAX_FILE_BYTES)) return null;
+      const text = await snap.read(path).catch(() => null);
+      return text == null || text.length > MAX_FILE_BYTES || looksBinary(text) ? null : text;
+    };
+    // Scripts the hooks (and MCP servers, monitors) run from the plugin: the same text rules as their commands.
+    const scripts = [...new Set(commandLines.flatMap(pluginRootPaths))]
+      .map((rel) => resolveRel(root, rel))
+      .filter((p): p is string => p != null && snap.index.hasFile(p))
+      .slice(0, PLUGIN_FILES_MAX);
+    for (const path of scripts) {
+      const text = await readText(path);
+      if (text == null) continue;
+      table.docs.scripts++;
+      const flags = textFileFlags(text);
+      if (!flags.length) continue;
+      const shown = maskSecrets(sanitizeText(text));
+      items.push({ kind: 'script', source: path, text: shown.slice(0, RUN_CONFIG_MAX_CHARS), truncated: shown.length > RUN_CONFIG_MAX_CHARS, flags, evidence: textEvidence(text, path), level: riskLevel(flags) });
+    }
+    // Command and agent documents: the SKILL.md rules (allowed-tools, `!`cmd``, hooks, download-and-run). Only those
+    // with a signal are listed; the count says how many were read.
+    for (const kind of ['command', 'agent'] as const) {
+      const field = kind === 'command' ? manifest?.commands : manifest?.agents;
+      const dirs = [kind === 'command' ? 'commands' : 'agents', ...(typeof field === 'string' ? [field] : Array.isArray(field) ? field.filter((f): f is string => typeof f === 'string') : [])];
+      const docs = new Set<string>();
+      for (const rel of dirs) {
+        const p = resolveRel(root, rel);
+        if (p == null) continue;
+        if (snap.index.hasFile(p) && p.toLowerCase().endsWith('.md')) docs.add(p);
+        else for (const f of snap.index.filesUnder(p)) if (f.path.toLowerCase().endsWith('.md')) docs.add(joinPath(p, f.path));
+      }
+      for (const path of [...docs].sort().slice(0, PLUGIN_FILES_MAX)) {
+        const raw = await readText(path);
+        if (raw == null) continue;
+        if (kind === 'command') table.docs.commands++;
+        else table.docs.agents++;
+        const meta = extractSkillMeta(raw, basename(path).replace(/\.md$/i, ''));
+        const input = { files: [], allowedTools: meta.allowedTools, body: meta.body, hasHooks: meta.hasHooks, raw: sanitizeText(raw).replace(/^\uFEFF/, ''), partial: meta.frontmatterTooLarge };
+        // a plugin's own documents point at its folder by design: not worth a line here
+        const flags: RiskFlag[] = skillRiskFlags(input).filter((f) => f !== 'pluginRootDependency');
+        if (!flags.length) continue;
+        const evidence = flattenEvidence(riskEvidence(input, { path, perFlag: 5 })).filter((e) => flags.includes(e.flag));
+        const shown = sanitizeText(raw);
+        items.push({ kind, source: path, text: shown.slice(0, RUN_CONFIG_MAX_CHARS), truncated: shown.length > RUN_CONFIG_MAX_CHARS, flags, evidence, level: riskLevel(flags) });
+      }
+    }
     const findings = items.filter((it) => it.flags.length > 0).map((it) => ({ kind: it.kind, source: it.source, flags: it.flags }));
-    return { commit: sha, items, findings };
+    return { commit: sha, items, findings, table };
   }
 
   /** Indexes the skills of one marketplace plugin; replaces its previous skill rows. Returns the skill count. */
-  async indexPlugin(pluginId: string): Promise<number> {
+  /**
+   * `atSha`: read this commit instead of the entry's or its ref's head (the plugin-install recheck, B6: the head
+   * `git ls-remote` just reported, which the cached ref lookup may not know yet).
+   */
+  async indexPlugin(pluginId: string, opts: { atSha?: string } = {}): Promise<number> {
     const plugin = this.store.getPlugin(pluginId);
     if (!plugin) throw new Error(`unknown plugin ${pluginId}`);
     if (!plugin.repo) {
@@ -310,7 +437,7 @@ export class Indexer {
       return 0;
     }
     try {
-      const { entry, src, sha, snap, root, manifest } = await this.openPlugin(plugin);
+      const { entry, src, sha, snap, root, manifest } = await this.openPlugin(plugin, opts.atSha);
       const d = discoverPluginSkills(snap.index, root, manifest, entry, {
         entryAtMarketplaceRoot: src.kind === 'relative' && root === '',
       });
@@ -586,6 +713,19 @@ export class Indexer {
     };
     this.store.upsertSkill(row, '');
     return this.store.getSkill(row.id)!;
+  }
+
+  /**
+   * One generic skill read again at `sha` (the skills CLI install recheck, B6: a skill it cannot pin is installed
+   * from the head, so the head is checked first). Returns the row now stored, or null when the folder is no longer
+   * an installable skill there. A marketplace-indexed row for the same folder is left as it is.
+   */
+  async indexSkillAt(repo: string, dirPath: string, sha: string): Promise<SkillRow | null> {
+    const snap = await this.snapshot(repo, sha);
+    const discovery = await discoverRepo(snap.index, snap.read, genericValidator, { genericSkills: false });
+    const lookup: RepoLookup = { snap, discovery, generic: genericAcceptor(snap.index, snap.read, genericValidator) };
+    const raw = await this.acceptDir(lookup, dirPath);
+    return raw == null ? null : this.rowFromDiscovery(repo, snap, discovery, dirPath, raw);
   }
 
   /** Fresh tree for a stored skill (detail view file listing / file reads). */

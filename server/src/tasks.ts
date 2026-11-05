@@ -10,6 +10,9 @@ import { searchActivity } from './search/activity.ts';
 import { bumpIndexGeneration, pruneSearchCache, trackIndexChanges } from './search/indexGeneration.ts';
 import { getSettings, SEARCH_LOG_KEEP_MS } from './settings.ts';
 import { pool, sleep } from './util/limiter.ts';
+import { registerTask, schedulerFor, type TaskOutcome } from './scheduler.ts';
+import { runDbMaintenance } from './dbMaintenance.ts';
+import { runUpdateCheck, UPDATE_CHECK_EVERY_MS } from './update.ts';
 
 const COLLECT_CONCURRENCY = 4;
 const BACKGROUND_CONCURRENCY = 3;
@@ -37,12 +40,19 @@ async function indexPending(ctx: AppContext, marketplace: string, ctl: JobContro
   );
 }
 
+/**
+ * A sync where no marketplace could be read (offline, GitHub down): the first error, so the scheduler tries again
+ * soon instead of in 24 hours (P10). The job itself still ends as before, with the errors listed.
+ */
+const syncOutcomes = new WeakMap<Job, { read: number; error?: unknown }>();
+
 /** Syncs marketplace.json for one or all enabled marketplaces; eager ones also index their plugins' skills. */
 export function startSync(ctx: AppContext, marketplace?: string, force = false): Job {
   const label = marketplace ?? '*';
   const running = ctx.jobs.active('sync', label);
   if (running) return running;
-  return ctx.jobs.start('sync', label, async (ctl) => {
+  const outcome: { read: number; error?: unknown } = { read: 0 };
+  const job = ctx.jobs.start('sync', label, async (ctl) => {
     const targets = ctx.store
       .listMarketplaces()
       .filter((m) => (marketplace ? m.name === marketplace : m.enabled === 1));
@@ -55,9 +65,11 @@ export function startSync(ctx: AppContext, marketplace?: string, force = false):
         await ctl.checkpoint();
         try {
           await syncMarketplace(ctx.store, ctx.github, m.name, force);
+          outcome.read++;
           ctl.tick();
           if (m.index_mode === 'eager') eager.push(m.name);
         } catch (err) {
+          outcome.error ??= err;
           ctl.tick(`${m.name}: ${String((err as Error).message ?? err).slice(0, 200)}`);
         }
       }
@@ -76,6 +88,18 @@ export function startSync(ctx: AppContext, marketplace?: string, force = false):
       if (!last || Date.now() - Date.parse(last) > POPULAR_EVERY_MS) startPopularCollect(ctx, true);
     }
   });
+  syncOutcomes.set(job, outcome);
+  return job;
+}
+
+/** Scheduler task "마켓플레이스 동기화": the full sync, failed when not one marketplace could be read. */
+export async function runSync(ctx: AppContext): Promise<TaskOutcome> {
+  const job = startSync(ctx);
+  await ctx.jobs.wait(job.id);
+  const outcome = syncOutcomes.get(job);
+  if (job.status === 'error') throw new Error(job.errors.at(-1) ?? '동기화 실패');
+  if (outcome && outcome.read === 0 && outcome.error) throw outcome.error;
+  return { counts: { marketplaces: outcome?.read ?? 0, done: job.done, total: job.total, errors: job.errors.length } };
 }
 
 const POPULAR_EVERY_MS = 24 * 60 * 60 * 1000;
@@ -135,41 +159,59 @@ async function refreshRepoGroup(ctx: AppContext, repos: string[]): Promise<{ sto
   }
 }
 
+/** One pass over the repos due for a refresh; adds to `got` as it goes and throws when GitHub cannot be asked. */
+async function repoMetaPass(ctx: AppContext, got: { stored: number; left: number }): Promise<void> {
+  const repos = ctx.store.listReposToRefresh(new Date(Date.now() - REPO_META_STALE_MS).toISOString(), 10_000);
+  let brokenInRow = 0;
+  for (let i = 0; i < repos.length; i += GRAPHQL_BATCH) {
+    while (searchActivity.busy()) await sleep(500);
+    const group = repos.slice(i, i + GRAPHQL_BATCH);
+    const r = await refreshRepoGroup(ctx, group);
+    got.stored += r.stored;
+    got.left += r.left;
+    if (r.left === group.length && r.broken) {
+      // this group's answers broke twice: skip it, unless the last few all did (the network is down)
+      if (++brokenInRow >= REPO_META_MAX_BROKEN) throw r.error;
+      continue;
+    }
+    brokenInRow = 0;
+    // not one piece answered: GitHub is down rather than slow, so stop asking until the next run
+    if (r.left === group.length) throw r.error;
+  }
+  if (got.left) console.warn('[repo-meta]', `GitHub가 일부 요청에 답하지 않아 저장소 ${got.left}개는 다음 갱신 때 다시 묻습니다`);
+}
+
 /**
  * Keeps star counts of the repos skills come from current (GraphQL, 100 per call), so a search reads them
  * from the database instead of asking GitHub per repo, and fills repos never fetched (indexed without a
- * token). Steps aside while a search runs; does nothing without a token.
+ * token). Steps aside while a search runs; does nothing without a token. Errors are logged, not thrown.
  */
 export async function refreshRepoMeta(ctx: AppContext): Promise<number> {
   if (repoMetaRunning || !ctx.github.hasToken) return 0;
   repoMetaRunning = true;
-  let stored = 0;
+  const got = { stored: 0, left: 0 };
   try {
-    const repos = ctx.store.listReposToRefresh(new Date(Date.now() - REPO_META_STALE_MS).toISOString(), 10_000);
-    let left = 0;
-    let brokenInRow = 0;
-    for (let i = 0; i < repos.length; i += GRAPHQL_BATCH) {
-      while (searchActivity.busy()) await sleep(500);
-      const group = repos.slice(i, i + GRAPHQL_BATCH);
-      const r = await refreshRepoGroup(ctx, group);
-      stored += r.stored;
-      left += r.left;
-      if (r.left === group.length && r.broken) {
-        // this group's answers broke twice: skip it, unless the last few all did (the network is down)
-        if (++brokenInRow >= REPO_META_MAX_BROKEN) throw r.error;
-        continue;
-      }
-      brokenInRow = 0;
-      // not one piece answered: GitHub is down rather than slow, so stop asking until the next run
-      if (r.left === group.length) throw r.error;
-    }
-    if (left) console.warn('[repo-meta]', `GitHub가 일부 요청에 답하지 않아 저장소 ${left}개는 다음 갱신 때 다시 묻습니다`);
+    await repoMetaPass(ctx, got);
   } catch (err) {
     console.warn('[repo-meta]', String((err as Error).message ?? err).slice(0, 200));
   } finally {
     repoMetaRunning = false;
   }
-  return stored;
+  return got.stored;
+}
+
+/** Scheduler task "별 정보 갱신": as refreshRepoMeta, but a pass GitHub could not answer fails (and is retried). */
+export async function runRepoMeta(ctx: AppContext): Promise<TaskOutcome> {
+  if (!ctx.github.hasToken) return { skipped: true, note: '토큰 없음' };
+  if (repoMetaRunning) return { skipped: true, note: '이미 갱신 중' };
+  repoMetaRunning = true;
+  const got = { stored: 0, left: 0 };
+  try {
+    await repoMetaPass(ctx, got);
+  } finally {
+    repoMetaRunning = false;
+  }
+  return { counts: got };
 }
 
 const RISK_RECHECK_BATCH = 50;
@@ -177,6 +219,36 @@ const RISK_RECHECK_EVERY_MS = 20 * 60 * 60 * 1000;
 /** Setting: when the last risk re-check pass finished. */
 const RISK_RECHECK_KEY = 'riskRecheckAt';
 let riskRecheckRunning = false;
+
+/** One re-check pass; adds to `got` as it goes, throws on what stops it (the time of the pass is then not saved). */
+async function riskRecheckPass(ctx: AppContext, now: number, got: { checked: number; changed: number }): Promise<void> {
+  for (let after = ''; ; ) {
+    const rows = ctx.store.listSkillsForRiskRecheck(RISK_RULES_VERSION, after, RISK_RECHECK_BATCH);
+    if (rows.length === 0) break;
+    after = rows.at(-1)!.id;
+    const results = await pool(rows, 8, async (row) => {
+      while (searchActivity.busy()) await sleep(500); // raw downloads share their slots with searches
+      const r = await ctx.github.getRawText(row.repo!, row.ref!, skillMdPath(row.dir_path!));
+      return r.text == null ? null : recheckRisk(row, r.text);
+    });
+    ctx.store.transaction(() => {
+      rows.forEach((row, i) => {
+        const res = results[i];
+        const next = res?.ok ? res.value : null;
+        // only onto the same SKILL.md: a row indexed again meanwhile (new commit) already has current flags
+        if (!next || !ctx.store.setSkillRisk(row.id, row.skill_md_sha256!, next.risk_json, next.risk_level, RISK_RULES_VERSION)) return;
+        got.checked++;
+        if (next.risk_json !== row.risk_json || next.risk_level !== row.risk_level) got.changed++;
+      });
+    });
+  }
+  ctx.store.setSetting(RISK_RECHECK_KEY, new Date(now).toISOString());
+}
+
+function riskRecheckDone(ctx: AppContext, got: { checked: number; changed: number }): void {
+  if (got.changed > 0) bumpIndexGeneration(ctx.store); // B1: rows whose flags changed show differently in searches
+  if (got.checked > 0) console.log(`[risk recheck] ${got.checked} skills checked, ${got.changed} changed`);
+}
 
 /**
  * Checks stored skills again after the risk rules changed (RISK_RULES_VERSION): reads each SKILL.md at the
@@ -189,38 +261,33 @@ export async function recheckRiskRules(ctx: AppContext, now = Date.now()): Promi
   const last = ctx.store.getSetting<string>(RISK_RECHECK_KEY);
   if (riskRecheckRunning || (last && now - Date.parse(last) < RISK_RECHECK_EVERY_MS)) return { checked: 0, changed: 0 };
   riskRecheckRunning = true;
-  let checked = 0;
-  let changed = 0;
+  const got = { checked: 0, changed: 0 };
   try {
-    for (let after = ''; ; ) {
-      const rows = ctx.store.listSkillsForRiskRecheck(RISK_RULES_VERSION, after, RISK_RECHECK_BATCH);
-      if (rows.length === 0) break;
-      after = rows.at(-1)!.id;
-      const results = await pool(rows, 8, async (row) => {
-        while (searchActivity.busy()) await sleep(500); // raw downloads share their slots with searches
-        const r = await ctx.github.getRawText(row.repo!, row.ref!, skillMdPath(row.dir_path!));
-        return r.text == null ? null : recheckRisk(row, r.text);
-      });
-      ctx.store.transaction(() => {
-        rows.forEach((row, i) => {
-          const res = results[i];
-          const next = res?.ok ? res.value : null;
-          // only onto the same SKILL.md: a row indexed again meanwhile (new commit) already has current flags
-          if (!next || !ctx.store.setSkillRisk(row.id, row.skill_md_sha256!, next.risk_json, next.risk_level, RISK_RULES_VERSION)) return;
-          checked++;
-          if (next.risk_json !== row.risk_json || next.risk_level !== row.risk_level) changed++;
-        });
-      });
-    }
-    ctx.store.setSetting(RISK_RECHECK_KEY, new Date(now).toISOString());
+    await riskRecheckPass(ctx, now, got);
   } catch (err) {
     console.warn('[risk recheck]', String((err as Error).message ?? err).slice(0, 200));
   } finally {
     riskRecheckRunning = false;
   }
-  if (changed > 0) bumpIndexGeneration(ctx.store); // B1: rows whose flags changed show differently in searches
-  if (checked > 0) console.log(`[risk recheck] ${checked} skills checked, ${changed} changed`);
-  return { checked, changed };
+  riskRecheckDone(ctx, got);
+  return got;
+}
+
+/** Scheduler task "위험 규칙 재검사": as recheckRiskRules (at most once a day), but a pass that broke fails. */
+export async function runRiskRecheck(ctx: AppContext): Promise<TaskOutcome> {
+  const now = Date.now();
+  const last = ctx.store.getSetting<string>(RISK_RECHECK_KEY);
+  if (riskRecheckRunning) return { skipped: true, note: '이미 검사 중' };
+  if (last && now - Date.parse(last) < RISK_RECHECK_EVERY_MS) return { skipped: true, note: '하루에 한 번' };
+  riskRecheckRunning = true;
+  const got = { checked: 0, changed: 0 };
+  try {
+    await riskRecheckPass(ctx, now, got);
+  } finally {
+    riskRecheckRunning = false;
+    riskRecheckDone(ctx, got);
+  }
+  return { counts: got };
 }
 
 /**
@@ -242,6 +309,11 @@ export function relevelRisk(ctx: AppContext): number {
     console.log(`[risk] ${moved.length} skills got a new level from their stored signals`);
   }
   return moved.length;
+}
+
+/** Scheduler task "기록 정리": the search log (90 days) and task runs (30 days). */
+export async function runPrune(ctx: AppContext): Promise<TaskOutcome> {
+  return { counts: { searchLog: pruneSearchLog(ctx), taskRuns: schedulerFor(ctx).pruneRuns() } };
 }
 
 /** Deletes search-log entries older than 90 days (U5-2; at startup and daily). */
@@ -280,5 +352,52 @@ export function startCollect(ctx: AppContext, marketplace: string, background = 
   if (running) return running;
   return ctx.jobs.start('collect', marketplace, async (ctl) => {
     await trackIndexChanges(ctx.store, () => indexPending(ctx, marketplace, ctl, background));
+  });
+}
+
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+/**
+ * The app's own background tasks, at the periods they had before the scheduler (feature review B2): the sync at
+ * every start and daily, star counts every 6 hours, the risk re-check and the log pruning daily, the update check
+ * every 6 hours (installed app only), and the weekly database check when nothing else runs. The popular-repo
+ * collection still starts after a full sync (once a day); here it is only for "지금 실행".
+ */
+export function registerBuiltInTasks(): void {
+  registerTask({ kind: 'sync', label: '마켓플레이스 동기화', everyMs: DAY_MS, network: true, startup: true, run: runSync });
+  registerTask({
+    kind: 'repo-meta',
+    label: '별 정보 갱신',
+    everyMs: REPO_META_EVERY_MS,
+    network: true,
+    startup: true,
+    enabled: (ctx) => ctx.github.hasToken,
+    run: runRepoMeta,
+  });
+  registerTask({ kind: 'risk-recheck', label: '위험 규칙 재검사', everyMs: DAY_MS, network: true, startup: true, run: runRiskRecheck });
+  registerTask({ kind: 'prune', label: '기록 정리', everyMs: DAY_MS, startup: true, run: runPrune });
+  registerTask({
+    kind: 'update-check',
+    label: '새 버전 확인',
+    everyMs: UPDATE_CHECK_EVERY_MS,
+    network: true,
+    startup: true,
+    enabled: () => process.env.SKILL_FINDER_UPDATES === '1',
+    run: runUpdateCheck,
+  });
+  registerTask({ kind: 'db-maintenance', label: 'DB 점검', everyMs: 7 * DAY_MS, idle: true, timeoutMs: 2 * 60 * 1000, run: runDbMaintenance });
+  registerTask({
+    kind: 'popular',
+    label: '인기 저장소 수집',
+    everyMs: DAY_MS,
+    network: true,
+    manualOnly: true,
+    run: async (ctx) => {
+      const job = startPopularCollect(ctx, true);
+      await ctx.jobs.wait(job.id);
+      if (job.status === 'error') throw new Error(job.errors.at(-1) ?? '수집 실패');
+      return { counts: { done: job.done, total: job.total, errors: job.errors.length } };
+    },
   });
 }

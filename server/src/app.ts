@@ -10,7 +10,14 @@ import { favoritesRouter } from './routes/favorites.ts';
 import { recommendRouter } from './routes/recommend.ts';
 import { searchRouter } from './routes/search.ts';
 import { skillsRouter } from './routes/skills.ts';
+import { statusRouter } from './routes/status.ts';
 import { similarRouter } from './routes/similar.ts';
+import { changesRouter } from './routes/changes.ts';
+import { agentConfigRouter } from './routes/agentConfig.ts';
+import { installedCheckRouter } from './routes/installedCheck.ts';
+import { browseRouter } from './routes/browse.ts';
+import { historyRouter } from './routes/history.ts';
+import { suggestRouter } from './routes/suggest.ts';
 import { translateFiles, translateRouter } from './routes/translate.ts';
 import type { SearchDeps } from './search/pipeline.ts';
 import { CSP, securityMiddleware } from './security.ts';
@@ -30,13 +37,20 @@ export function createApp(
 
   app.use('/api', healthRouter(ctx));
   app.use('/api', searchRouter(ctx, opts.searchDeps));
+  app.use('/api', suggestRouter(ctx));
+  app.use('/api', historyRouter(ctx));
+  app.use('/api', browseRouter(ctx));
   app.use('/api', skillsRouter(ctx));
   app.use('/api', similarRouter(ctx));
+  app.use('/api', changesRouter(ctx));
+  app.use('/api', agentConfigRouter(ctx));
+  app.use('/api', installedCheckRouter(ctx));
   app.use('/api', installRouter(ctx));
   app.use('/api', presetsRouter(ctx));
   app.use('/api', favoritesRouter(ctx));
   app.use('/api', recommendRouter(ctx));
   app.use('/api', adminRouter(ctx));
+  app.use('/api', statusRouter(ctx));
   app.use('/api', translateRouter(ctx));
 
   // any other /api path, in any case (/API/... is not an API route and not a page either)

@@ -5,7 +5,8 @@ import type { MarketplaceRow, PluginRow, SkillRow } from '../db/store.ts';
 import type { RepoInstallInfo } from '../indexer.ts';
 import { formatCommand } from '../claude/cli.ts';
 import { skillFolderName } from './installed.ts';
-import { isCommitSha, isPluginName, isRepo, isRepoDir, isSkillName } from './validate.ts';
+import { AGENTS, CLAUDE_CODE, type AgentId } from './agents.ts';
+import { isAgentId, isCommitSha, isPluginName, isRepo, isRepoDir, isSkillName } from './validate.ts';
 
 export type InstallScope = 'user' | 'project' | 'local';
 export type InstallMethod = 'plugin' | 'skills-cli' | 'manual-only';
@@ -36,8 +37,18 @@ const NPX_SKILLS = `npx skills@${SKILLS_CLI_VERSION}`;
  * `-y` only for the app's own run, after its confirm dialog (D-5). The command shown for running by hand (copied,
  * shared, exported) leaves it out, so the CLI asks there as it normally would (review 2026-11-02).
  */
-function skillsCliArgs(source: string, name: string, scope: InstallScope, yes = true): string[] {
-  return ['add', source, '--skill', name, '-a', 'claude-code', '--copy', ...(yes ? ['-y'] : []), ...(scope === 'user' ? ['-g'] : [])];
+function skillsCliArgs(source: string, name: string, scope: InstallScope, yes = true, agents: readonly AgentId[] = [CLAUDE_CODE]): string[] {
+  return ['add', source, '--skill', name, ...agents.flatMap((a) => ['-a', a]), '--copy', ...(yes ? ['-y'] : []), ...(scope === 'user' ? ['-g'] : [])];
+}
+
+/**
+ * The agents a skills CLI install goes to (F9 stage 2, decision 12): known ids only, each once, in the table's
+ * order (Claude Code first); Claude Code alone when none are given. A plugin is Claude Code's only.
+ */
+export function installAgents(agents: readonly string[] | null | undefined): AgentId[] {
+  const asked = new Set((agents ?? []).filter(isAgentId));
+  const out = AGENTS.filter((a) => asked.has(a.id)).map((a) => a.id);
+  return out.length ? out : [CLAUDE_CODE];
 }
 
 /**
@@ -124,7 +135,7 @@ export type InstallStep = {
   note?: string;
 };
 
-export function buildSteps(plan: InstallPlan, scope: InstallScope, projectPath: string | null): InstallStep[] {
+export function buildSteps(plan: InstallPlan, scope: InstallScope, projectPath: string | null, agents: readonly AgentId[] = [CLAUDE_CODE]): InstallStep[] {
   const cwd = scope === 'user' ? homedir() : projectPath!;
   if (plan.method === 'plugin') {
     const mp = plan.marketplace!;
@@ -137,21 +148,26 @@ export function buildSteps(plan: InstallPlan, scope: InstallScope, projectPath: 
   }
   if (plan.method === 'skills-cli') {
     const source = plan.source ?? plan.repo!;
-    const args = [SKILLS_CLI_PATH, ...skillsCliArgs(source, plan.skillName!, scope)];
+    const to = installAgents(agents);
+    const args = [SKILLS_CLI_PATH, ...skillsCliArgs(source, plan.skillName!, scope, true, to)];
     // The app runs its own copy of the CLI, whose path depends on how the app was installed (under npx it was
     // "../skills/bin/cli.mjs"). Shown as the same version through npx and without -y, since it can be copied into
     // any terminal and there the CLI should ask before replacing a folder (D#410d); the note says what the app adds.
-    const shown = [`skills@${SKILLS_CLI_VERSION}`, ...skillsCliArgs(source, plan.skillName!, scope, false)];
+    const shown = [`skills@${SKILLS_CLI_VERSION}`, ...skillsCliArgs(source, plan.skillName!, scope, false, to)];
     return [{ kind: 'skills-add', file: 'node', args, cwd, display: formatCommand('npx', shown), note: '앱은 내장된 같은 버전에 -y를 붙여 실행' }];
   }
   return [];
 }
 
-export function installLocation(plan: InstallPlan, scope: InstallScope, projectPath: string | null): string {
+export function installLocation(plan: InstallPlan, scope: InstallScope, projectPath: string | null, agents: readonly AgentId[] = [CLAUDE_CODE]): string {
   if (plan.method === 'skills-cli') {
-    // the folder the CLI writes (its own name rule), in the system's path style (review 2026-11-02: "\" and "/" mixed)
+    // the folder the CLI writes (its own name rule), in the system's path style (review 2026-11-02: "\" and "/" mixed);
+    // one per folder when several agents share one (a project's .agents/skills)
     const folder = skillFolderName(plan.skillName!);
-    return scope === 'user' ? `~/.claude/skills/${folder}/` : `${join(projectPath!, '.claude', 'skills', folder)}${sep} (+ skills-lock.json)`;
+    const to = new Set(installAgents(agents));
+    const dirs = [...new Set(AGENTS.filter((a) => to.has(a.id)).map((a) => (scope === 'user' ? a.globalDir : a.projectDir)))];
+    const where = dirs.map((d) => (scope === 'user' ? `~/${d}/${folder}/` : `${join(projectPath!, ...d.split('/'), folder)}${sep}`));
+    return scope === 'user' ? where.join(', ') : `${where.join(', ')} (+ skills-lock.json)`;
   }
   if (plan.method === 'plugin') {
     if (scope === 'user') return '~/.claude/settings.json (enabledPlugins), 플러그인 캐시';

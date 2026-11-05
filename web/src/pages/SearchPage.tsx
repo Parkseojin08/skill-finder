@@ -6,6 +6,7 @@ import { ActiveFacets, FacetPanel, facetCount, matchFacets, NO_FACETS, type Face
 import { RepoCard } from '../components/RepoCard.tsx';
 import { NoResults } from '../components/search/NoResults.tsx';
 import { SearchIntro } from '../components/search/SearchIntro.tsx';
+import { SuggestInput } from '../components/search/SuggestInput.tsx';
 import { ResultCard, skillHref } from '../components/ResultCard.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { useInstalled } from '../installed.ts';
@@ -14,7 +15,7 @@ import { fileStem, resultsJson, resultsMarkdown, saveFile } from '../lib/exportL
 import { goInApp } from '../lib/links.ts';
 import { readPageSize, savePageSize } from '../lib/prefs.ts';
 import { byPopular, foldResults, nameMatches, navigationalWord, repoMainSkill, SORTS, type SortKey } from '../lib/resultOrder.ts';
-import type { SearchResults } from '../lib/searchExtras.ts';
+import { browseAddress, browseFromParams, browseQuery, type BrowseList, type BrowseView, type SearchResults, type Suggestion } from '../lib/searchExtras.ts';
 import type { Health, Job, OpenedFrom, ResultItem, RiskLevel, SearchEvent, SearchSource, SettingsResponse, SourceKind, SourceProgress } from '../types.ts';
 import { serverText, t } from '../i18n.ts';
 import { tj } from '../i18nNodes.tsx';
@@ -107,6 +108,19 @@ type Snapshot = {
   liftedStars: number | null;
 };
 
+/** The browse list's heading: what the tile or the picked name was. */
+function browseTitle(v: BrowseView): string {
+  if (v.section === 'anthropic') return t('Anthropic 공식 컬렉션');
+  if (v.section === 'new') return t('이번 주 새로 들어온');
+  if (v.section === 'plugins') return t('한 번에 설치되는 묶음(플러그인)');
+  if (v.cat) return t('카테고리 · {0}', CATEGORY[v.cat] ?? v.cat);
+  if (v.trust) return t('출처 · {0}', TRUST[v.trust].label);
+  if (v.marketplace) return t('마켓플레이스 · {0}', v.marketplace);
+  if (v.repo) return t('저장소 · {0}', v.repo);
+  if (v.owner) return t('만든 곳 · {0}', v.owner);
+  return t('둘러보기');
+}
+
 /** Searching this word opens the hidden ARASAKA_IN minigame; its code loads only then. */
 const GAME_TRIGGER = 'arasaka_in';
 const ArasakaGame = lazy(() => import('../game/ArasakaGame.tsx'));
@@ -161,6 +175,13 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   const [gameOpen, setGameOpen] = useState(false);
   // Sidebar filters narrow the current results in the browser; they stay set across searches.
   const [facets, setFacets] = useState<Facets>(NO_FACETS);
+  /**
+   * Browsing the local index (F17): the tile or picked name the results on screen are for, instead of a query, and
+   * how many there are over all pages ("더 불러오기" reads the next 50).
+   */
+  const [browseView, setBrowseView] = useState<BrowseView | null>(null);
+  const [browsePage, setBrowsePage] = useState<{ total: number; page: number; loading: boolean }>({ total: 0, page: 1, loading: false });
+  const browseSeq = useRef(0);
   const installedAs = useInstalled();
   const resultsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -275,6 +296,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
+      browseSeq.current++;
+      setBrowseView(null);
       setStatus('running');
       setStopped(false);
       setStage(null);
@@ -352,9 +375,91 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
     [sources, maxRisk, onQuery, logOn],
   );
 
+  /**
+   * Opens a browse view (F17): the same result list, filled from GET /api/browse (local index only, the search's
+   * star and risk limits). `more`: the next page appended to the cards on screen.
+   */
+  const openBrowse = useCallback(
+    async (view: BrowseView, risk = maxRisk, liftStars: number | null = null, more = false) => {
+      const seq = ++browseSeq.current;
+      const page = more ? browsePage.page + 1 : 1;
+      if (!more) {
+        abortRef.current?.abort();
+        setStatus('running');
+        setStopped(false);
+        setStage(null);
+        setWarnings([]);
+        setItems([]);
+        setPage(1);
+        setFinal(null);
+        setDoneInfo(null);
+        setSid(undefined);
+        setProgress({});
+        setSuggest(null);
+        setProvisional(false);
+        setStale(false);
+        staleRef.current = false;
+        setLastQuery('');
+        setLiftedStars(liftStars);
+        setOpenNames(new Set());
+        // a repo picked by name is read whole, not folded to its first two cards
+        setOpenRepos(view.repo ? new Set([view.repo]) : new Set());
+        setBrowseView(view);
+        searchedWith.current = { risk, sources };
+        setSearched({ risk, sources });
+        if (window.location.pathname === '/') window.history.replaceState(null, '', `/?${browseAddress(view)}`);
+      }
+      setBrowsePage((p) => ({ ...p, loading: true }));
+      try {
+        const r = await apiGet<BrowseList>('/browse', browseQuery(view, page, risk, liftStars != null));
+        if (seq !== browseSeq.current) return;
+        const next = more ? [...items, ...r.items.filter((x) => !items.some((y) => y.id === x.id))] : r.items;
+        setItems(next);
+        setFinal({ type: 'results', items: next, hiddenHighRisk: r.hiddenHighRisk, hiddenNoDescription: 0, hiddenLowStars: r.hiddenLowStars, hiddenUnknownStars: r.hiddenUnknownStars, minStars: r.minStars });
+        setBrowsePage({ total: r.total, page: r.page, loading: false });
+        setStatus('done');
+      } catch (err) {
+        if (seq !== browseSeq.current) return;
+        setBrowsePage((p) => ({ ...p, loading: false }));
+        setWarnings((w) => [...w, { source: 'client', message: String((err as Error).message ?? err), severity: 'urgent' }]);
+        setStatus(more ? 'done' : 'error');
+      }
+    },
+    [maxRisk, sources, browsePage.page, items],
+  );
+
+  /** Back to the first screen from a browse view. */
+  const closeBrowse = () => {
+    browseSeq.current++;
+    setBrowseView(null);
+    setItems([]);
+    setFinal(null);
+    setWarnings([]);
+    setLiftedStars(null);
+    setStatus('idle');
+    lastSearchAddress = '/';
+    if (window.location.pathname === '/') window.history.replaceState(null, '', '/');
+    inputRef.current?.focus();
+  };
+
+  /** The same results again with other limits: a browse view is read again, a search is run again. */
+  const again = (risk = maxRisk, liftStars: number | null = null, useSources = sources) => {
+    if (browseView) void openBrowse(browseView, risk, liftStars);
+    else void run(lastQuery, risk, liftStars, useSources);
+  };
+
+  /** A pick from the search box's suggestions (F16): a name is searched; a repo or owner opens its skills. */
+  const pickSuggestion = (s: Suggestion) => {
+    setQuery(s.text);
+    if (s.kind === 'repo') void openBrowse({ repo: s.text });
+    else if (s.kind === 'owner') void openBrowse({ owner: s.text });
+    else void run(s.text);
+  };
+
   // A reload in this tab shows the last results again instead of searching (and logging) once more.
   useEffect(() => {
-    if (status !== 'done' || !final || !logOn) return;
+    // a browse view is read again from the local index on reload (its address says which)
+    if (status !== 'done' || !final || !logOn || browseView) return;
     const snap: Snapshot = { q: lastQuery, ...searchedWith.current, items, final, doneInfo, sid, liftedStars };
     try {
       sessionStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snap));
@@ -365,7 +470,20 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
 
   useEffect(() => {
     const q = new URLSearchParams(window.location.search).get('q')?.trim();
-    if (window.location.pathname !== '/' || !q) return;
+    if (window.location.pathname !== '/') return;
+    // `/?cat=testing`, `/?browse=new`, `/?repo=o/r`: the browse view, with its sort, page and side filters
+    const view = q ? null : browseFromParams(new URLSearchParams(window.location.search), Object.keys(CATEGORY));
+    if (view) {
+      const params = new URLSearchParams(window.location.search);
+      const sortParam = params.get('sort');
+      if (SORTS.some((s) => s.key === sortParam)) setSort(sortParam as SortKey);
+      if (params.get('f')) setFacets(parseFacets(params.get('f')!));
+      void openBrowse(view).then(() => {
+        if (Number(params.get('page')) > 1) setPage(Number(params.get('page')));
+      });
+      return;
+    }
+    if (!q) return;
     let snap: Snapshot | null = null;
     try {
       snap = JSON.parse(sessionStorage.getItem(SNAPSHOT_KEY) ?? 'null') as Snapshot | null;
@@ -402,6 +520,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   stopRef.current = () => {
     if (status !== 'running') return;
     abortRef.current?.abort();
+    browseSeq.current++;
     setProvisional(false);
     setStatus('done');
     setStopped(true);
@@ -446,8 +565,10 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   // Sort, page and side filters ride along with the query in the address (only when the query does: the search
   // log on), so a reload or a copied address shows the same screen (review 2026-11-02).
   useEffect(() => {
-    if (window.location.pathname !== '/' || !logOn || !lastQuery || status === 'running') return;
-    const p = new URLSearchParams({ q: lastQuery });
+    if (window.location.pathname !== '/' || status === 'running') return;
+    // a browse view's address names no query, so it is kept with the search log off too
+    if (!browseView && (!logOn || !lastQuery)) return;
+    const p = browseView ? browseAddress(browseView) : new URLSearchParams({ q: lastQuery });
     if (sort !== 'popular') p.set('sort', sort);
     if (currentPage > 1) p.set('page', String(currentPage));
     const f = facetParam(facets);
@@ -455,7 +576,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
     const next = `/?${p}`;
     lastSearchAddress = next;
     if (window.location.pathname + window.location.search !== next) window.history.replaceState(window.history.state, '', next);
-  }, [lastQuery, sort, currentPage, facets, logOn, status]);
+  }, [lastQuery, sort, currentPage, facets, logOn, status, browseView]);
   const pageItems = shown.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   useEffect(() => {
     if (focusAt.current == null) return;
@@ -497,6 +618,8 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   const hiddenUnknownStars = final && (final.minStars ?? 0) > 0 ? (final.hiddenUnknownStars ?? 0) : 0;
   // the index or the repo star counts are still being gathered (first run): results are partial
   const gathering = !!syncJob || (health?.skills ?? 0) < FEW_SKILLS;
+  /** What the saved list is named after: the query, or the browse view's heading. */
+  const exportLabel = browseView ? browseTitle(browseView) : lastQuery;
 
   return (
     <div className="page search-page">
@@ -525,16 +648,15 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
           <span className="prompt" aria-hidden="true">
             ❯
           </span>
-          <input
-            ref={inputRef}
+          <SuggestInput
+            inputRef={inputRef}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={setQuery}
+            onPick={pickSuggestion}
             placeholder={t('필요한 기능을 영어로 입력하세요')}
-            maxLength={300}
-            aria-label={t('검색어')}
-            autoFocus
+            ariaLabel={t('검색어')}
             // Esc leaves the box so j / k work; ↓ goes to the first result (review 2026-11-02: after a search the
-            // focus stayed here and "j" was typed into the query)
+            // focus stayed here and "j" was typed into the query). With the suggestion list open it takes them.
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
                 stopRef.current();
@@ -620,9 +742,28 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             setQuery(ex);
             run(ex);
           }}
+          onBrowse={(view) => {
+            setQuery('');
+            void openBrowse(view);
+          }}
           health={health}
           githubToken={githubToken}
         />
+      )}
+
+      {browseView && status !== 'idle' && (
+        <div className="browse-head">
+          <button type="button" className="linkish small" onClick={closeBrowse}>
+            <Icon name="back" size={14} /> {t('둘러보기로')}
+          </button>
+          <h2>{browseTitle(browseView)}</h2>
+          {status === 'done' && (
+            <span className="muted small">
+              {t('내 PC 색인에서 {0}개', browsePage.total.toLocaleString())}
+              {items.length < browsePage.total && t(' · {0}개 불러옴', items.length)}
+            </span>
+          )}
+        </div>
       )}
 
       <div className={showFacets ? 'results-layout' : undefined}>
@@ -654,7 +795,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 ) : status === 'error' ? (
                   <span className="warn-text">
                     {t('검색 실패')}{' '}
-                    <button type="button" className="linkish small" onClick={() => run(lastQuery, maxRisk, liftedStars)}>
+                    <button type="button" className="linkish small" onClick={() => again(maxRisk, liftedStars)}>
                       {t('다시 시도')}
                     </button>
                   </span>
@@ -676,7 +817,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                     title={t('위험 등급 필터를 \'모두\'로 바꿔 다시 검색합니다')}
                     onClick={() => {
                       setMaxRisk('high');
-                      run(lastQuery, 'high', liftedStars);
+                      again('high', liftedStars);
                     }}
                   >
                     {t('위험 높음 {0}개 숨김 · 보기', hiddenRisky)}
@@ -689,19 +830,19 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                     title={t('{0}를 숨겼습니다. 이번 검색만 별 기준 없이 다시 찾습니다(설정은 그대로). 같은 이름 사본은 접히고 결과는 50개까지라, 숨긴 수만큼 늘지는 않습니다.', [hiddenLowStars ? t('별 {0} 미만 {1}개', final!.minStars!.toLocaleString(), hiddenLowStars) : '', hiddenUnknownStars ? t('별 수 모름 {0}개', hiddenUnknownStars) : ''].filter(Boolean).join(' · '))}
                     onClick={() => {
                       beforeLift.current = new Set(shown.map((r) => r.item.id));
-                      run(lastQuery, maxRisk, final!.minStars!);
+                      again(maxRisk, final!.minStars!);
                     }}
                   >
                     {t('별 기준 없이 다시 찾기 (숨긴 후보 {0}개)', hiddenLowStars + hiddenUnknownStars)}
                   </button>
                 )}
                 {conditionsChanged && (
-                  <button type="button" className="status-chip action" title={t('위쪽 조건이 이 결과를 찾을 때와 다릅니다')} onClick={() => run(lastQuery, maxRisk, liftedStars)}>
+                  <button type="button" className="status-chip action" title={t('위쪽 조건이 이 결과를 찾을 때와 다릅니다')} onClick={() => again(maxRisk, liftedStars)}>
                     {t('조건이 바뀌었습니다 · 다시 검색')}
                   </button>
                 )}
                 {status === 'done' && liftedStars != null && (
-                  <button type="button" className="status-chip action" title={t('설정한 최소 스타 수로 다시 검색합니다')} onClick={() => run(lastQuery)}>
+                  <button type="button" className="status-chip action" title={t('설정한 최소 스타 수로 다시 검색합니다')} onClick={() => again()}>
                     {t('별 제한 없이 보는 중')}
                     {beforeLift.current && t(' · 새로 보인 결과 {0}개', shown.filter((r) => !beforeLift.current!.has(r.item.id)).length)}{t(' · 되돌리기')}
                   </button>
@@ -726,10 +867,10 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                   <details className="export-menu">
                     <summary className="status-chip action">{t('내보내기')}</summary>
                     <div className="export-items">
-                      <button type="button" className="ghost" onClick={() => saveFile(`skill-finder-${fileStem(lastQuery)}.json`, resultsJson(lastQuery, shown.map((r) => r.item)), 'application/json')}>
+                      <button type="button" className="ghost" onClick={() => saveFile(`skill-finder-${fileStem(exportLabel)}.json`, resultsJson(exportLabel, shown.map((r) => r.item)), 'application/json')}>
                         {t('JSON으로 저장')}
                       </button>
-                      <button type="button" className="ghost" onClick={() => saveFile(`skill-finder-${fileStem(lastQuery)}.md`, resultsMarkdown(lastQuery, shown.map((r) => r.item)), 'text/markdown')}>
+                      <button type="button" className="ghost" onClick={() => saveFile(`skill-finder-${fileStem(exportLabel)}.md`, resultsMarkdown(exportLabel, shown.map((r) => r.item)), 'text/markdown')}>
                         {t('Markdown으로 저장')}
                       </button>
                       <p className="muted small">{t('보이는 순서·필터 그대로 모든 쪽을 저장합니다. 접힌 같은 이름 결과는 펼친 것만 들어갑니다.')}</p>
@@ -921,12 +1062,22 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
             {status === 'done' && items.length === 0 && stopped && (
               <p className="empty">
                 {t('검색을 중지했습니다. 그때까지 찾은 결과가 없습니다.')}{' '}
-                <button type="button" className="linkish" onClick={() => run(lastQuery)}>
+                <button type="button" className="linkish" onClick={() => again()}>
                   {t('다시 찾기')}
                 </button>
               </p>
             )}
-            {status === 'done' && items.length === 0 && !stopped && (
+            {status === 'done' && items.length === 0 && !stopped && browseView && (
+              <p className="empty">
+                {t('여기에 보일 스킬이 없습니다.')}{' '}
+                {hiddenLowStars + hiddenUnknownStars > 0 && (
+                  <button type="button" className="linkish" onClick={() => again(maxRisk, final!.minStars!)}>
+                    {t('별 기준 없이 보기 ({0}개)', hiddenLowStars + hiddenUnknownStars)}
+                  </button>
+                )}
+              </p>
+            )}
+            {status === 'done' && items.length === 0 && !stopped && !browseView && (
               <NoResults
                 hiddenUnknownStars={hiddenUnknownStars}
                 hiddenLowStars={hiddenLowStars}
@@ -940,13 +1091,13 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 onAllSources={() => {
                   const all: SourceKind[] = ['marketplace', 'skillssh', 'github'];
                   setSources(all);
-                  run(lastQuery, maxRisk, liftedStars, all);
+                  again(maxRisk, liftedStars, all);
                 }}
                 onAllRisk={() => {
                   setMaxRisk('high');
-                  run(lastQuery, 'high', liftedStars);
+                  again('high', liftedStars);
                 }}
-                onLiftStars={() => run(lastQuery, maxRisk, final!.minStars!)}
+                onLiftStars={() => again(maxRisk, final!.minStars!)}
               />
             )}
             {items.length > 0 && sorted.length === 0 && (
@@ -990,6 +1141,14 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                 {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, shown.length)} / {t('{0}개', shown.length)}
               </span>
             </nav>
+          )}
+          {browseView && status === 'done' && items.length > 0 && items.length < browsePage.total && (
+            // the next 50 of the view join the cards (and their pages) on screen
+            <div className="browse-more">
+              <button type="button" className="ghost" disabled={browsePage.loading} onClick={() => void openBrowse(browseView, searched.risk, liftedStars, true)}>
+                {browsePage.loading ? t('불러오는 중…') : t('{0}개 더 불러오기', Math.min(50, browsePage.total - items.length))}
+              </button>
+            </div>
           )}
         </div>
       </div>

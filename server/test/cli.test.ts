@@ -87,7 +87,7 @@ describe('CLI (bin/skill-finder.mjs)', () => {
       assert.equal(r.code, 0, r.err);
       const items = JSON.parse(r.out);
       assert.deepEqual(items.map((i: { name: string }) => i.name), ['pdf', 'xlsx']);
-      assert.deepEqual(Object.keys(items[0]).sort(), ['description', 'id', 'installCommand', 'installMethod', 'installs', 'name', 'repo', 'riskFlags', 'riskLevel', 'stars', 'url'].sort());
+      assert.deepEqual(Object.keys(items[0]).sort(), ['appUrl', 'description', 'id', 'installCommand', 'installMethod', 'installs', 'name', 'repo', 'riskFlags', 'riskLevel', 'stars', 'url'].sort());
       assert.equal(items[0].repo, 'o/r');
       const call = app.seen.find((s) => s.url === '/api/search')!;
       assert.deepEqual(JSON.parse(call.body), { query: 'pdf tables', filters: { maxRisk: 'low' } });

@@ -38,6 +38,8 @@ run(process.execPath, [join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc'), '
 step('파일 모으기');
 cpSync(join(ROOT, 'web', 'dist'), join(OUT, 'web', 'dist'), { recursive: true });
 cpSync(join(ROOT, 'bin'), join(OUT, 'bin'), { recursive: true });
+// the agent skill that tells Claude Code (and other agents) to look skills up with this CLI and hand the install link over (F23 (c))
+cpSync(join(ROOT, 'skills'), join(OUT, 'skills'), { recursive: true });
 for (const f of ['README.md', 'LICENSE', 'CHANGELOG.md', '.env.example']) cpSync(join(ROOT, f), join(OUT, f));
 // the prebuilt index (server/src/db/seed.ts): a new install searches at once instead of reading 2,600 plugins first
 run(process.execPath, [join(ROOT, 'scripts', 'export-seed.mjs'), join(OUT, 'seed-index.json.gz')]);
@@ -57,7 +59,7 @@ writeFileSync(
       homepage: 'https://seojin-skill-finder.pages.dev',
       bugs: 'https://github.com/Parkseojin08/skill-finder/issues',
       keywords: ['claude-code', 'claude-skills', 'agent-skills', 'skills', 'cli'],
-      files: ['bin', 'server', 'web/dist', 'seed-index.json.gz', 'README.md', 'LICENSE', 'CHANGELOG.md', '.env.example'],
+      files: ['bin', 'server', 'web/dist', 'skills', 'seed-index.json.gz', 'README.md', 'LICENSE', 'CHANGELOG.md', '.env.example'],
     },
     null,
     2,

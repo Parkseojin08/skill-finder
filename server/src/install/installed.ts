@@ -13,12 +13,36 @@ import { looksBinary } from '../util/http.ts';
 import { truncate } from '../util/sanitize.ts';
 import { isTextPath, MAX_FILE_BYTES } from '../util/textFiles.ts';
 import { skillTokens } from '../util/tokens.ts';
+import { wasPreviousVersion } from '../watch/notices.ts';
 import { agentFolders, agentRef, CLAUDE_CODE, type AgentRef } from './agents.ts';
 import { parseJsonArray } from './run.ts';
 import { SCAN_MAX_FILES, textFileFlags } from './scan.ts';
 
 /** `same`: the installed SKILL.md is the indexed one; `changed`: the index holds different text (newer or edited). */
 export type Change = 'same' | 'changed' | 'unknown';
+
+/**
+ * Which side changed (feature review F6), from three SKILL.md hashes: the installed copy now, the one installed (the
+ * app's install log, or a version an earlier new-commit notice saw replaced), and the index's (kept current by the
+ * repo watch, B3). `latest`: the installed copy is the indexed one. `upstream`: the copy is as installed and the
+ * original has a newer version. `local`: the copy differs from what was installed (edited here). `unknown`: not
+ * indexed, or no record of what was installed while it differs (`differs`).
+ */
+export type DriftKind = 'latest' | 'upstream' | 'local' | 'unknown';
+export type Drift = {
+  change: DriftKind;
+  /** upstream: when the indexed version was committed (the repo's last push as the index knows it). */
+  newCommitAt: string | null;
+  /** upstream: the level installed (or of the copy) and the indexed version's level. */
+  riskFrom: RiskLevel | null;
+  riskTo: RiskLevel | null;
+  /** The indexed commit (what "차이 보기" compares with). */
+  indexedRef: string | null;
+  /** local: the original moved on as well (a reinstall would bring the new version and drop the edits). */
+  upstreamToo: boolean;
+  /** unknown: an indexed copy exists and differs, but which side changed cannot be told. */
+  differs: boolean;
+};
 
 export type InstalledSkill = {
   scope: 'user' | 'project';
@@ -36,11 +60,16 @@ export type InstalledSkill = {
   /** Its level when the app installed it, if the app did. */
   installedRisk: RiskLevel | null;
   change: Change;
+  /** F6: which side changed and how (kept beside `change`, which the install preview and the page still read). */
+  drift: Drift;
   /** Context it takes (estimate): with every request, and when used. */
   tokens: { perTurn: number; onUse: number | null };
   /** The agents that read this folder: one row for a folder several share (F9 stage 1). */
   agents: AgentRef[];
-  /** In Claude Code's folder, the only place the app removes from (D#0763); other agents' folders are shown only. */
+  /**
+   * A skill folder right under one of agents.ts's folders, where the app removes from (D#0763, widened in stage 2 to
+   * those folders: uninstall.ts agentSkillsRoot); plugin skills go with their plugin.
+   */
   removable: boolean;
 };
 
@@ -148,11 +177,11 @@ export async function scanInstalledSkills(store: Store, scope: 'user' | 'project
   const home = opts.home ?? homedir();
   const root = scope === 'user' ? home : projectPath!;
   const lock = readLock(scope === 'user' ? join(home, '.agents', '.skill-lock.json') : join(root, 'skills-lock.json'));
-  const logged = new Map<string, { id: string; risk: string | null }>();
-  for (const l of store.listInstalledSkillLog()) {
+  const logged = new Map<string, { id: string; risk: string | null; md: string | null }>();
+  for (const l of installedSkillLog(store)) {
     if (l.scope !== scope || (scope === 'project' && l.project_path?.toLowerCase() !== root.toLowerCase())) continue;
     const name = store.getSkill(l.skill_id)?.name.toLowerCase();
-    if (name && !logged.has(name)) logged.set(name, { id: l.skill_id, risk: l.risk_level });
+    if (name && !logged.has(name)) logged.set(name, { id: l.skill_id, risk: l.risk_level, md: l.skill_md_sha256 });
   }
   const folders = agentFolders(scope, root).filter((f) => opts.agents !== 'claude' || f.agents.some((a) => a.id === CLAUDE_CODE));
   const out: InstalledSkill[] = [];
@@ -178,7 +207,8 @@ export async function scanInstalledSkills(store: Store, scope: 'user' | 'project
         const log = isClaude ? (logged.get(name.toLowerCase()) ?? logged.get(folder.toLowerCase())) : undefined;
         const fromLock = lock.get(folder.toLowerCase());
         const id = (fromLock && store.getSkill(fromLock)?.id) || (log && store.getSkill(log.id) ? log.id : null);
-        return { id: id || null, installedRisk: log && log.id === id ? (log.risk as RiskLevel | null) : null };
+        const ours = !!log && log.id === id;
+        return { id: id || null, installedRisk: ours ? (log.risk as RiskLevel | null) : null, installedMd: ours ? log.md : null };
       });
       if (!hit) continue; // not a skill folder
       const quoted = /\s/.test(folder) ? `"${folder}"` : folder;
@@ -186,7 +216,7 @@ export async function scanInstalledSkills(store: Store, scope: 'user' | 'project
         ...hit,
         scope,
         agents: agents.map(agentRef),
-        removable: isClaude,
+        removable: true,
         removeCommand: `npx skills@${SKILLS_CLI_VERSION} remove ${quoted} ${agents.map((a) => `-a ${a.id}`).join(' ')} -y${scope === 'user' ? ' -g' : ''}`,
       };
       byReal.set(real, row);
@@ -204,7 +234,7 @@ async function inspectSkill(
   store: Store,
   path: string,
   folder: string,
-  known: (name: string) => { id: string | null; installedRisk: RiskLevel | null },
+  known: (name: string) => { id: string | null; installedRisk: RiskLevel | null; installedMd?: string | null },
 ): Promise<Omit<InstalledSkill, 'scope' | 'removeCommand' | 'agents' | 'removable'> | null> {
   let raw: string;
   try {
@@ -214,12 +244,14 @@ async function inspectSkill(
   }
   const meta = extractSkillMeta(raw, folder);
   const hash = mdHash(raw);
-  const { id, installedRisk } = known(meta.name);
+  const { id, installedRisk, installedMd } = known(meta.name);
   const skillId = id ?? store.findSkillIdByMdSha(hash);
   const indexed = skillId ? store.getSkill(skillId) : undefined;
   const files = await listFiles(path);
   const fileFindings = await localFileFindings(path, files);
   const flags = [...new Set([...skillRiskFlags({ files, allowedTools: meta.allowedTools, body: meta.body, hasHooks: meta.hasHooks, raw }), ...fileFindings.flatMap((f) => f.flags)])];
+  const ownInstall = !!id && id === skillId;
+  const drift = driftOf(store, indexed, hash, ownInstall ? (installedMd ?? null) : null, (ownInstall ? installedRisk : null) ?? riskLevel(flags));
   return {
     path,
     folder,
@@ -230,8 +262,46 @@ async function inspectSkill(
     fileFindings,
     installedRisk: id && id === skillId ? installedRisk : null,
     change: !indexed?.skill_md_sha256 ? 'unknown' : indexed.skill_md_sha256 === hash ? 'same' : 'changed',
+    drift,
     tokens: skillTokens(meta.name, meta.description, raw),
   };
+}
+
+/** The app's own skills-CLI installs, newest first, with the SKILL.md hash each installed (the store's list lacks it). */
+function installedSkillLog(store: Store): Array<{ skill_id: string; scope: string; project_path: string | null; risk_level: string | null; skill_md_sha256: string | null }> {
+  return store.db
+    .prepare(
+      `SELECT skill_id, scope, project_path, risk_level, skill_md_sha256 FROM install_log
+        WHERE skill_id IS NOT NULL AND exit_code = 0 AND method = 'skills-cli' ORDER BY id DESC`,
+    )
+    .all() as Array<{ skill_id: string; scope: string; project_path: string | null; risk_level: string | null; skill_md_sha256: string | null }>;
+}
+
+const RISK_LEVELS = new Set<string>(['low', 'medium', 'high']);
+const asLevel = (v: string | null | undefined): RiskLevel | null => (v && RISK_LEVELS.has(v) ? (v as RiskLevel) : null);
+
+/**
+ * F6: the installed copy (`local`), what was installed (`installedMd`: the app's log; else a version an earlier
+ * new-commit notice saw replaced, which the copy still is) and the index's version. `fromRisk`: the level installed,
+ * or the copy's own.
+ */
+export function driftOf(
+  store: Store,
+  indexed: { id: string; skill_md_sha256: string | null; risk_level: string | null; ref: string | null; last_commit_at: string | null; fetched_at: string | null } | undefined,
+  local: string,
+  installedMd: string | null,
+  fromRisk: RiskLevel | null,
+): Drift {
+  const base: Drift = { change: 'unknown', newCommitAt: null, riskFrom: null, riskTo: null, indexedRef: indexed?.ref ?? null, upstreamToo: false, differs: false };
+  const latest = indexed?.skill_md_sha256;
+  if (!indexed || !latest) return base;
+  if (latest === local) return { ...base, change: 'latest' };
+  const baseline = installedMd ?? (wasPreviousVersion(store, indexed.id, local) ? local : null);
+  if (!baseline) return { ...base, differs: true };
+  if (baseline === local) {
+    return { ...base, change: 'upstream', newCommitAt: indexed.last_commit_at ?? indexed.fetched_at, riskFrom: fromRisk, riskTo: asLevel(indexed.risk_level) };
+  }
+  return { ...base, change: 'local', upstreamToo: baseline !== latest };
 }
 
 const claudeRef: AgentRef = { id: CLAUDE_CODE, name: 'Claude Code' };
@@ -353,12 +423,25 @@ export function listInstalledPlugins(cwd: string = homedir(), fresh = false): Pr
 /** The commit Claude Code installed each plugin from (`~/.claude/plugins/installed_plugins.json`), by id and scope. */
 export function installedPluginCommits(): Map<string, string> {
   const out = new Map<string, string>();
+  for (const e of installedPluginEntries()) if (e.gitCommitSha) out.set(pluginCommitKey(e.id, e.scope, e.projectPath), e.gitCommitSha);
+  return out;
+}
+
+/** Every plugin install `installed_plugins.json` lists (the repo watch, B3, reads them without asking Claude Code). */
+export function installedPluginEntries(home: string = homedir()): Array<{ id: string; scope: string; projectPath: string | null; gitCommitSha: string | null }> {
+  const out: Array<{ id: string; scope: string; projectPath: string | null; gitCommitSha: string | null }> = [];
   try {
-    const file = join(homedir(), '.claude', 'plugins', 'installed_plugins.json');
+    const file = join(home, '.claude', 'plugins', 'installed_plugins.json');
     const plugins = (JSON.parse(readFileSync(file, 'utf8')) as { plugins?: Record<string, Array<Record<string, unknown>>> }).plugins ?? {};
     for (const [id, installs] of Object.entries(plugins)) {
       for (const i of Array.isArray(installs) ? installs : []) {
-        if (typeof i.gitCommitSha === 'string') out.set(pluginCommitKey(id, String(i.scope), typeof i.projectPath === 'string' ? i.projectPath : null), i.gitCommitSha);
+        if (!i || typeof i !== 'object') continue;
+        out.push({
+          id,
+          scope: String(i.scope),
+          projectPath: typeof i.projectPath === 'string' ? i.projectPath : null,
+          gitCommitSha: typeof i.gitCommitSha === 'string' ? i.gitCommitSha : null,
+        });
       }
     }
   } catch {
@@ -379,7 +462,17 @@ export function pluginSkills(store: Store, id: string): Array<{ id: string; name
   return rows.map((s) => ({ id: s.id, name: s.name, riskLevel: (s.risk_level ?? 'low') as RiskLevel }));
 }
 
-export function pluginIndexInfo(store: Store, id: string, commit: string | undefined): { indexed: boolean; topRisk: RiskLevel | null; change: Change } {
+/**
+ * F6 for a plugin: the marketplace now points at another commit than the one installed (`claude plugin update` would
+ * bring it in). `highRisk`: the indexed skills at that commit with level high. Only shown; the app updates nothing (D-7).
+ */
+export type PinMoved = { from: string; to: string; highRisk: number; highSkills: string[]; command: string };
+
+export function pluginIndexInfo(
+  store: Store,
+  id: string,
+  commit: string | undefined,
+): { indexed: boolean; topRisk: RiskLevel | null; change: Change; pinMoved?: PinMoved } {
   const rank: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2 };
   const top = (skills: Array<{ risk_level: string | null }>) => skills.reduce<RiskLevel>((t, s) => (rank[s.risk_level as RiskLevel] > rank[t] ? (s.risk_level as RiskLevel) : t), 'low');
   const plugin = store.getPlugin(id);
@@ -389,7 +482,14 @@ export function pluginIndexInfo(store: Store, id: string, commit: string | undef
     const skills = at > 0 ? store.listSkillsByInstallPlugin(id.slice(at + 1), id.slice(0, at)) : [];
     return skills.length ? { indexed: true, topRisk: top(skills), change: 'unknown' } : { indexed: false, topRisk: null, change: 'unknown' };
   }
-  const topRisk = top(store.listSkillsByPlugin(id));
+  const skills = store.listSkillsByPlugin(id);
+  const topRisk = top(skills);
   const indexedAt = plugin.skills_indexed_sha;
-  return { indexed: true, topRisk, change: !commit || !indexedAt ? 'unknown' : commit === indexedAt ? 'same' : 'changed' };
+  const change: Change = !commit || !indexedAt ? 'unknown' : commit === indexedAt ? 'same' : 'changed';
+  if (change !== 'changed') return { indexed: true, topRisk, change };
+  const high = skills.filter((s) => s.risk_level === 'high').map((s) => s.name);
+  return { indexed: true, topRisk, change, pinMoved: { from: commit!, to: indexedAt!, highRisk: high.length, highSkills: high.slice(0, 10), command: pluginUpdateCommand(id) } };
 }
+
+/** What the user would run to take the marketplace's new commit (shown and copied only, D-7; never `--yes`). */
+export const pluginUpdateCommand = (id: string) => `claude plugin update ${id}`;

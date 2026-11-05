@@ -3,7 +3,9 @@
 // (a checkout). With no command it starts the local app and opens the browser. `search`, `show`, `recommend` and
 // `installed` read from the app, starting it in the background when it is not running, and print text or --json,
 // so Claude Code can call them from its shell. Nothing here installs or removes a skill: that stays in the app,
-// behind its confirm dialog (user decision 2026-11-02).
+// behind its confirm dialog (user decision 2026-11-02). Each result carries an appUrl, the app's install tab for
+// that skill and project, and `open <id>` opens it in the browser (F23 (a)): the agent hands the link over, the
+// user installs. (launcher/SkillFinder.cs has a `skill-finder` command of its own; this is not it.)
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -28,12 +30,13 @@ const T = {
   skill-finder                     앱을 켜고 브라우저를 엽니다
   skill-finder search <검색어>     스킬을 찾습니다 (--limit N, --risk low|medium|high)
   skill-finder show <id>           스킬 하나의 위험 신호와 설치 명령
-  skill-finder recommend [폴더]    프로젝트 README와 비슷한 스킬 (기본: 지금 폴더)
+  skill-finder recommend [폴더]    프로젝트 README·기술 스택과 비슷한 스킬 (기본: 지금 폴더)
   skill-finder installed [폴더]    설치된 플러그인·스킬
+  skill-finder open <id>           앱에서 그 스킬의 설치 확인 창까지 엽니다 (--project [폴더])
   skill-finder stop                이 명령이 백그라운드로 켠 앱을 끕니다
 
-공통: --json(기계가 읽는 출력), --port N, --no-open, --lang ko|en|ja
-설치·삭제는 앱 화면의 확인 창에서만 합니다.`,
+공통: --json(기계가 읽는 출력), --port N, --no-open, --lang ko|en|ja, --project 폴더(appUrl의 프로젝트, 기본: 지금 폴더)
+결과마다 appUrl(앱의 설치 확인 창 주소)이 붙습니다. 설치·삭제는 앱 화면의 확인 창에서만 합니다.`,
     node: (v) => `Node.js ${v}는 너무 오래됐습니다. 22.20 이상이 필요합니다: https://nodejs.org`,
     noWeb: '웹 화면이 빌드되지 않았습니다. 먼저 npm run build를 실행하세요.',
     starting: (p) => `Skill Finder를 켜는 중입니다 (127.0.0.1:${p})…`,
@@ -55,6 +58,10 @@ const T = {
     plugins: '플러그인',
     skills: '스킬',
     readFrom: (f) => `읽은 파일: ${f}`,
+    stack: (s) => `감지한 스택: ${s}`,
+    appUrl: '앱에서 설치',
+    opened: (u) => `브라우저에서 열었습니다: ${u}\n설치는 앱의 확인 창에서 직접 하세요.`,
+    openUrl: (u) => `이 주소를 브라우저로 여세요: ${u}`,
     failed: (m) => `실패: ${m}`,
   },
   en: {
@@ -64,12 +71,13 @@ Usage:
   skill-finder                     start the app and open the browser
   skill-finder search <query>      find skills (--limit N, --risk low|medium|high)
   skill-finder show <id>           one skill's risk signals and install command
-  skill-finder recommend [folder]  skills like the project's README (default: this folder)
+  skill-finder recommend [folder]  skills like the project's README and tech stack (default: this folder)
   skill-finder installed [folder]  installed plugins and skills
+  skill-finder open <id>           open the app at that skill's install confirm dialog (--project [folder])
   skill-finder stop                stop the app this command started in the background
 
-Common: --json (machine-readable), --port N, --no-open, --lang ko|en|ja
-Installing and removing happen only in the app's confirm dialog.`,
+Common: --json (machine-readable), --port N, --no-open, --lang ko|en|ja, --project folder (appUrl's project, default: this folder)
+Each result has an appUrl (the app's install confirm dialog). Installing and removing happen only in that dialog.`,
     node: (v) => `Node.js ${v} is too old. 22.20 or later is needed: https://nodejs.org`,
     noWeb: 'The web app is not built. Run npm run build first.',
     starting: (p) => `Starting Skill Finder (127.0.0.1:${p})…`,
@@ -91,6 +99,10 @@ Installing and removing happen only in the app's confirm dialog.`,
     plugins: 'Plugins',
     skills: 'Skills',
     readFrom: (f) => `Read: ${f}`,
+    stack: (s) => `Detected stack: ${s}`,
+    appUrl: 'Install in the app',
+    opened: (u) => `Opened in the browser: ${u}\nInstall from the app's confirm dialog yourself.`,
+    openUrl: (u) => `Open this address in a browser: ${u}`,
     failed: (m) => `Failed: ${m}`,
   },
   ja: {
@@ -100,12 +112,13 @@ Installing and removing happen only in the app's confirm dialog.`,
   skill-finder                     アプリを起動してブラウザを開く
   skill-finder search <検索語>     スキルを探す (--limit N, --risk low|medium|high)
   skill-finder show <id>           スキルのリスク信号とインストールコマンド
-  skill-finder recommend [フォルダ] プロジェクトの README に似たスキル(既定: 今のフォルダ)
+  skill-finder recommend [フォルダ] プロジェクトの README・技術スタックに似たスキル(既定: 今のフォルダ)
   skill-finder installed [フォルダ] インストール済みのプラグイン・スキル
+  skill-finder open <id>           アプリでそのスキルのインストール確認画面まで開く (--project [フォルダ])
   skill-finder stop                このコマンドがバックグラウンドで起動したアプリを止める
 
-共通: --json(機械向け出力), --port N, --no-open, --lang ko|en|ja
-インストールと削除はアプリの確認画面でのみ行います。`,
+共通: --json(機械向け出力), --port N, --no-open, --lang ko|en|ja, --project フォルダ(appUrl のプロジェクト、既定: 今のフォルダ)
+結果ごとに appUrl(アプリのインストール確認画面)が付きます。インストールと削除はその確認画面でのみ行います。`,
     node: (v) => `Node.js ${v} は古すぎます。22.20 以上が必要です: https://nodejs.org`,
     noWeb: 'Web 画面がビルドされていません。先に npm run build を実行してください。',
     starting: (p) => `Skill Finder を起動しています (127.0.0.1:${p})…`,
@@ -127,6 +140,10 @@ Installing and removing happen only in the app's confirm dialog.`,
     plugins: 'プラグイン',
     skills: 'スキル',
     readFrom: (f) => `読んだファイル: ${f}`,
+    stack: (s) => `検出したスタック: ${s}`,
+    appUrl: 'アプリでインストール',
+    opened: (u) => `ブラウザで開きました: ${u}\nインストールはアプリの確認画面でご自身で行ってください。`,
+    openUrl: (u) => `このアドレスをブラウザで開いてください: ${u}`,
     failed: (m) => `失敗: ${m}`,
   },
 };
@@ -152,6 +169,15 @@ const langArg = option('--lang');
 const portArg = option('--port');
 const limit = Math.min(50, Math.max(1, Number(option('--limit')) || 10));
 const risk = option('--risk');
+/** `--project [folder]`: the folder appUrl and `open` start the install at; alone (or before another flag) the current one. */
+const projectArg = (() => {
+  const i = args.indexOf('--project');
+  if (i < 0) return null;
+  const next = args[i + 1];
+  const withPath = next != null && !next.startsWith('--');
+  args.splice(i, withPath ? 2 : 1);
+  return resolve(withPath ? next : process.cwd());
+})();
 const systemLang = (process.env.SKILL_FINDER_LANG || Intl.DateTimeFormat().resolvedOptions().locale || 'en').slice(0, 2).toLowerCase();
 const lang = LANGS.includes(langArg) ? langArg : LANGS.includes(systemLang) ? systemLang : 'en';
 const t = T[lang];
@@ -238,8 +264,14 @@ async function startServer(background) {
 }
 
 function openBrowser(url) {
+  // Windows: not `cmd /c start`, which reads the `&` between query parameters as a command separator and opened
+  // `open`'s address without tab=install and project (review 2026-11-05); the URL handler takes it whole
   const [cmd, cmdArgs] =
-    process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
+    process.platform === 'win32'
+      ? ['rundll32', ['url.dll,FileProtocolHandler', url]]
+      : process.platform === 'darwin'
+        ? ['open', [url]]
+        : ['xdg-open', [url]];
   spawn(cmd, cmdArgs, { stdio: 'ignore', detached: true, windowsHide: true }).on('error', () => {}).unref();
 }
 
@@ -266,6 +298,17 @@ async function ensureRunning() {
 // ── output ───────────────────────────────────────────────────────────────────────────────────────────────────
 const count = (n) => (n == null ? '-' : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(n));
 const repoOf = (id) => id.match(/^gh:([^:]+):/)?.[1] ?? '';
+/**
+ * The app's skill page at its install tab, with the project folder the install should start at (D#b2b1: the page
+ * takes `tab` and `project`). The agent hands this to the user; the app's confirm dialog does the installing.
+ */
+function appUrl(port, id, project) {
+  const q = new URLSearchParams({ id, tab: 'install' });
+  if (project) q.set('project', project);
+  return `http://127.0.0.1:${port}/skill?${q}`;
+}
+/** Set once the app's port is known: every printed result carries its appUrl. */
+let linkTo = null;
 const brief = (it) => ({
   id: it.id,
   name: it.name,
@@ -278,15 +321,17 @@ const brief = (it) => ({
   installMethod: it.install?.method ?? null,
   installCommand: it.install?.command || null,
   url: it.sources?.find((s) => s.url)?.url ?? null,
+  ...(linkTo ? { appUrl: linkTo(it.id) } : {}),
 });
-function printItems(items) {
-  if (json) return console.log(JSON.stringify(items.map(brief), null, 2));
+function printItems(items, extra = null) {
+  if (json) return console.log(JSON.stringify(extra ? { ...extra, skills: items.map(brief) } : items.map(brief), null, 2));
   if (!items.length) return console.log(t.none);
   for (const it of items) {
     const b = brief(it);
     console.log(`${b.name}  [${t.risk[b.riskLevel] ?? b.riskLevel}]  ↓${count(b.installs)} ★${count(b.stars)}${b.repo ? `  ${b.repo}` : ''}`);
     if (b.description) console.log(`  ${b.description.replace(/\s+/g, ' ').slice(0, 160)}`);
     console.log(`  id: ${b.id}`);
+    if (b.appUrl) console.log(`  ${t.appUrl}: ${b.appUrl}`);
   }
   console.log(`\n${t.note}`);
 }
@@ -328,6 +373,7 @@ async function main() {
     const query = rest.join(' ').trim();
     if (!query) throw new Error(t.needQuery);
     const port = await ensureRunning();
+    linkTo = (id) => appUrl(port, id, projectArg ?? process.cwd());
     const filters = ['low', 'medium', 'high'].includes(risk) ? { maxRisk: risk } : undefined;
     const lines = (await api(port, 'POST', '/search', { query, filters })).trim().split('\n').map((l) => JSON.parse(l));
     // the last one: a slow search sends interim results first, then the final ones
@@ -339,6 +385,7 @@ async function main() {
     const id = rest[0];
     if (!id) throw new Error(t.needId);
     const port = await ensureRunning();
+    linkTo = (sid) => appUrl(port, sid, projectArg ?? process.cwd());
     const d = JSON.parse(await api(port, 'GET', `/skills/${encodeURIComponent(id)}`));
     if (json) return console.log(JSON.stringify({ ...brief(d), whenToUse: d.whenToUse ?? null }, null, 2));
     printItems([d]);
@@ -350,9 +397,31 @@ async function main() {
   if (command === 'recommend') {
     const projectPath = resolve(rest[0] ?? process.cwd());
     const port = await ensureRunning();
+    linkTo = (id) => appUrl(port, id, projectPath);
     const r = JSON.parse(await api(port, 'POST', '/readme-skills', { projectPath }));
+    const stack = r.stack ?? [];
     if (!json && r.readmePath) console.log(t.readFrom([r.readmePath, ...(r.alsoRead ?? [])].join(' + ')));
-    return printItems(r.skills.map((s) => s.item).slice(0, limit));
+    if (!json && stack.length) console.log(t.stack(stack.map((s) => s.tag).join(', ')));
+    // --json: an object since 0.3.6 (the stack and keywords ride along with the skills)
+    return printItems(r.skills.map((s) => s.item).slice(0, limit), {
+      readmePath: r.readmePath || null,
+      stack: stack.map((s) => ({ tag: s.tag, evidence: s.evidence })),
+      keywords: (r.keywords ?? []).map((k) => k.term),
+    });
+  }
+
+  if (command === 'open') {
+    const id = rest[0];
+    if (!id) throw new Error(t.needId);
+    const port = await ensureRunning();
+    // the skill must be in the index (the server's own error otherwise); nothing is installed here
+    await api(port, 'GET', `/skills/${encodeURIComponent(id)}`);
+    const url = appUrl(port, id, projectArg);
+    if (json) console.log(JSON.stringify({ id, appUrl: url, opened: !noOpen }, null, 2));
+    if (noOpen) return json ? undefined : console.log(t.openUrl(url));
+    openBrowser(url);
+    if (!json) console.log(t.opened(url));
+    return;
   }
 
   if (command === 'installed') {

@@ -98,4 +98,32 @@ export const MIGRATIONS: string[] = [
   // Where a renamed or transferred repo now lives (feature review P9): GitHub answers for the old name with the new
   // one's data, and its name is kept here; NULL when it is where it was asked for.
   `ALTER TABLE repos ADD COLUMN moved_to TEXT;`,
+  // Feature review stage 2 (2026-11-05), written together so the parallel pieces do not race on this list:
+  // - task_runs: every background task's runs (scheduler B2, status view F22); kept 30 days.
+  // - task_state: when each task last succeeded and is next due, and how often it failed in a row (B2).
+  // - repos.head_sha: the default branch's commit, from the metadata refresh (B3); a repo whose skills were indexed
+  //   at another commit is due for a re-index.
+  // - notices: changes to installed and favorite skills (F7): risk_up, new_commit, archived, gone, moved.
+  // - install_log: what was seen when installing (F7, P7): the risk flags, the file check's summary, the warnings the
+  //   user ticked, and whether the install was pinned to the checked commit.
+  // - skills.first_seen_at: when the app first indexed the skill ("new this week", F17); older rows get fetched_at.
+  `
+  CREATE TABLE task_runs (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, trigger TEXT NOT NULL /* startup|schedule|manual */,
+    started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL /* running|ok|failed|skipped */,
+    counts_json TEXT, error TEXT);
+  CREATE INDEX task_runs_kind_started ON task_runs(kind, started_at);
+  CREATE TABLE task_state (kind TEXT PRIMARY KEY, last_success_at TEXT, next_due_at TEXT, fail_count INTEGER NOT NULL DEFAULT 0);
+  ALTER TABLE repos ADD COLUMN head_sha TEXT;
+  CREATE TABLE notices (id INTEGER PRIMARY KEY, skill_id TEXT NOT NULL, kind TEXT NOT NULL,
+    from_value TEXT, to_value TEXT, detail_json TEXT, created_at TEXT NOT NULL, seen_at TEXT);
+  CREATE INDEX notices_seen ON notices(seen_at, created_at);
+  CREATE UNIQUE INDEX notices_once ON notices(skill_id, kind, IFNULL(to_value, ''));
+  ALTER TABLE install_log ADD COLUMN flags_json TEXT;
+  ALTER TABLE install_log ADD COLUMN scan_summary_json TEXT;
+  ALTER TABLE install_log ADD COLUMN acks_json TEXT;
+  ALTER TABLE install_log ADD COLUMN pinned INTEGER;
+  ALTER TABLE skills ADD COLUMN first_seen_at TEXT;
+  UPDATE skills SET first_seen_at = fetched_at WHERE first_seen_at IS NULL;
+  CREATE INDEX skills_first_seen ON skills(first_seen_at);
+  `,
 ];

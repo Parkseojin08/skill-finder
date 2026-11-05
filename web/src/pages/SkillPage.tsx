@@ -8,12 +8,14 @@ import { ShareMenu } from '../components/ShareMenu.tsx';
 import { useInstalled } from '../installed.ts';
 import { splitFrontmatter } from '../components/Markdown.tsx';
 import { SkillMdView } from '../components/SkillMdView.tsx';
+import { PermissionTable, RiskExplainList } from '../components/RiskEvidence.tsx';
+import type { DetailSecurity, Evidence } from '../lib/security.ts';
 import { SimilarSkills } from '../components/SimilarSkills.tsx';
 import { Translated } from '../components/Translated.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { HelpTip } from '../components/HelpTip.tsx';
 import { FavoriteButton } from '../components/FavoriteButton.tsx';
-import { formatAgo, formatBytes, formatCount, HELP, LOW_RISK_NOTE, METHOD, QUALITY, RISK_FLAGS, RISK_RANK } from '../labels.ts';
+import { formatAgo, formatBytes, formatCount, HELP, LOW_RISK_NOTE, METHOD, QUALITY, RISK_RANK } from '../labels.ts';
 import type { Breakdown, OpenedFrom, ResultItem, SettingsResponse, SkillDetail } from '../types.ts';
 import { t } from '../i18n.ts';
 import { tj } from '../i18nNodes.tsx';
@@ -66,6 +68,8 @@ export function SkillPage({
     window.history.replaceState(window.history.state, '', `${window.location.pathname}?${p}`);
   };
   const [file, setFile] = useState<{ path: string; content: string | null; error?: string } | null>(null);
+  /** A risk signal's SKILL.md line to show (F1); `n` makes a second click on the same line scroll there again. */
+  const [focus, setFocus] = useState<{ line: number; n: number } | null>(null);
   /** The file asked for last: an earlier, slower answer must not replace it. */
   const fileAsked = useRef<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -96,6 +100,18 @@ export function SkillPage({
       .then((r) => fileAsked.current === path && setFile({ path, content: r.content }))
       .catch((e) => fileAsked.current === path && setFile({ path, content: null, error: String(e.message ?? e) }));
   };
+
+  /** A risk signal's place: its SKILL.md line in the SKILL.md tab, or the file in the files tab. */
+  const openEvidence = (e: Evidence) => {
+    if (e.path === 'SKILL.md' && e.line != null) {
+      setFocus((f) => ({ line: e.line!, n: (f?.n ?? 0) + 1 }));
+      setTab('skill');
+    } else if (detail?.files.some((f) => f.path === e.path && f.isText)) {
+      setTab('files');
+      openFile(e.path);
+    }
+  };
+  const security = detail as (SkillDetail & DetailSecurity) | null;
 
   const name = detail?.name ?? item?.name ?? '';
   const installedAs = useInstalled();
@@ -320,11 +336,8 @@ export function SkillPage({
             </div>
             {flags.length + quality.length > 0 ? (
               <ul className="explain">
-                {flags.map((f) => (
-                  <li key={f}>
-                    <b>{RISK_FLAGS[f]?.label ?? f}</b> — {RISK_FLAGS[f]?.meaning ?? ''}
-                  </li>
-                ))}
+                {/* each signal with where it was found (F1): its lines, or the file */}
+                <RiskExplainList flags={flags} evidence={security?.riskEvidence} onOpen={openEvidence} />
                 {quality.map((q) => (
                   <li key={q} className="muted">
                     <b>{QUALITY[q]?.label ?? q}</b> — {QUALITY[q]?.meaning ?? ''}
@@ -336,6 +349,7 @@ export function SkillPage({
             )}
             {riskLevel === 'low' && <p className="muted small">{LOW_RISK_NOTE}</p>}
             {detail.plugin?.strictConflict && <p className="warn-box">{t('로드 실패 가능: strict:false 항목과 plugin.json이 모두 구성요소를 선언합니다.')}</p>}
+            {security?.permissions && <PermissionTable table={security.permissions} plugin={!!detail.plugin} onOpen={openEvidence} />}
           </section>
 
           {/* after the risk: "then what else does this?" (F4) */}
@@ -361,6 +375,7 @@ export function SkillPage({
           <section>
             <InstallPanel
               skill={detail}
+              onRechecked={() => setAttempt((a) => a + 1)}
               defaultScope={projectPath ? 'project' : (settings?.settings.defaultScope ?? 'user')}
               defaultProjectPath={projectPath || (settings?.settings.defaultProjectPath ?? '')}
             />
@@ -376,8 +391,10 @@ export function SkillPage({
             {detail.skillMdError && <p className="warn-box">{detail.skillMdError}</p>}
             {/* rendered, or the raw text Claude reads with what the page hides marked (feature review F2) */}
             <SkillMdView
+              key={focus?.n ?? 0}
               detail={detail}
               md={md}
+              focusLine={focus?.line ?? null}
               onRelativeLink={(path) => {
                 if (detail.files.some((f) => f.path === path && f.isText)) {
                   setTab('files');

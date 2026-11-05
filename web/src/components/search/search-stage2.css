@@ -1,0 +1,132 @@
+/* Search page, stage 2 (feature review 2026-11-04): the suggestion list (F16), recent searches and the browse
+   tiles on the first screen (F17). App tokens only (styles.css). */
+@layer app {
+  .suggest-wrap {
+    position: relative;
+    flex: 1;
+    display: flex;
+    min-width: 0;
+  }
+  .suggest-wrap > input {
+    width: 100%;
+  }
+  .suggest-list {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 8px);
+    left: -12px;
+    right: -12px;
+    margin: 0;
+    padding: 4px 0;
+    list-style: none;
+    background: var(--bg-elev);
+    border: 1px solid var(--line-control);
+    border-radius: var(--corner-sm);
+    max-height: 22rem;
+    overflow-y: auto;
+  }
+  .suggest-list[hidden] {
+    display: none;
+  }
+  .suggest-list li {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 7px 12px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .suggest-list li.active {
+    background: var(--neon-soft);
+    color: var(--text);
+  }
+  .suggest-kind {
+    flex: none;
+    min-width: 4.5em;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+  .suggest-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .suggest-meta {
+    flex: none;
+  }
+
+  .recent-searches {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0 14px;
+  }
+  .browse {
+    max-width: 960px;
+    margin: 22px auto 8px;
+    text-align: left;
+  }
+  .browse h2 {
+    font-size: 0.95rem;
+    margin: 18px 0 8px;
+    color: var(--text-soft);
+  }
+  .browse-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 8px;
+  }
+  .browse-tile {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    min-height: 44px;
+    padding: 8px 12px;
+    text-align: left;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--corner-sm);
+    color: var(--text);
+    font-weight: 400;
+  }
+  .browse-tile:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--neon) 55%, transparent);
+    background: var(--surface-hover);
+  }
+  .browse-tile:disabled {
+    opacity: 0.55;
+  }
+  .browse-tile .count {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+  .browse-tile.wide {
+    grid-column: span 2;
+  }
+  .browse-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 10px;
+  }
+  .browse-head h2 {
+    margin: 0;
+    font-size: 1rem;
+  }
+  .browse-more {
+    display: flex;
+    justify-content: center;
+    margin: 14px 0;
+  }
+  .stack-line .chip-btn::before {
+    content: '#';
+    content: '#' / '';
+  }
+}

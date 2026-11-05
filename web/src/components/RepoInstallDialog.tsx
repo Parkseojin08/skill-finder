@@ -81,7 +81,9 @@ export function RepoInstallDialog({
 
   const chosen = installable.filter((s) => selected.has(s.id));
   // the server's own judgement too (a plugin's other skill can be high): it refuses those without acks.high (P7)
-  const chosenHigh = chosen.filter((s) => s.riskLevel === 'high' || previews[s.id]?.highRisk === true || scanIsHigh(scans[s.id]?.scan));
+  // a file check that could not run needs the same tick: the server checks again before installing and refuses it
+  // unticked (stage 2, install/record.ts scanNeedsTick)
+  const chosenHigh = chosen.filter((s) => s.riskLevel === 'high' || previews[s.id]?.highRisk === true || scanIsHigh(scans[s.id]?.scan) || !!scans[s.id]?.error);
   const toOverwrite = chosen.filter((s) => needsOverwriteCheck(previews[s.id]?.existing));
   const toggle = (id: string, on: boolean) =>
     setSelected((cur) => {
@@ -132,7 +134,8 @@ export function RepoInstallDialog({
       let answered = false;
       try {
         // the tick names these skills ("위험 높음 N개(…)를 확인했습니다"): only they carry it
-        const acks = { high: highChecked && chosenHigh.some((h) => h.id === s.id) };
+        const ticked = highChecked && chosenHigh.some((h) => h.id === s.id);
+        const acks = { high: ticked, overwrite: overwriteChecked && needsOverwriteCheck(previews[s.id]?.existing), scanFailed: ticked && !!scans[s.id]?.error };
         const body = { id: s.id, scope, projectPath: scope === 'user' ? undefined : projectPath, overwrite: previews[s.id]?.existing?.path, acks };
         await streamNdjson<InstallEvent>('/install', body, (e) => {
           if (e.type === 'log') setLog((l) => [...l, e.line]);

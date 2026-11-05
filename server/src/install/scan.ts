@@ -1,7 +1,7 @@
 // What an install brings besides SKILL.md (project review 2026-11-02 F1). The risk rules run on SKILL.md when a
 // skill is indexed; the other text files of the folder (scripts, references) are installed unchecked. Before an
 // install the app reads them at the pinned commit and runs the same text rules on each. Remote files are only read.
-import { hasCurlPipeShell, hasRmRf, type RiskFlag } from '../analyze/risk.ts';
+import { TEXT_FILE_RULES, textEvidence, type Evidence, type RiskFlag } from '../analyze/risk.ts';
 import type { SkillRow } from '../db/store.ts';
 import type { StoredFiles } from '../indexer.ts';
 import type { GitHub } from '../sources/github.ts';
@@ -27,14 +27,14 @@ export type FileScan = {
   skipped: Array<{ path: string; reason: SkipReason }>;
   /** Files past the 500 the index keeps per skill, never listed. */
   unlisted: number;
+  /** Where in each finding's file its signals are (feature review F1): path, line and the lines around it. */
+  evidence: Array<Evidence & { flag: RiskFlag }>;
 };
 
 /** The text rules that apply outside SKILL.md: download-and-run and rm -rf (the rest read frontmatter). */
 export function textFileFlags(text: string): RiskFlag[] {
-  const flags: RiskFlag[] = [];
-  if (hasCurlPipeShell(text)) flags.push('curlPipeShell');
-  if (hasRmRf(text)) flags.push('rmRf');
-  return flags;
+  const input = { files: [], allowedTools: [], body: '', hasHooks: false, raw: text };
+  return TEXT_FILE_RULES.filter((r) => r.scan(input, 1).length > 0).map((r) => r.flag);
 }
 
 const cache = new SizedCache<FileScan>({ maxSize: 500, ttlMs: 30 * 60 * 1000, sizeOf: () => 1 });
@@ -64,6 +64,7 @@ async function runScan(github: GitHub, skill: SkillRow): Promise<FileScan> {
   text.sort((a, b) => Number(SCRIPT_EXT.test(b.path)) - Number(SCRIPT_EXT.test(a.path)) || a.path.localeCompare(b.path));
   for (const f of text.slice(SCAN_MAX_FILES)) skipped.push({ path: f.path, reason: 'limit' });
   const findings: FileScan['findings'] = [];
+  const evidence: FileScan['evidence'] = [];
   let checked = 0;
   await pool(text.slice(0, SCAN_MAX_FILES), 6, async (f) => {
     const full = skill.dir_path ? `${skill.dir_path}/${f.path}` : f.path;
@@ -73,9 +74,13 @@ async function runScan(github: GitHub, skill: SkillRow): Promise<FileScan> {
     if (looksBinary(out.text)) return skipped.push({ path: f.path, reason: 'binary' });
     checked++;
     const flags = textFileFlags(out.text);
-    if (flags.length) findings.push({ path: f.path, flags });
+    if (flags.length) {
+      findings.push({ path: f.path, flags });
+      evidence.push(...textEvidence(out.text, f.path));
+    }
   });
   findings.sort((a, b) => a.path.localeCompare(b.path));
   skipped.sort((a, b) => a.path.localeCompare(b.path));
-  return { commit: ref, checked, findings, skipped, unlisted: Math.max(0, stored.total - stored.files.length) };
+  evidence.sort((a, b) => a.path.localeCompare(b.path) || (a.line ?? 0) - (b.line ?? 0));
+  return { commit: ref, checked, findings, skipped, unlisted: Math.max(0, stored.total - stored.files.length), evidence };
 }

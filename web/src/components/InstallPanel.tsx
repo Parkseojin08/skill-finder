@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ApiError, apiGet, streamNdjson } from '../api.ts';
+import { ApiError, apiGet } from '../api.ts';
 import { forgetInstalled } from '../installed.ts';
 import { HELP, METHOD, RISK_FLAGS, RISK_LEVEL, RISK_RANK, SCOPE } from '../labels.ts';
 import { HelpTip } from './HelpTip.tsx';
@@ -10,12 +10,19 @@ import { RiskBadge, RiskFlags, RiskSummary } from './Badges.tsx';
 import { FolderInput, rememberProject } from './FolderInput.tsx';
 import { serverText, t } from '../i18n.ts';
 import { tj } from '../i18nNodes.tsx';
+import { CLAUDE_ONLY_FLAGS, InstallRefused, saveAgents, savedAgents, streamInstall, type AgentId, type AgentTarget, type ChangedSinceScan, type InstallPreviewMore } from '../lib/security.ts';
 
 type LogLine = { line: string; stream: string };
 /** The preview with the server's own high-risk judgement (feature review P7); types.ts is left as it is. */
 export type InstallPreviewHigh = InstallPreview & { highRisk?: boolean };
-/** What the confirm dialog had ticked, sent with /install (the server refuses high risk without `high`). */
-export type InstallAcks = { high?: boolean };
+/**
+ * What the confirm dialog had ticked, sent with /install (the server refuses high risk without `high`; `high` also
+ * covers a check that could not run). `overwrite` and `scanFailed` are recorded with the install (F7).
+ */
+export type InstallAcks = { high?: boolean; overwrite?: boolean; scanFailed?: boolean };
+
+/** Every same-name folder the install replaces: the server's list for the ticked agents, or its one folder. */
+export const existingOf = (p: InstallPreviewMore | null | undefined): ExistingSkill[] => p?.existingAll ?? (p?.existing ? [p.existing] : []);
 type PluginSkill = NonNullable<SkillDetail['plugin']>['skills'][number];
 
 /**
@@ -35,6 +42,75 @@ export function riskierSiblings(skill: SkillDetail): PluginSkill[] {
  */
 export function needsOverwriteCheck(existing: ExistingSkill | null | undefined): boolean {
   return !!existing && existing.same !== true;
+}
+
+/** All of a preview's same-name folders, one note each (other agents' folders too, F9 stage 2). */
+export function OverwriteNotes({ preview }: { preview: InstallPreviewMore | null | undefined }) {
+  return (
+    <>
+      {existingOf(preview).map((e) => (
+        <OverwriteNote key={e.path} existing={e} />
+      ))}
+    </>
+  );
+}
+
+const SHORT = (sha: string | null) => (sha ? sha.slice(0, 7) : '?');
+
+/**
+ * The install was refused because the repo moved after the check (B6, decision 11): what moved, and what the check of
+ * the new commit found that the old one did not. The install tab has the new check; the confirm dialog opens again.
+ */
+export function ChangedNote({ changed }: { changed: ChangedSinceScan }) {
+  const what = { marketplace: t('마켓플레이스'), plugin: t('플러그인 저장소'), skill: t('저장소') } as const;
+  return (
+    <div className="warn-box" role="alert">
+      <b>{t('검사 후 바뀜')}</b> — {t('위험 검사를 한 뒤 저장소가 바뀌어 설치하지 않았습니다. 새 커밋을 다시 검사했습니다.')}
+      <ul className="scan-findings">
+        {changed.changes.map((c, i) => (
+          <li key={i}>
+            {what[c.what]} <code>{c.repo}</code> <code>{SHORT(c.checked)}</code> → <code>{SHORT(c.now)}</code>
+          </li>
+        ))}
+      </ul>
+      {changed.gone && <p>{t('새 커밋에는 이 스킬(플러그인)이 없습니다. 설치하지 마세요.')}</p>}
+      {changed.newFlags.length > 0 ? (
+        <p>
+          {t('새 위험 신호:')} <RiskFlags flags={changed.newFlags} />
+        </p>
+      ) : (
+        !changed.gone && <p className="small">{t('새 위험 신호는 없습니다.')}</p>
+      )}
+      {changed.raised.length > 0 && <p>{t('위험 등급이 오른 스킬: {0}', changed.raised.join(', '))}</p>}
+      {changed.added.length > 0 && <p>{t('새로 들어온 스킬: {0}', changed.added.join(', '))}</p>}
+      {changed.removed.length > 0 && <p>{t('빠진 스킬: {0}', changed.removed.join(', '))}</p>}
+    </div>
+  );
+}
+
+/**
+ * The agents a skills CLI install goes to (F9 stage 2, decision 12): Claude Code by default; only agents set up on this
+ * PC can be ticked. Agents sharing a folder (a project's .agents/skills) are installed together.
+ */
+function AgentChoice({ targets, chosen, onChange, disabled }: { targets: AgentTarget[]; chosen: AgentId[]; onChange: (next: AgentId[]) => void; disabled: boolean }) {
+  const name = (id: AgentId) => targets.find((x) => x.id === id)?.name ?? id;
+  return (
+    <fieldset className="scopes" disabled={disabled}>
+      <legend>{t('설치할 에이전트')}</legend>
+      {targets.map((a) => (
+        <label key={a.id} title={a.detected ? a.dir : t('이 PC에서 찾지 못했습니다')} className={a.detected ? '' : 'muted'}>
+          <input
+            type="checkbox"
+            checked={a.detected && chosen.includes(a.id)}
+            disabled={!a.detected}
+            onChange={(e) => onChange(e.target.checked ? [...chosen, a.id] : chosen.filter((x) => x !== a.id))}
+          />
+          {a.name}
+          {a.detected && a.sharedWith.length > 0 && chosen.includes(a.id) && <span className="muted small"> ({t('{0}와 같은 폴더', a.sharedWith.map(name).join(', '))})</span>}
+        </label>
+      ))}
+    </fieldset>
+  );
 }
 
 export function OverwriteNote({ existing }: { existing: ExistingSkill | null | undefined }) {
@@ -91,15 +167,40 @@ function versionNote(plan: InstallPlan): string | null {
 }
 type InstallEvent = { type: 'log'; line: string; stream: string } | { type: 'result'; ok: boolean; exitCode: number; message: string };
 
-export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skill: SkillDetail; defaultScope: 'user' | 'project'; defaultProjectPath: string }) {
+export function InstallPanel({
+  skill,
+  defaultScope,
+  defaultProjectPath,
+  onRechecked,
+}: {
+  skill: SkillDetail;
+  defaultScope: 'user' | 'project';
+  defaultProjectPath: string;
+  /** The server read the skill again after it changed (B6): the page reloads the detail for its new risk. */
+  onRechecked?: () => void;
+}) {
   const plan = skill.install;
   // a plugin installs all of its skills: the riskiest one counts
   const topRisk = (plan.method === 'plugin' ? (skill.plugin?.skills ?? []) : []).reduce<RiskLevel>((top, s) => (RISK_RANK[s.riskLevel] > RISK_RANK[top] ? s.riskLevel : top), skill.riskLevel);
   const [scope, setScope] = useState<InstallScope>(plan.scopes.includes(defaultScope) ? defaultScope : (plan.scopes[0] ?? 'user'));
   const [projectPath, setProjectPath] = useState(defaultProjectPath);
-  /** `key`: the scope and folder it was asked for; a preview for other input is not used (it may be on its way). */
-  const [preview, setPreview] = useState<(InstallPreviewHigh & { key: string }) | null>(null);
-  const inputKey = `${scope}|${scope === 'user' ? '' : projectPath}`;
+  /** `key`: the scope, folder and agents it was asked for; a preview for other input is not used (it may be on its way). */
+  const [preview, setPreview] = useState<(InstallPreviewMore & { key: string }) | null>(null);
+  // the agents ticked (F9 stage 2): this browser's default; a plugin is Claude Code's only
+  const [chosenAgents, setChosenAgents] = useState<AgentId[]>(savedAgents);
+  const [targets, setTargets] = useState<AgentTarget[] | null>(null);
+  const cliInstall = plan.method === 'skills-cli';
+  const agents: AgentId[] = !cliInstall
+    ? ['claude-code']
+    : targets
+      ? targets.filter((a) => a.detected && chosenAgents.includes(a.id)).map((a) => a.id)
+      : chosenAgents.filter((a) => a === 'claude-code');
+  /** The install was refused as changed since the check (B6): shown, and the confirm dialog opens again once checked. */
+  const [changed, setChanged] = useState<ChangedSinceScan | null>(null);
+  const [reconfirm, setReconfirm] = useState(false);
+  /** Bumped to ask for the file check and the preview again (after the server checked a new commit). */
+  const [nonce, setNonce] = useState(0);
+  const inputKey = `${scope}|${scope === 'user' ? '' : projectPath}|${agents.join(',')}|${nonce}`;
   const [confirming, setConfirming] = useState(false);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<LogLine[]>([]);
@@ -120,31 +221,50 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
     return () => {
       alive = false;
     };
-  }, [skill.id, plan.method]);
+  }, [skill.id, plan.method, nonce]);
 
   useEffect(() => {
     if (plan.method === 'manual-only') return;
     let alive = true;
-    const key = `${scope}|${scope === 'user' ? '' : projectPath}`;
+    const key = inputKey;
     // no folder yet: nothing to ask (an empty path used to show "절대경로여야 합니다" before anything was typed)
     if (scope !== 'user' && !projectPath.trim()) {
       setPreview(null);
       return;
     }
     const t = setTimeout(() => {
-      apiGet<InstallPreviewHigh>('/install/preview', { id: skill.id, scope, projectPath: scope === 'user' ? undefined : projectPath })
-        .then((p) => alive && setPreview({ ...p, key }))
+      apiGet<InstallPreviewMore>('/install/preview', { id: skill.id, scope, projectPath: scope === 'user' ? undefined : projectPath, agents: cliInstall ? agents.join(',') : undefined })
+        .then((p) => {
+          if (!alive) return;
+          setPreview({ ...p, key });
+          if (p.targets?.length) setTargets(p.targets);
+        })
         .catch((e) => alive && setPreview({ plan, steps: [], location: '', error: String(e.message ?? e), key }));
     }, 250);
     return () => {
       alive = false;
       clearTimeout(t);
     };
-  }, [skill.id, scope, projectPath, plan]);
+    // inputKey holds the scope, folder, agents and nonce
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skill.id, inputKey, plan]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
   }, [log]);
+
+  // the preview for what is typed now, and the file check done (or failed): the dialog then shows what will happen
+  // (review 2026-11-02: it could open on the previous folder's preview, or before the check said "download and run")
+  const current = preview && preview.key === inputKey ? preview : null;
+  const noAgent = cliInstall && agents.length === 0;
+  const ready = !!current && !current.error && current.steps.length > 0 && (scan !== null || scanError !== null) && !noAgent;
+  // B6: the new commit is checked (file check and preview are in again): the confirm dialog opens again
+  useEffect(() => {
+    if (reconfirm && ready && !running) {
+      setReconfirm(false);
+      setConfirming(true);
+    }
+  }, [reconfirm, ready, running]);
 
   const copy = async (text: string) => {
     try {
@@ -183,9 +303,18 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
     let answered = false;
     let failure: string | null = null;
     try {
-      // the folder the dialog showed as replaced; the server checks it is still the one there
-      const body = { id: skill.id, scope, projectPath: scope === 'user' ? undefined : projectPath, overwrite: current?.existing?.path, acks };
-      await streamNdjson<InstallEvent>('/install', body, (e) => {
+      // the folders the dialog showed as replaced; the server checks they are still the ones there
+      const replaced = existingOf(current).map((e) => e.path);
+      const body = {
+        id: skill.id,
+        scope,
+        projectPath: scope === 'user' ? undefined : projectPath,
+        overwrite: replaced.length > 1 ? replaced : replaced[0],
+        acks,
+        ...(cliInstall ? { agents } : {}),
+      };
+      setChanged(null);
+      await streamInstall<InstallEvent>(body, (e) => {
         if (e.type === 'log') setLog((l) => [...l, { line: e.line, stream: e.stream }]);
         else {
           answered = true;
@@ -200,6 +329,15 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
       if (e instanceof ApiError && e.status > 0) {
         answered = true;
         setResult({ ok: false, message: failure });
+        // B6: changed since the check. It was checked again; show what changed and ask again once that check is in
+        const moved = e instanceof InstallRefused ? e.changed : null;
+        if (moved) {
+          setChanged(moved);
+          setScan(null);
+          setNonce((n) => n + 1);
+          setReconfirm(true);
+          onRechecked?.();
+        }
       }
     }
     // The answer stopped without a result (a dropped connection, a closed tab): say whether it is still running
@@ -215,14 +353,12 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
     setRunning(false);
   };
 
-  // the preview for what is typed now, and the file check done (or failed): the dialog then shows what will happen
-  // (review 2026-11-02: it could open on the previous folder's preview, or before the check said "download and run")
-  const current = preview && preview.key === inputKey ? preview : null;
-  const ready = !!current && !current.error && current.steps.length > 0 && (scan !== null || scanError !== null);
   const noFolder = scope !== 'user' && !projectPath.trim();
-  const waiting = !running && (noFolder ? t('폴더를 고른 뒤 설치') : !current ? t('확인 중…') : scan === null && scanError === null ? t('파일 검사 중…') : null);
+  const waiting = !running && (noFolder ? t('폴더를 고른 뒤 설치') : noAgent ? t('에이전트를 하나 이상 고르세요') : !current ? t('확인 중…') : scan === null && scanError === null ? t('파일 검사 중…') : null);
   const siblings = riskierSiblings(skill);
   const version = versionNote(plan);
+  // allowed-tools, hooks and `!`cmd`` are Claude Code's own (F9 stage 2; that others ignore them is a guess)
+  const claudeOnly = cliInstall && agents.some((a) => a !== 'claude-code') ? skill.riskFlags.filter((f) => CLAUDE_ONLY_FLAGS.has(f)) : [];
 
   return (
     <section className="install">
@@ -256,6 +392,24 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
           <FolderInput value={projectPath} onChange={setProjectPath} disabled={running} />
         </div>
       )}
+      {/* plugins are Claude Code's own: no choice of agent for them */}
+      {cliInstall && targets && targets.length > 1 && (
+        <AgentChoice
+          targets={targets}
+          chosen={chosenAgents}
+          disabled={running}
+          onChange={(next) => {
+            setChosenAgents(next);
+            saveAgents(next);
+          }}
+        />
+      )}
+      {claudeOnly.length > 0 && (
+        <p className="muted small">
+          {t('{0}은(는) Claude Code에서만 뜻이 있습니다. 다른 에이전트에서는 무시되거나 다르게 동작할 수 있습니다(추측).', claudeOnly.map((f) => RISK_FLAGS[f]?.label ?? f).join(', '))}
+        </p>
+      )}
+      {changed && <ChangedNote changed={changed} />}
       {current?.error && <p className="warn-box">{serverText(current.error)}</p>}
       {current && !current.error && current.steps.length > 0 && (
         <div className="preview">
@@ -273,7 +427,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
             {current.createsLockFile && <>{' '}{tj('· 프로젝트 루트에 {0}이 생깁니다', <code>skills-lock.json</code>)}</>}
           </div>
           {version && <div className="muted small">{version}</div>}
-          <OverwriteNote existing={current.existing} />
+          <OverwriteNotes preview={current} />
         </div>
       )}
       <InstallScanView scan={scan} error={scanError} />
@@ -285,7 +439,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
         <p className="muted small">{t('이 위험 등급은 이전 위험 규칙으로 판정한 것입니다. SKILL.md를 다시 읽지 못해 지금 규칙(숨은 내용 등)으로는 아직 검사하지 못했습니다.')}</p>
       )}
       <button type="button" className="primary" disabled={!ready || running} onClick={() => setConfirming(true)}>
-        {running ? t('설치 중…') : (waiting ?? (current?.existing?.same ? t('다시 설치…') : t('설치…')))}
+        {running ? t('설치 중…') : (waiting ?? (existingOf(current).some((e) => e.same) && !existingOf(current).some((e) => !e.same) ? t('다시 설치…') : t('설치…')))}
       </button>
       {(log.length > 0 || result) && (
         <div className="install-log">
@@ -314,6 +468,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
           version={version}
           scan={scan}
           scanFailed={scanError !== null}
+          changed={changed}
           onCancel={() => setConfirming(false)}
           onConfirm={install}
         />
@@ -324,7 +479,7 @@ export function InstallPanel({ skill, defaultScope, defaultProjectPath }: { skil
 
 function ConfirmDialog(props: {
   name: string;
-  preview: InstallPreviewHigh;
+  preview: InstallPreviewMore;
   riskLevel: RiskLevel;
   riskFlags: string[];
   siblings: PluginSkill[];
@@ -332,6 +487,8 @@ function ConfirmDialog(props: {
   scan: InstallScan | null;
   /** The file check could not run: installing anyway needs the tick, as for high risk. */
   scanFailed: boolean;
+  /** Asked again because the repo moved after the first check (B6): what changed, shown first. */
+  changed: ChangedSinceScan | null;
   onCancel: () => void;
   onConfirm: (acks: InstallAcks) => void;
 }) {
@@ -340,7 +497,7 @@ function ConfirmDialog(props: {
   // skills, so the extra step is rare.
   const high = props.riskLevel === 'high' || props.siblings.some((s) => s.riskLevel === 'high') || props.preview.highRisk === true || scanIsHigh(props.scan) || props.scanFailed;
   const [checked, setChecked] = useState(false);
-  const overwrite = needsOverwriteCheck(props.preview.existing);
+  const overwrite = existingOf(props.preview).some(needsOverwriteCheck);
   const [overwriteChecked, setOverwriteChecked] = useState(false);
   useEffect(() => {
     // back to the "설치…" button when it goes (removed, not closed: the browser would drop the focus)
@@ -354,6 +511,7 @@ function ConfirmDialog(props: {
   return (
     <dialog ref={ref} className="confirm" onCancel={props.onCancel} aria-labelledby="confirm-title">
       <h3 id="confirm-title">{t('{0} 설치', props.name)}</h3>
+      {props.changed && <ChangedNote changed={props.changed} />}
       <p className="warn-box">
         {t('스킬은 에이전트 권한으로 실행됩니다. 스크립트와 명령이 내 컴퓨터에서 Claude Code와 같은 권한으로 돌아갈 수 있으니, 내용을 확인한 출처만 설치하세요.')}
       </p>
@@ -378,7 +536,7 @@ function ConfirmDialog(props: {
       <SiblingRiskNote skills={props.siblings} />
       <InstallScanView scan={props.scan} compact />
       {props.scanFailed && <p className="warn-box">{t('함께 들어올 파일을 검사하지 못했습니다. 무엇이 설치되는지 앱이 확인하지 못했으니, 저장소를 직접 보고 설치하세요.')}</p>}
-      <OverwriteNote existing={props.preview.existing} />
+      <OverwriteNotes preview={props.preview} />
       {overwrite && (
         <label className="confirm-check">
           <input type="checkbox" checked={overwriteChecked} onChange={(e) => setOverwriteChecked(e.target.checked)} />
@@ -395,8 +553,13 @@ function ConfirmDialog(props: {
         <button type="button" className="ghost" onClick={props.onCancel} autoFocus>
           {t('취소')}
         </button>
-        <button type="button" className="primary" onClick={() => props.onConfirm({ high: high && checked })} disabled={(high && !checked) || (overwrite && !overwriteChecked)}>
-          {props.preview.existing?.same ? t('다시 설치') : t('설치')}
+        <button
+          type="button"
+          className="primary"
+          onClick={() => props.onConfirm({ high: high && checked, overwrite: overwrite && overwriteChecked, scanFailed: props.scanFailed && checked })}
+          disabled={(high && !checked) || (overwrite && !overwriteChecked)}
+        >
+          {props.preview.existing?.same && !overwrite ? t('다시 설치') : t('설치')}
         </button>
       </div>
     </dialog>

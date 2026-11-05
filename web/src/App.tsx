@@ -7,7 +7,9 @@ import { SearchPage, searchUrl } from './pages/SearchPage.tsx';
 import { SettingsPage } from './pages/SettingsPage.tsx';
 import { SkillPage } from './pages/SkillPage.tsx';
 import { skillHref } from './components/ResultCard.tsx';
+import { ActivityIndicator } from './components/ActivityIndicator.tsx';
 import { apiGet } from './api.ts';
+import { useNotices } from './notices.ts';
 import type { Health, OpenedFrom, ResultItem } from './types.ts';
 import { t } from './i18n.ts';
 
@@ -53,6 +55,7 @@ export function App() {
   // Result cards carry the per-search score (R, P); the skill page shows it when opened from a result.
   const [opened, setOpened] = useState<Map<string, ResultItem>>(new Map());
   const [lastQuery, setLastQuery] = useState('');
+  const notices = useNotices();
   // A newer release on the download page (installed app only): said in the menu bar on every screen, not only
   // before the first search (project review 2026-11-02). The server looks every 6 hours; this asks it every 30 min.
   const [update, setUpdate] = useState<Health['update']>(null);
@@ -180,9 +183,17 @@ export function App() {
               ) : (
                 r.label
               )}
+              {/* changes to installed skills since last seen (F7): read on the Installed screen's changes tab */}
+              {r.path === '/installed' && notices.counts.installed > 0 && (
+                <span className="status-chip warn" aria-label={t('변화 알림 {0}건', notices.counts.installed)}>
+                  {notices.counts.installed}
+                </span>
+              )}
             </a>
           ))}
         </nav>
+        {/* background tasks running, or offline; opens the status at the top of the marketplace screen (F22) */}
+        <ActivityIndicator onOpen={() => go('/marketplaces')} />
         {update && (
           // the version's change notes, when they are signed (the server drops unsigned ones)
           <details className="update-badge" role="status">
