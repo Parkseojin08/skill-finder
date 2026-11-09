@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { gzipSync } from 'node:zlib';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { createContext } from '../src/bootstrap.ts';
 import { exportSeed, importSeed, writeSeedFile } from '../src/db/seed.ts';
 import { TreeIndex } from '../src/discovery/tree.ts';
@@ -80,5 +80,20 @@ describe('미리 만든 색인 (2026-11-03)', () => {
     assert.equal(ctx.store.countSkills(), 0);
     src.store.db.exec('UPDATE skills SET risk_rules = 0');
     assert.throws(() => writeSeedFile(dbPath, join(dir, 'old.json.gz')), /옛 위험 규칙/);
+  });
+
+  it('다시 검사할 수 없는 소수(1% 이하)의 옛 규칙 스킬은 빼고 만든다', () => {
+    const { ctx: src, dbPath, dir } = sourceIndex();
+    const db = src.store.db;
+    db.exec("CREATE TEMP TABLE t AS SELECT * FROM skills WHERE id = 'gh:o/pdf:skills/pdf-tables'");
+    for (let i = 0; i < 150; i++) {
+      db.prepare('UPDATE t SET id = ?').run(`gh:o/pdf:skills/copy-${i}`);
+      db.exec('INSERT INTO skills SELECT * FROM t');
+    }
+    db.exec("UPDATE skills SET risk_rules = 0 WHERE id = 'gh:o/pdf:skills/copy-7'");
+    const file = join(dir, 'few-old.json.gz');
+    assert.equal(writeSeedFile(dbPath, file).skills, 150);
+    const seed = JSON.parse(gunzipSync(readFileSync(file)).toString('utf8')) as { skills: Array<{ id: string }> };
+    assert.ok(!seed.skills.some((s) => s.id === 'gh:o/pdf:skills/copy-7'));
   });
 });

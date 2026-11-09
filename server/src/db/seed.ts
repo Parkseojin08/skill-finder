@@ -14,6 +14,8 @@ import { DEFAULT_MARKETPLACES } from '../settings.ts';
 import type { PluginRow, RepoRow, SkillRow, Store } from './store.ts';
 
 const FORMAT = 1;
+/** Rows still checked with older risk rules that a seed may leave out (unreadable sources); more refuses the seed. */
+const OLD_RULES_SHARE = 0.01;
 /** Next to server/ and web/ in a release (the package scripts write it); a checkout has none. */
 export const SEED_PATH = process.env.SKILL_FINDER_SEED_PATH ? resolve(process.env.SKILL_FINDER_SEED_PATH) : join(ROOT_DIR, 'seed-index.json.gz');
 
@@ -57,8 +59,15 @@ export function writeSeedFile(dbPath: string, outPath: string): SeedCounts & { b
     const seed = exportSeed(db);
     db.exec('COMMIT');
     if (seed.plugins.length === 0 || seed.skills.length === 0) throw new Error('색인에 기본 마켓플레이스의 스킬이 없습니다. 앱으로 한 번 동기화한 뒤 만드세요');
-    const old = seed.skills.filter((s) => s.risk_rules != null && s.risk_rules < RISK_RULES_VERSION).length;
-    if (old > 0) throw new Error(`스킬 ${old}개가 옛 위험 규칙으로 검사돼 있습니다. 앱을 실행해 다시 검사가 끝난 뒤 만드세요`);
+    // A few rows the re-check can never read (repo or commit gone: 404) stay at the old rules for good; they are left
+    // out. More than 1% means the re-check has not run since the rules changed (2026-11-09).
+    const isOld = (s: SkillRow) => s.risk_rules != null && s.risk_rules < RISK_RULES_VERSION;
+    const old = seed.skills.filter(isOld).length;
+    if (old > seed.skills.length * OLD_RULES_SHARE) throw new Error(`스킬 ${old}개가 옛 위험 규칙으로 검사돼 있습니다. 앱을 실행해 다시 검사가 끝난 뒤 만드세요`);
+    if (old > 0) {
+      seed.skills = seed.skills.filter((s) => !isOld(s));
+      console.warn(`[seed] 다시 검사할 수 없는 스킬 ${old}개(원본이 사라짐)는 넣지 않습니다`);
+    }
     const gz = gzipSync(JSON.stringify(seed), { level: 9 });
     writeFileSync(outPath, gz);
     return { plugins: seed.plugins.length, skills: seed.skills.length, repos: seed.repos.length, bytes: gz.length };
