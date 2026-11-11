@@ -159,11 +159,11 @@ export function listProjects(store: Store, opts: ListOptions = {}, fresh = false
   cache = { key: home, at: now, value };
   const mine = { key: home, value };
   building = mine;
-  const done = () => {
+  const release = () => {
     if (building === mine) building = null;
   };
-  value.then(done, () => {
-    done();
+  value.then(release, () => {
+    release();
     if (cache?.value === value) cache = null;
   });
   return value;

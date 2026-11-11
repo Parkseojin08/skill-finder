@@ -633,7 +633,7 @@ export async function runSearch(
     }
     // a hidden repo gets no card and is not read (F20)
     if (owners.anyHidden) {
-      for (const k of [...repoInfo.keys()]) {
+      for (const k of repoInfo.keys()) {
         if (!owners.hidden(k)) continue;
         repoInfo.delete(k);
         hiddenRepoCards.add(k.toLowerCase());

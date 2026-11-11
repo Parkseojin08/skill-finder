@@ -59,6 +59,8 @@ export function OwnerPrefMenu({ repo, className = '' }: { repo: string | null; c
   };
 
   return (
+    // the handler only keeps a click inside the menu from reaching the card around it; <details> is operated through its <summary>
+    // oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions
     <details className={`owner-menu ${className}`} ref={ref} onClick={(e) => e.stopPropagation()}>
       <summary className="owner-menu-btn" aria-label={t('{0} 저장소 메뉴', repo)} title={t('저장소 숨기기·제작자 믿기')}>
         <span aria-hidden="true">…</span>
