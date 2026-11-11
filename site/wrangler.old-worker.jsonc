@@ -1,0 +1,11 @@
+// The old landing page Worker (skill-finder.<account>.workers.dev): it keeps serving the same files as the Pages
+// project (wrangler.jsonc) so installs of 0.3.4 and earlier, which look for updates at that address, find the
+// current release and move to the Pages address (DECISIONS D#6a6e). Static assets only, no Worker code.
+// The assets directory is relative to this file, so it is the same ./public the Pages project serves.
+// Deploy, after the Pages one: cd site && npx wrangler@4 deploy --config wrangler.old-worker.jsonc
+// `node scripts/release.mjs deploy` at the repo root runs both and then checks both addresses (docs/release.md).
+{
+  "name": "skill-finder",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "./public" }
+}

@@ -296,6 +296,28 @@ button.linkish.current {
 .app {
   min-height: 100vh;
 }
+/* The first Tab stop on every screen (App.tsx): out of sight until it has the focus, then above the menu bar. */
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 20;
+  padding: 8px 14px;
+  border: 1px solid var(--focus);
+  border-radius: var(--corner-sm);
+  background: var(--bg-elev);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  transform: translateY(-200%);
+}
+.skip-link:focus {
+  transform: none;
+}
+/* the skip link moves the focus to the screen as a whole, which needs no focus ring */
+main:focus {
+  outline: none;
+}
 .topbar {
   position: sticky;
   top: 0;

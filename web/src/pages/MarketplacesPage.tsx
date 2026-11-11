@@ -126,7 +126,8 @@ export function MarketplacesPage() {
             });
           }}
         >
-          <input value={newRepo} onChange={(e) => setNewRepo(e.target.value)} placeholder={t('owner/repo 또는 GitHub URL')} spellCheck={false} />
+          {/* a name of its own: the placeholder goes away with the first letter typed */}
+          <input value={newRepo} onChange={(e) => setNewRepo(e.target.value)} placeholder={t('owner/repo 또는 GitHub URL')} aria-label={t('마켓플레이스 저장소')} spellCheck={false} />
           <select value={newMode} onChange={(e) => setNewMode(e.target.value as 'eager' | 'lazy')} aria-label={t('색인 방식')}>
             <option value="lazy">{t('지연 색인')}</option>
             <option value="eager">{t('즉시 색인')}</option>

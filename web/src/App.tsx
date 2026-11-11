@@ -144,6 +144,20 @@ export function App() {
 
   return (
     <div className="app">
+      {/* the first stop of the Tab key on every screen: past the menu, to the screen itself (WCAG 2.4.1) */}
+      <a
+        className="skip-link"
+        href="#main"
+        onClick={(e) => {
+          // by script: following #main would put the fragment into the address the screens keep their state in,
+          // and the browser would scroll the screen's title under the menu bar, which stays at the top
+          e.preventDefault();
+          document.getElementById('main')?.focus({ preventScroll: true });
+          window.scrollTo(0, 0);
+        }}
+      >
+        {t('본문으로 건너뛰기')}
+      </a>
       <header className="topbar">
         <a
           className="brand"
@@ -213,7 +227,7 @@ export function App() {
           </details>
         )}
       </header>
-      <main>
+      <main id="main" tabIndex={-1}>
         {/* Search stays mounted so results survive opening a skill or visiting other pages. */}
         <div hidden={route.path !== '/'}>
           <SearchPage onOpen={openSkill} onQuery={setLastQuery} />

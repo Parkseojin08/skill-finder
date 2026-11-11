@@ -1,0 +1,7 @@
+{
+  // Type check of the E2E server launcher: `npx tsc --noEmit -p e2e/server`.
+  // It runs in Node as the server does (types stripped, no build) and imports the server's own modules to build
+  // the fixed index, so it is checked with the server's settings.
+  "extends": "../../server/tsconfig.json",
+  "include": ["*.ts"]
+}

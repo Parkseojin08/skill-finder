@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "ignoreExportsUsedInFile": true,
+  "ignoreBinaries": ["reg", "tsc"],
+  "workspaces": {
+    ".": {
+      "entry": ["bin/skill-finder.mjs", "scripts/*.mjs", "e2e/**/*.ts"],
+      "project": ["bin/**/*.mjs", "scripts/**/*.mjs", "e2e/**/*.ts"]
+    },
+    "server": {
+      "entry": ["scripts/**/*.ts", "test/**/*.test.ts"],
+      "project": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"],
+      "ignoreDependencies": ["skills"]
+    },
+    "web": {
+      "entry": ["src/game/ArasakaGame.tsx", "test/**/*.test.ts"],
+      "project": ["src/**/*.{ts,tsx,css}", "test/**/*.ts"],
+      "ignore": ["src/components/ui/**"]
+    }
+  }
+}

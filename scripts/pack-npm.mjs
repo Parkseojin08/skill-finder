@@ -33,7 +33,9 @@ npm(['run', 'build']);
 step('서버를 JavaScript로 컴파일');
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
-run(process.execPath, [join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', join(ROOT, 'server', 'tsconfig.build.json'), '--outDir', join(OUT, 'server', 'src')]);
+// --rootDir: TypeScript 7 no longer takes the common folder of the inputs (server/src) as the root of the output; it
+// uses the tsconfig's folder (server/), stops with TS5011 and writes to <outDir>/src/… unless the root is given
+run(process.execPath, [join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', join(ROOT, 'server', 'tsconfig.build.json'), '--rootDir', join(ROOT, 'server', 'src'), '--outDir', join(OUT, 'server', 'src')]);
 
 step('파일 모으기');
 cpSync(join(ROOT, 'web', 'dist'), join(OUT, 'web', 'dist'), { recursive: true });

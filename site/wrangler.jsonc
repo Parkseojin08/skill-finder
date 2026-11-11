@@ -2,6 +2,7 @@
 // https://seojin-skill-finder.pages.dev (user decision 2026-11-04: the workers.dev address carried the account name).
 // The download zip in ./public/download is produced by `npm run package` at the repo root.
 // Deploy: cd site && npx wrangler@4 pages deploy
+// The old workers.dev address serves these same files from wrangler.old-worker.jsonc (deployed separately).
 {
   "name": "seojin-skill-finder",
   "compatibility_date": "2026-10-01",

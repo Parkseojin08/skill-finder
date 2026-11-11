@@ -21,3 +21,8 @@ site/.wrangler/
 
 # measurement recordings (server/scripts/bench, several MB each)
 server/scripts/bench/recordings/
+
+# Playwright E2E (npm run e2e): traces and screenshots of failed tests, the HTML report
+test-results/
+playwright-report/
+blob-report/

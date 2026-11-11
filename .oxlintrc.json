@@ -1,0 +1,129 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  // react and jsx-a11y only find something in web/ (the only JSX); the others apply everywhere.
+  // No type-aware rules: they need oxlint-tsgolint, which is not installed.
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "import", "promise", "react", "jsx-a11y"],
+  "categories": {
+    // a finding here fails `npm run lint`
+    "correctness": "error",
+    // shown, but never fails the run
+    "suspicious": "warn"
+  },
+  "rules": {
+    // ── correctness: adjusted ──────────────────────────────────────────────────────────────────────────────
+    // `const { dev, ...entry } = x` leaves keys out on purpose; a catch (e) that ignores e is how site/ is written
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_", "ignoreRestSiblings": true, "caughtErrors": "none" }],
+    // `ok ? resolve() : reject(err)` as a statement is fine
+    "no-unused-expressions": ["error", { "allowTernary": true }],
+    // a scrollable <pre> (the log viewer) takes tabIndex so the keyboard can scroll it
+    "jsx-a11y/no-noninteractive-tabindex": ["error", { "tags": ["pre"], "roles": ["tabpanel"] }],
+    // the rule's own list plus td, th and option (not controls; a datalist option needs no text) and a (an empty link
+    // is anchor-has-content's finding; this rule also reports the `render={<a href=… />}` of a Base UI button)
+    "jsx-a11y/control-has-associated-label": ["error", { "ignoreElements": ["audio", "canvas", "embed", "input", "textarea", "tr", "video", "td", "th", "option", "a"] }],
+    // worth a look, not wrong: left as warnings
+    "react-hooks/exhaustive-deps": "warn",
+    "react/purity": "warn",
+    "react/refs": "warn",
+    "unicorn/no-useless-fallback-in-spread": "warn",
+    "unicorn/no-useless-length-check": "warn",
+    "unicorn/prefer-set-size": "warn",
+
+    // ── correctness: off ───────────────────────────────────────────────────────────────────────────────────
+    // the sanitizers match control characters on purpose (ANSI escapes in text from outside)
+    "no-control-regex": "off",
+    // `\-` and `\/` inside the validation patterns are harmless and clearer than bare ones
+    "no-useless-escape": "off",
+    // `new Array(n)` is used for "n empty slots", always followed by fill or by index writes
+    "unicorn/no-new-array": "off",
+    // state reset before a request and state kept in step with a store: the effects set state on purpose
+    "react/set-state-in-effect": "off",
+    // role="status" on a div is the live-region pattern used throughout; <output> is not a replacement
+    "jsx-a11y/prefer-tag-over-role": "off",
+    // the search box takes focus on load on purpose
+    "jsx-a11y/no-autofocus": "off",
+
+    // ── suspicious: off (style, or not how this code works) ────────────────────────────────────────────────
+    // the automatic JSX runtime ("jsx": "react-jsx") needs no React in scope
+    "react/react-in-jsx-scope": "off",
+    // Express 5 passes a rejected async handler to the error handler by itself
+    "oxc/no-async-endpoint-handlers": "off",
+    // `import './x.css'` is how the styles are loaded
+    "import/no-unassigned-import": "off",
+    // flags loops whose condition changes in a callback or another task (`while (!exited)`)
+    "no-unmodified-loop-condition": "off",
+    // the same findings as exhaustive-deps, plus the "extra" dependencies that re-run an effect on purpose
+    "react/exhaustive-effect-dependencies": "off",
+    "unicorn/no-array-sort": "off",
+    "unicorn/no-array-reverse": "off",
+    "unicorn/consistent-function-scoping": "off",
+    "unicorn/prefer-add-event-listener": "off",
+    "no-shadow": "off",
+    "no-underscore-dangle": "off",
+    "promise/always-return": "off",
+    "promise/no-promise-in-callback": "off"
+  },
+  "overrides": [
+    {
+      // Playwright fixtures take `async ({}, use) => …`
+      "files": ["e2e/**", "playwright.config.ts"],
+      "rules": {
+        "no-empty-pattern": ["error", { "allowObjectPatternsAsParameters": true }]
+      }
+    },
+    {
+      // `method` is a parameter there: the rule reads it as GET and reports the body
+      "files": ["bin/skill-finder.mjs"],
+      "rules": { "unicorn/no-invalid-fetch-options": "off" }
+    },
+    {
+      // a `done` in `.then(done, …)` is a local function, not a Node-style callback
+      "files": ["site/public/**"],
+      "rules": { "promise/no-callback-in-promise": "off" }
+    },
+    {
+      // `ok ? resolve() : reject()` is counted as resolving twice
+      "files": ["server/test/popular.test.ts"],
+      "rules": { "promise/no-multiple-resolved": "off" }
+    },
+    {
+      // the ARIA combobox: ul/li carry listbox/option, the keyboard is handled on the input
+      "files": ["web/src/components/search/SuggestInput.tsx"],
+      "rules": {
+        "jsx-a11y/no-noninteractive-element-to-interactive-role": "off",
+        "jsx-a11y/click-events-have-key-events": "off"
+      }
+    },
+    {
+      // the tab list moves focus between its tabs; it is not a tab stop itself
+      "files": ["web/src/pages/SkillPage.tsx"],
+      "rules": { "jsx-a11y/interactive-supports-focus": "off" }
+    },
+    {
+      // the link renderer is built inside useMemo, so it is not a new component on every render
+      "files": ["web/src/components/Markdown.tsx"],
+      "rules": { "react/no-unstable-nested-components": "off" }
+    },
+    {
+      // the game's headings start with "//" as text
+      "files": ["web/src/game/**"],
+      "rules": { "react/jsx-no-comment-textnodes": "off" }
+    }
+  ],
+  "ignorePatterns": [
+    "node_modules",
+    "web/dist",
+    "release",
+    "data",
+    ".claude",
+    "test-results",
+    "playwright-report",
+    "site/public/vendor",
+    "site/public/download",
+    "server/scripts/bench/recordings",
+    "game-api/.wrangler",
+    // written by `wrangler types`
+    "game-api/worker-configuration.d.ts",
+    // written by the shadcn CLI and kept as it writes them
+    "web/src/components/ui"
+  ]
+}

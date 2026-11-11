@@ -1,0 +1,110 @@
+# CI for Skill Finder (tech review 2026-11-10): the type checks, the tests and the web build on every supported
+# Node version and platform, the linter, and the browser tests. Until this file the tests ran on one PC only
+# (Windows, Node 24), and only when a release was packaged.
+#
+# Actions are pinned to a commit (the comment names its release); only GitHub's own actions are used.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# a newer push to the same branch or pull request replaces the run in progress
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        # 22.20.0 is the oldest version package.json's engines allows; 24 and 26 are the LTS lines
+        node: ['22.20.0', '24', '26']
+        include:
+          - os: macos-latest
+            node: '24'
+    steps:
+      # the files are stored with LF; Windows runners would check them out with CRLF, which changes what tests that
+      # hash or split file contents see
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # One test file at a time: several tests hold a 512KB input to a wall-clock limit, and files running in
+      # parallel on a runner with few cores push them over it.
+      - name: Server tests
+        working-directory: server
+        run: node --disable-warning=ExperimentalWarning --test --test-concurrency=1 "test/**/*.test.ts"
+      - name: Web tests
+        working-directory: web
+        run: node --disable-warning=ExperimentalWarning --test --test-concurrency=1 "test/**/*.test.ts"
+      - run: npm run build
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      # unused files, exports and dependencies: a report for now, it does not fail the run
+      - name: knip (report only)
+        run: npm run knip
+        continue-on-error: true
+
+  e2e:
+    name: e2e (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # the browser already on the runner is used; none is downloaded (playwright.config.ts reads PW_CHANNEL)
+          - os: windows-latest
+            channel: msedge
+          - os: ubuntu-latest
+            channel: chrome
+    env:
+      PW_CHANNEL: ${{ matrix.channel }}
+    steps:
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      # the server serves web/dist; the tests start the app themselves, with temporary folders and no network
+      - run: npm run build
+      - run: npm run e2e
+      - name: Keep the report of a failed run
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-${{ matrix.os }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
