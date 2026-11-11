@@ -11,10 +11,12 @@ import { SkillMdView } from '../components/SkillMdView.tsx';
 import { PermissionTable, RiskExplainList } from '../components/RiskEvidence.tsx';
 import type { DetailSecurity, Evidence } from '../lib/security.ts';
 import { SimilarSkills } from '../components/SimilarSkills.tsx';
+import { SourceCard } from '../components/SourceCard.tsx';
 import { Translated } from '../components/Translated.tsx';
 import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { HelpTip } from '../components/HelpTip.tsx';
 import { FavoriteButton } from '../components/FavoriteButton.tsx';
+import { OwnerPrefMenu } from '../components/search/OwnerPrefMenu.tsx';
 import { formatAgo, formatBytes, formatCount, HELP, LOW_RISK_NOTE, METHOD, QUALITY, RISK_RANK } from '../labels.ts';
 import type { Breakdown, OpenedFrom, ResultItem, SettingsResponse, SkillDetail } from '../types.ts';
 import { t } from '../i18n.ts';
@@ -284,6 +286,7 @@ export function SkillPage({
               )}
               <ShareMenu detail={detail} />
               <FavoriteButton id={detail.id} name={detail.name} className="stat" />
+              <OwnerPrefMenu repo={detail.repo} />
             </div>
           </section>
 
@@ -351,6 +354,10 @@ export function SkillPage({
             {detail.plugin?.strictConflict && <p className="warn-box">{t('로드 실패 가능: strict:false 항목과 plugin.json이 모두 구성요소를 선언합니다.')}</p>}
             {security?.permissions && <PermissionTable table={security.permissions} plugin={!!detail.plugin} onOpen={openEvidence} />}
           </section>
+
+          {/* where it comes from (F5) and its near-copies (B8), after the risk it bears on */}
+          {/* keyed by the skill: an open comparison belongs to the skill it was opened on */}
+          <SourceCard key={detail.id} skillId={detail.id} onOpenSkill={onOpenSkill} />
 
           {/* after the risk: "then what else does this?" (F4) */}
           <SimilarSkills skillId={detail.id} projectPath={projectPath} onOpenSkill={onOpenSkill} />

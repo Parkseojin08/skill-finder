@@ -10,6 +10,7 @@ import { RiskBadge, RiskFlags, RiskSummary } from './Badges.tsx';
 import { FolderInput, rememberProject } from './FolderInput.tsx';
 import { serverText, t } from '../i18n.ts';
 import { tj } from '../i18nNodes.tsx';
+import { OverwriteKeepNote } from './Quarantine.tsx';
 import { CLAUDE_ONLY_FLAGS, InstallRefused, saveAgents, savedAgents, streamInstall, type AgentId, type AgentTarget, type ChangedSinceScan, type InstallPreviewMore } from '../lib/security.ts';
 
 type LogLine = { line: string; stream: string };
@@ -44,12 +45,15 @@ export function needsOverwriteCheck(existing: ExistingSkill | null | undefined):
   return !!existing && existing.same !== true;
 }
 
+/** Where the install goes, for the note on the copy kept of a replaced folder (F14). */
+export type InstallWhere = { scope: InstallScope; projectPath: string };
+
 /** All of a preview's same-name folders, one note each (other agents' folders too, F9 stage 2). */
-export function OverwriteNotes({ preview }: { preview: InstallPreviewMore | null | undefined }) {
+export function OverwriteNotes({ preview, where }: { preview: InstallPreviewMore | null | undefined; where?: InstallWhere }) {
   return (
     <>
       {existingOf(preview).map((e) => (
-        <OverwriteNote key={e.path} existing={e} />
+        <OverwriteNote key={e.path} existing={e} where={where} />
       ))}
     </>
   );
@@ -113,19 +117,31 @@ function AgentChoice({ targets, chosen, onChange, disabled }: { targets: AgentTa
   );
 }
 
-export function OverwriteNote({ existing }: { existing: ExistingSkill | null | undefined }) {
+export function OverwriteNote({ existing, where }: { existing: ExistingSkill | null | undefined; where?: InstallWhere }) {
   if (!existing) return null;
+  // the copy kept before the folder is replaced (F14): only a skills CLI install replaces one (user or project scope).
+  // The same skill with the same content again is not copied (routes/install.ts), so that case says nothing.
+  const keep =
+    where && where.scope !== 'local' && !(existing.same && existing.change === 'same') ? (
+      <OverwriteKeepNote scope={where.scope} projectPath={where.scope === 'user' ? undefined : where.projectPath} path={existing.path} />
+    ) : null;
   if (existing.same) {
     return (
-      <p className="note">
-        {tj('이미 설치되어 있습니다{0}. 다시 설치하면 {1}를 새 파일로 바꿉니다. 그 폴더에서 고친 내용은 사라집니다.', existing.change === 'changed' ? t('(색인의 내용과 다름)') : '', <code>{existing.path}</code>)}
-      </p>
+      <>
+        <p className="note">
+          {tj('이미 설치되어 있습니다{0}. 다시 설치하면 {1}를 새 파일로 바꿉니다. 그 폴더에서 고친 내용은 사라집니다.', existing.change === 'changed' ? t('(색인의 내용과 다름)') : '', <code>{existing.path}</code>)}
+        </p>
+        {keep}
+      </>
     );
   }
   return (
-    <p className="warn-box">
-      {tj('같은 이름의 {0}{1}이 이미 {2}에 있습니다. 설치하면 그 폴더를 덮어씁니다.', existing.same === false ? t('다른 스킬') : t('출처를 알 수 없는 스킬'), existing.name ? `(${existing.name})` : '', <code>{existing.path}</code>)}
-    </p>
+    <>
+      <p className="warn-box">
+        {tj('같은 이름의 {0}{1}이 이미 {2}에 있습니다. 설치하면 그 폴더를 덮어씁니다.', existing.same === false ? t('다른 스킬') : t('출처를 알 수 없는 스킬'), existing.name ? `(${existing.name})` : '', <code>{existing.path}</code>)}
+      </p>
+      {keep}
+    </>
   );
 }
 
@@ -427,7 +443,7 @@ export function InstallPanel({
             {current.createsLockFile && <>{' '}{tj('· 프로젝트 루트에 {0}이 생깁니다', <code>skills-lock.json</code>)}</>}
           </div>
           {version && <div className="muted small">{version}</div>}
-          <OverwriteNotes preview={current} />
+          <OverwriteNotes preview={current} where={{ scope, projectPath }} />
         </div>
       )}
       <InstallScanView scan={scan} error={scanError} />
@@ -469,6 +485,7 @@ export function InstallPanel({
           scan={scan}
           scanFailed={scanError !== null}
           changed={changed}
+          where={{ scope, projectPath }}
           onCancel={() => setConfirming(false)}
           onConfirm={install}
         />
@@ -489,6 +506,8 @@ function ConfirmDialog(props: {
   scanFailed: boolean;
   /** Asked again because the repo moved after the first check (B6): what changed, shown first. */
   changed: ChangedSinceScan | null;
+  /** Where it installs, for the note on the copy kept of a replaced folder (F14). */
+  where: InstallWhere;
   onCancel: () => void;
   onConfirm: (acks: InstallAcks) => void;
 }) {
@@ -536,7 +555,7 @@ function ConfirmDialog(props: {
       <SiblingRiskNote skills={props.siblings} />
       <InstallScanView scan={props.scan} compact />
       {props.scanFailed && <p className="warn-box">{t('함께 들어올 파일을 검사하지 못했습니다. 무엇이 설치되는지 앱이 확인하지 못했으니, 저장소를 직접 보고 설치하세요.')}</p>}
-      <OverwriteNotes preview={props.preview} />
+      <OverwriteNotes preview={props.preview} where={props.where} />
       {overwrite && (
         <label className="confirm-check">
           <input type="checkbox" checked={overwriteChecked} onChange={(e) => setOverwriteChecked(e.target.checked)} />

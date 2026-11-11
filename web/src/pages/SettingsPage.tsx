@@ -4,11 +4,17 @@ import { searchLogChanged } from './SearchPage.tsx';
 import { ConfirmDialog } from '../components/ConfirmDialog.tsx';
 import { DiagnosticsButton } from '../components/Diagnostics.tsx';
 import { FolderInput } from '../components/FolderInput.tsx';
+import { HiddenReposSettings } from '../components/search/HiddenReposSettings.tsx';
 import { LogViewer } from '../components/LogViewer.tsx';
 import { TokenCheck, type TokenCheckHandle } from '../components/TokenCheck.tsx';
 import type { Settings, SettingsResponse } from '../types.ts';
 import { LANG, LANGS, setLang, t, type Lang } from '../i18n.ts';
 import { tj } from '../i18nNodes.tsx';
+import { formatAgo } from '../labels.ts';
+import { fetchUsage, type UsageResponse } from '../components/UsageColumns.tsx';
+
+/** The setting F11 added (server settings.ts); types.ts's Settings does not name it yet. */
+type WithUsage = Settings & { usageScan?: boolean };
 
 export function SettingsPage() {
   const [data, setData] = useState<SettingsResponse | null>(null);
@@ -17,6 +23,12 @@ export function SettingsPage() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const tokenCheck = useRef<TokenCheckHandle>(null);
+  // F11: turning transcript reading on or off asks first (what is read and kept / whether to empty the counts)
+  const [usageAsk, setUsageAsk] = useState<'on' | 'off' | null>(null);
+  const [usageClear, setUsageClear] = useState(true);
+  const [usageInfo, setUsageInfo] = useState<UsageResponse | null>(null);
+  const refreshUsage = () => void fetchUsage('').then(setUsageInfo);
+  useEffect(refreshUsage, []);
 
   /** Changes typed but not sent yet; kept over a save's answer so typing during a save is not lost. */
   const pending = useRef<Partial<Settings>>({});
@@ -158,6 +170,8 @@ export function SettingsPage() {
         <p className="muted small">{t('이 수보다 스타가 적거나 스타 수를 알 수 없는 저장소의 스킬은 검색 결과에서 숨깁니다. Anthropic 공식·파트너 스킬은 이 기준과 상관없이 보입니다. 0이면 제한하지 않습니다.')}</p>
       </section>
 
+      <HiddenReposSettings />
+
       <section>
         <h2>{t('설치 기본값')}</h2>
         <div className="grid2">
@@ -227,6 +241,79 @@ export function SettingsPage() {
             }}
           >
             {t('저장된 검색 기록 {0}개를 모두 지웁니다. 되돌릴 수 없습니다.', data.searchLogCount.toLocaleString())}
+          </ConfirmDialog>
+        )}
+      </section>
+
+      <section>
+        <h2>{t('스킬 사용 기록')}</h2>
+        <label className="chip">
+          <input
+            type="checkbox"
+            checked={(draft as WithUsage).usageScan === true}
+            onChange={(e) => {
+              setUsageClear(true);
+              setUsageAsk(e.target.checked ? 'on' : 'off');
+            }}
+          />
+          {t('대화 기록에서 스킬 사용 횟수 읽기')}
+        </label>
+        <p className="muted small">
+          {t('설치됨 화면에 스킬마다 마지막으로 쓴 날과 최근 30일 사용 횟수를 보여 줍니다. 기본은 꺼짐이고, 켜면 이 PC의 Claude Code 대화 기록을 읽습니다.')}
+        </p>
+        {(draft as WithUsage).usageScan === true && usageInfo?.enabled && (
+          <p className="muted small">
+            {usageInfo.scannedAt ? t('읽은 기록 파일 {0}개 · 마지막으로 읽음 {1}', usageInfo.files.toLocaleString(), formatAgo(usageInfo.scannedAt)) : t('아직 읽지 않았습니다. 곧 백그라운드에서 읽습니다.')}
+          </p>
+        )}
+        {usageAsk === 'on' && (
+          <ConfirmDialog
+            title={t('대화 기록에서 스킬 사용 횟수 읽기')}
+            confirmLabel={t('켜기')}
+            onCancel={() => setUsageAsk(null)}
+            onConfirm={() => {
+              setUsageAsk(null);
+              void save({ settings: { usageScan: true } }, t('저장했습니다')).then((ok) => {
+                if (!ok) return;
+                // the first read now rather than at the next hourly run; the task may not be there yet
+                void apiSend('POST', '/tasks/usage-scan/run').catch(() => {});
+                // at once ("아직 읽지 않았습니다" shows right away), then again when the first read has had time
+                refreshUsage();
+                setTimeout(refreshUsage, 5000);
+              });
+            }}
+          >
+            <p>{t('이 PC의 Claude Code 대화 기록(~/.claude/projects 아래 *.jsonl, 하위 에이전트 기록 포함)을 읽어 스킬을 쓴 때를 셉니다.')}</p>
+            <p>{t('저장하는 것은 스킬 이름, 날짜, 프로젝트 폴더, 횟수뿐입니다. 대화 본문과 명령 인자는 저장하지 않습니다.')}</p>
+            <p>{t('읽은 내용은 이 PC 밖으로 보내지 않습니다.')}</p>
+            <p className="muted small">{t('처음에는 기록 전체를 읽어 시간이 걸릴 수 있고, 그 뒤로는 1시간마다 새로 생긴 부분만 이어 읽습니다. 검색하는 동안은 쉽니다.')}</p>
+          </ConfirmDialog>
+        )}
+        {usageAsk === 'off' && (
+          <ConfirmDialog
+            title={t('사용 횟수 읽기 끄기')}
+            confirmLabel={t('끄기')}
+            onCancel={() => setUsageAsk(null)}
+            onConfirm={() => {
+              setUsageAsk(null);
+              const clear = usageClear;
+              void save({ settings: { usageScan: false } }, t('저장했습니다')).then(async (ok) => {
+                if (!ok || !clear) return refreshUsage();
+                try {
+                  await apiSend('DELETE', '/usage');
+                  setMsg({ ok: true, text: t('사용 횟수 읽기를 끄고 저장된 기록을 지웠습니다') });
+                } catch (e) {
+                  setMsg({ ok: false, text: String((e as Error).message ?? e) });
+                }
+                refreshUsage();
+              });
+            }}
+          >
+            <p>{t('더 이상 대화 기록을 읽지 않습니다.')}</p>
+            <label className="chip">
+              <input type="checkbox" checked={usageClear} onChange={(e) => setUsageClear(e.target.checked)} />
+              {t('저장된 사용 횟수도 지우기')}
+            </label>
           </ConfirmDialog>
         )}
       </section>

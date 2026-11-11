@@ -4,7 +4,11 @@ import { extractSkillMeta, parseAllowedTools } from '../analyze/frontmatter.ts';
 import { permissionTable, type SiblingSkill } from '../analyze/permissions.ts';
 import { riskEvidence, RISK_RULES_VERSION, type FlagEvidence, type RiskFlag, type SkillRiskInput } from '../analyze/risk.ts';
 import type { AppContext } from '../context.ts';
-import { recheckRisk, type StoredFiles } from '../indexer.ts';
+import { recheckRisk, skillMdHash, type StoredFiles } from '../indexer.ts';
+import { minhashBytes, skillMinhash } from '../dedupe/minhash.ts';
+import { setSkillMinhash } from '../dedupe/rows.ts';
+import { sourceCard } from '../dedupe/sourceCard.ts';
+import { unifiedDiff } from '../watch/diff.ts';
 import { installIsHighRisk } from '../install/acks.ts';
 import { runInstallScan } from '../install/record.ts';
 import { existingAgentFolders, installTargets } from '../install/targets.ts';
@@ -105,6 +109,10 @@ export function skillsRouter(ctx: AppContext): Router {
               risk = { json: next.risk_json, level: next.risk_level, rules: RISK_RULES_VERSION };
             }
           }
+          // B8: a row indexed before signatures gets one from the file read here (only the same text: the hash)
+          if (skill.minhash == null && !res2.truncated && skill.skill_md_sha256 && skillMdHash(res2.text) === skill.skill_md_sha256) {
+            setSkillMinhash(store, skill.id, skill.skill_md_sha256, minhashBytes(skillMinhash(res2.text)));
+          }
         }
       } catch (err) {
         skillMdError = `SKILL.md를 가져오지 못했습니다 (${String((err as Error).message ?? err).slice(0, 100)})`;
@@ -199,6 +207,41 @@ export function skillsRouter(ctx: AppContext): Router {
           }
         : null,
       install: plan,
+    });
+  });
+
+  // The page's "출처" card (F5) and near-copy group (B8): from the index only, no GitHub call.
+  r.get('/skills/:id/source', (req, res) => {
+    const skill = store.getSkill(req.params.id);
+    if (!skill) {
+      res.status(404).json({ error: '스킬을 찾을 수 없습니다' });
+      return;
+    }
+    res.json(sourceCard(store, skill));
+  });
+
+  // Line differences between another indexed skill's SKILL.md (−) and this one's (+): "공식 스킬과 다른 내용" (F5).
+  // Both are read at the commits the index holds; only indexed skills, so no address comes from the request.
+  r.get('/skills/:id/compare', async (req, res) => {
+    const skill = store.getSkill(req.params.id);
+    const other = typeof req.query.with === 'string' ? store.getSkill(req.query.with) : undefined;
+    if (!skill || !other || other.id === skill.id) {
+      res.status(404).json({ error: '스킬을 찾을 수 없습니다' });
+      return;
+    }
+    const read = async (s: typeof skill) => {
+      if (!s.repo || !s.ref || s.dir_path == null) return null;
+      const out = await github.getRawText(s.repo, s.ref, s.dir_path ? `${s.dir_path}/SKILL.md` : 'SKILL.md', MAX_FILE_BYTES).catch(() => null);
+      return out?.text == null ? null : sanitizeText(out.text);
+    };
+    const [a, b] = await Promise.all([read(other), read(skill)]);
+    if (a == null || b == null) {
+      res.status(502).json({ error: 'SKILL.md를 가져오지 못했습니다' });
+      return;
+    }
+    res.json({
+      other: { id: other.id, name: other.name, repo: other.repo, ref: other.ref },
+      diff: unifiedDiff(a, b, { labelA: `${other.repo}/${other.dir_path ?? ''}`, labelB: `${skill.repo}/${skill.dir_path ?? ''}`, maxLines: 2000 }),
     });
   });
 

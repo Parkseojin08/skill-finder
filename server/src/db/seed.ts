@@ -20,7 +20,14 @@ const OLD_RULES_SHARE = 0.01;
 export const SEED_PATH = process.env.SKILL_FINDER_SEED_PATH ? resolve(process.env.SKILL_FINDER_SEED_PATH) : join(ROOT_DIR, 'seed-index.json.gz');
 
 type SeedMarketplace = { name: string; repo: string; commit_sha: string; etag: string | null; plugin_count: number | null };
-export type Seed = { format: number; createdAt: string; marketplaces: SeedMarketplace[]; plugins: PluginRow[]; skills: SkillRow[]; repos: RepoRow[] };
+/** A skill row in the seed: its MinHash signature (B8, a BLOB) as base64 text, since JSON has no bytes. */
+export type SeedSkill = Omit<SkillRow, 'minhash'> & { minhash?: string | null };
+export type Seed = { format: number; createdAt: string; marketplaces: SeedMarketplace[]; plugins: PluginRow[]; skills: SeedSkill[]; repos: RepoRow[] };
+
+/** BLOB → base64 for the JSON file (an empty blob, "worked out, none", stays empty); null stays null. */
+const toBase64 = (b: unknown): string | null => (b instanceof Uint8Array ? Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString('base64') : null);
+/** base64 back to bytes; anything else (an older seed without it, a stray value) is null. */
+const fromBase64 = (s: unknown): Uint8Array | null => (typeof s === 'string' && /^[A-Za-z0-9+/]*={0,2}$/.test(s) ? new Uint8Array(Buffer.from(s, 'base64')) : null);
 export type SeedCounts = { plugins: number; skills: number; repos: number };
 
 /** Plugin errors kept in the seed: the lasting verdicts the app shows. Others are retried anyway and may name local paths. */
@@ -35,7 +42,9 @@ export function exportSeed(db: DatabaseSync, now = new Date()): Seed {
   const names = JSON.stringify(marketplaces.map((m) => m.name));
   const ofSeed = 'SELECT id FROM plugins WHERE marketplace IN (SELECT value FROM json_each(?))';
   const plugins = all<PluginRow>(`SELECT * FROM plugins WHERE id IN (${ofSeed}) ORDER BY id`, names).map((p) => ({ ...p, error: lastingError(p.error) }));
-  const skills = all<SkillRow>(`SELECT * FROM skills WHERE origin = 'plugin' AND plugin_id IN (${ofSeed}) ORDER BY id`, names);
+  const skills = all<SkillRow>(`SELECT * FROM skills WHERE origin = 'plugin' AND plugin_id IN (${ofSeed}) ORDER BY id`, names).map(
+    (s): SeedSkill => ({ ...s, minhash: toBase64(s.minhash) }),
+  );
   const repos = all<RepoRow>(
     `SELECT * FROM repos WHERE lower(full_name) IN (
        SELECT lower(repo) FROM plugins WHERE id IN (${ofSeed}) AND repo IS NOT NULL
@@ -61,10 +70,14 @@ export function writeSeedFile(dbPath: string, outPath: string): SeedCounts & { b
     if (seed.plugins.length === 0 || seed.skills.length === 0) throw new Error('색인에 기본 마켓플레이스의 스킬이 없습니다. 앱으로 한 번 동기화한 뒤 만드세요');
     // A few rows the re-check can never read (repo or commit gone: 404) stay at the old rules for good; they are left
     // out. More than 1% means the re-check has not run since the rules changed (2026-11-09).
-    const isOld = (s: SkillRow) => s.risk_rules != null && s.risk_rules < RISK_RULES_VERSION;
+    const isOld = (s: SeedSkill) => s.risk_rules != null && s.risk_rules < RISK_RULES_VERSION;
     const old = seed.skills.filter(isOld).length;
     if (old > seed.skills.length * OLD_RULES_SHARE) throw new Error(`스킬 ${old}개가 옛 위험 규칙으로 검사돼 있습니다. 앱을 실행해 다시 검사가 끝난 뒤 만드세요`);
     if (old > 0) {
+      // their plugins must not look unchanged to the first sync (B9): with the folder's fingerprint kept, a plugin
+      // whose skills were left out here would be passed over as "same folder" and never get them (review 2026-11-10)
+      const cut = new Set(seed.skills.filter(isOld).map((s) => s.plugin_id));
+      seed.plugins = seed.plugins.map((p) => (cut.has(p.id) ? { ...p, tree_fingerprint: null } : p));
       seed.skills = seed.skills.filter((s) => !isOld(s));
       console.warn(`[seed] 다시 검사할 수 없는 스킬 ${old}개(원본이 사라짐)는 넣지 않습니다`);
     }
@@ -92,14 +105,27 @@ export function importSeed(store: Store, path: string): SeedCounts | null {
   const skills = seed.skills.filter((s) => s.plugin_id && plugins.has(s.plugin_id));
   // never later than the counts themselves (the building PC refreshes them every 6 hours)
   const madeAt = seed.createdAt;
+  // the stage-3 columns the store's upserts leave alone (B8 signature and group, B9 blob and fingerprint, F5 source)
+  const skillExtras = store.db.prepare('UPDATE skills SET minhash = ?, cluster_id = ?, skill_md_blob = ? WHERE id = ?');
+  const pluginExtras = store.db.prepare('UPDATE plugins SET tree_fingerprint = ? WHERE id = ?');
+  const repoExtras = store.db.prepare('UPDATE repos SET created_at = ?, owner_type = ?, parent = ?, gone_at = ? WHERE full_name = ?');
+  const str = (v: unknown) => (typeof v === 'string' ? v : null);
   store.transaction(() => {
     for (const m of marketplaces) store.updateMarketplaceSync(m.name, { etag: m.etag, plugin_count: m.plugin_count ?? undefined, commit_sha: m.commit_sha });
     for (const p of plugins.values()) {
       store.upsertPlugin(p);
       if (p.skills_indexed_at) store.markPluginIndexed(p.id, p.skills_indexed_sha, p.signals_json ? JSON.parse(p.signals_json) : null, p.error);
+      // only a plugin read in full carries one (B9): the first sync then skips the unchanged ones
+      pluginExtras.run(p.skills_indexed_sha && !p.error ? str(p.tree_fingerprint) : null, p.id);
     }
-    for (const s of skills) store.upsertSkill(s, pluginFtsText(plugins.get(s.plugin_id!)!));
-    for (const r of seed.repos) store.upsertRepo({ ...r, fetched_at: r.fetched_at && r.fetched_at < madeAt ? r.fetched_at : madeAt });
+    for (const { minhash, ...s } of skills) {
+      store.upsertSkill(s, pluginFtsText(plugins.get(s.plugin_id!)!));
+      skillExtras.run(fromBase64(minhash), str(s.cluster_id), str(s.skill_md_blob), s.id);
+    }
+    for (const r of seed.repos) {
+      store.upsertRepo({ ...r, fetched_at: r.fetched_at && r.fetched_at < madeAt ? r.fetched_at : madeAt });
+      repoExtras.run(str(r.created_at), str(r.owner_type), str(r.parent), str(r.gone_at), r.full_name);
+    }
   });
   return { plugins: plugins.size, skills: skills.length, repos: seed.repos.length };
 }

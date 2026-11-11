@@ -38,8 +38,13 @@ npx @seojin08/skill-finder search "pdf tables" --limit 5
 npx @seojin08/skill-finder show gh:anthropics/skills:skills/pdf
 npx @seojin08/skill-finder recommend          # 지금 폴더의 README와 비슷한 스킬
 npx @seojin08/skill-finder installed --json
+npx @seojin08/skill-finder open gh:anthropics/skills:skills/pdf --project .   # 앱의 설치 확인 창을 엽니다
+npx @seojin08/skill-finder check              # 지금 폴더를 프로젝트 표준과 대조 (맞으면 0, 어긋나면 1)
+npx @seojin08/skill-finder lint .claude/skills/my-skill   # 직접 만든 스킬 검사 (문제가 있으면 1)
 npx @seojin08/skill-finder stop               # 백그라운드로 켠 앱 끄기
 ```
+
+`check`는 프로젝트의 `skills-lock.json`(skills CLI가 쓰는 파일)과 `.claude/settings.json`의 `enabledPlugins`·`extraKnownMarketplaces`를 설치된 것과 대조합니다. 설치 안 됨·내용 다름(lock의 `computedHash`)·플러그인 꺼짐·마켓 미등록이 있으면 1로 끝나므로 CI나 SessionStart 훅에서 알림용으로 쓸 수 있습니다. 설치됐지만 lock에 없는 스킬("표준에 없음")은 알리기만 합니다. 빠진 것은 앱의 설치됨 화면 "프로젝트 표준"에서 설치 확인 창을 거쳐 설치합니다.
 
 `--json`은 기계가 읽는 출력, `--lang ko|en|ja`는 출력 언어입니다. 자주 쓰면 `npm install -g @seojin08/skill-finder`로 설치해 `skill-finder search …`처럼 짧게 부를 수 있습니다.
 
@@ -63,6 +68,8 @@ GitHub 토큰은 선택입니다. 설정 화면에서 넣거나 `.env`의 `GITHU
 - 검색·추천에 AI를 부르지 않습니다. 설명 번역은 브라우저에 들어 있는 Translator API만 씁니다.
 - 밖으로 나가는 요청은 GitHub API, skills.sh 검색, 마켓플레이스 저장소, 업데이트 확인뿐입니다.
 - 색인과 설정은 `data/`(SQLite)에 남습니다. 검색 기록은 설정에서 끌 수 있습니다.
+- 스킬 사용 횟수는 설정에서 켰을 때만 셉니다(기본 꺼짐). 이 PC의 Claude Code 대화 기록(`~/.claude/projects`)을 읽어 스킬 이름·날짜·프로젝트 폴더·횟수만 저장하고, 대화 본문은 저장하지 않으며 밖으로 보내지 않습니다.
+- 앱에서 지우거나 덮어쓴 스킬 폴더는 되돌릴 수 있게 복사본을 30일 보관합니다(`data/quarantine/`, 폴더 20MB 이하).
 
 ## 개발
 

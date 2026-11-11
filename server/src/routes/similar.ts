@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { RISK_ORDER, type RiskLevel } from '../analyze/risk.ts';
 import type { AppContext } from '../context.ts';
 import type { SkillRow, Store } from '../db/store.ts';
+import { ownerFilter } from '../prefs/ownerPrefs.ts';
 import { CONFIG as README_CONFIG, matchSkills, processTerm, type Keyword } from '../recommend/readme.ts';
 import { freshInstalls, freshness, popularity, stem, totalScore, TRUST_SCORE, trustTier } from '../search/rank.ts';
 import { buildResultItem, githubSource, marketplaceSource, storeLookup, type ResultItem } from '../search/result.ts';
@@ -94,7 +95,7 @@ export function skillKeywords(store: Store, skill: Pick<SkillRow, 'name' | 'desc
 /**
  * Similar skills of one indexed skill, in two sections. "similar": matchSkills keeps those scoring at least 35% of the
  * best (the skill itself, usually) and orders them by downloads, then stars (D#a8a5); left out are the skill, copies
- * with the same SKILL.md (one card per text) and, as in search, high risk and repos below the star minimum (unknown
+ * with the same SKILL.md (one card per text), near-copies (one card per B8 group, none of its own group) and, as in search, high risk and repos below the star minimum (unknown
  * counts too; official and partner skills pass). "siblings": the other skills of its plugin, else of its repo, the
  * similar ones first, then by downloads; high risk is left out, stars are not (it is the repo already open). Null when
  * the id is not indexed.
@@ -114,9 +115,12 @@ export function findSimilar(store: Store, id: string, settings: Pick<Settings, '
     hidden: { highRisk: 0, lowStars: 0 },
   };
   const seenText = new Set<string>(skill.skill_md_sha256 ? [skill.skill_md_sha256] : []);
+  // B8: near-copies too (renamed or lightly edited): this skill's own group is left out, and one card per other group
+  const seenCluster = new Set<string>(skill.cluster_id ? [skill.cluster_id] : []);
   const isSibling = (row: SkillRow) =>
     skill.plugin_id ? row.plugin_id === skill.plugin_id : !!skill.repo && !!row.repo && row.repo.toLowerCase() === skill.repo.toLowerCase();
 
+  const owners = ownerFilter(store);
   const similarSiblings = new Map<string, SimilarEntry>();
   for (const m of keywords.length ? matchSkills(store, keywords, settings.weights) : []) {
     if (m.item.id === skill.id) continue;
@@ -126,9 +130,15 @@ export function findSimilar(store: Store, id: string, settings: Pick<Settings, '
       if (m.item.riskLevel !== 'high') similarSiblings.set(row.id, { item: m.item, score: m.score, matchedTerms: m.matchedTerms, lowerRisk: lowerRisk(m.item.riskLevel) });
       continue;
     }
+    // a hidden repository (F20) is not offered as an alternative either (this skill's own repo, above, still is)
+    if (owners.hidden(row.repo)) continue;
     if (row.skill_md_sha256) {
       if (seenText.has(row.skill_md_sha256)) continue; // a copy of this skill, or of a card already listed
       seenText.add(row.skill_md_sha256);
+    }
+    if (row.cluster_id) {
+      if (seenCluster.has(row.cluster_id)) continue; // a near-copy of this skill, or of a card already listed
+      seenCluster.add(row.cluster_id);
     }
     if (out.similar.length >= SIMILAR_MAX) continue;
     if (m.item.riskLevel === 'high') {

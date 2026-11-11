@@ -5,9 +5,10 @@
 // skills and its own parts (hooks, MCP servers, monitors, LSP servers), since installing one installs them all.
 // Only text is read; the checks are linear in its length (D#4de9).
 import { parseAllowedTools } from './frontmatter.ts';
-import { frontmatterLines, LineIndex, type FlagEvidence, type RiskFlag, type SkillRiskInput } from './risk.ts';
+import { frontmatterLines, LineIndex, toolKinds, type FlagEvidence, type PermissionKind, type RiskFlag, type SkillRiskInput } from './risk.ts';
 
-export type PermissionKind = 'shell' | 'read' | 'write' | 'network' | 'mcp' | 'autorun';
+// toolKinds lives in risk.ts since B5's preapprovedNetwork / preapprovedWrite rules read it too.
+export { toolKinds, type PermissionKind };
 export type PermissionState = 'preapproved' | 'ask' | 'none';
 export type PermissionEvidence = { source: string; line: number | null; excerpt: string };
 export type PermissionCell = { state: PermissionState; evidence: PermissionEvidence[] };
@@ -22,31 +23,11 @@ export type PluginParts = { hooks: boolean; mcp: boolean; monitors: boolean; bin
 
 const EVIDENCE_MAX = 8;
 const KINDS: PermissionKind[] = ['shell', 'read', 'write', 'network', 'mcp', 'autorun'];
-const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
-const READ_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'NotebookRead']);
-const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
-const NET_TOOLS = new Set(['WebFetch', 'WebSearch']);
-/** A pre-approved shell command that reaches the network: `Bash(curl:*)`, `Bash(git push:*)`. */
-const NET_COMMAND = /\b(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod|ssh|scp|rsync|ftp|nc|gh|git[ \t]+(?:push|pull|fetch|clone))\b/i;
 const SCRIPT_EXT = /\.(sh|bash|zsh|fish|py|js|mjs|cjs|ts|rb|pl|ps1|psm1|bat|cmd)$/i;
 const SHELL_FENCE = /^[ \t]{0,3}(?:```|~~~)[ \t]*(?:bash|sh|shell|zsh|console|terminal|powershell|pwsh|ps1|cmd|bat)\b/gim;
 const NET_WORDS = /\b(?:curl|wget|WebFetch|WebSearch|Invoke-WebRequest|Invoke-RestMethod)\b/g;
 const WRITE_WORDS = /\b(?:Write|Edit|MultiEdit)[ \t]+tool\b/gi;
 const MCP_WORDS = /\bmcp__[A-Za-z0-9_-]+/g;
-
-/** The kinds one allowed-tools entry grants, by its tool name (`Bash(git:*)` → shell; `Bash(curl:*)` also network). */
-export function toolKinds(tool: string): PermissionKind[] {
-  const t = tool.trim();
-  const name = t.match(/^[A-Za-z_][\w-]*/)?.[0] ?? '';
-  const open = t.indexOf('(');
-  const inner = open >= 0 && t.endsWith(')') ? t.slice(open + 1, -1) : '';
-  if (name.startsWith('mcp__')) return ['mcp'];
-  if (SHELL_TOOLS.has(name)) return NET_COMMAND.test(inner) ? ['shell', 'network'] : ['shell'];
-  if (READ_TOOLS.has(name)) return ['read'];
-  if (WRITE_TOOLS.has(name)) return ['write'];
-  if (NET_TOOLS.has(name)) return ['network'];
-  return [];
-}
 
 const clip = (s: string) => (s.length > 200 ? `${s.slice(0, 199)}…` : s);
 

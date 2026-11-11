@@ -237,7 +237,7 @@ export function RepoInstallDialog({
                   </div>
                 ))}
                 <InstallScanView scan={scans[s.id]?.scan ?? null} error={scans[s.id]?.error} compact />
-                <OverwriteNote existing={previews[s.id]?.existing} />
+                <OverwriteNote existing={previews[s.id]?.existing} where={{ scope, projectPath }} />
               </li>
             ))}
           </ol>

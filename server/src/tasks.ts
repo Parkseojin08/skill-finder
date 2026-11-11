@@ -1,9 +1,13 @@
 import { RISK_RULES_VERSION, riskLevel, type RiskFlag } from './analyze/risk.ts';
 import type { AppContext } from './context.ts';
+import type { SkillRow } from './db/store.ts';
+import { runClusterRefresh } from './dedupe/clusters.ts';
+import { minhashBytes, skillMinhash } from './dedupe/minhash.ts';
+import { setSkillMinhash } from './dedupe/rows.ts';
 import { skillMdPath } from './discovery/tree.ts';
-import { PluginUnavailableError, recheckRisk } from './indexer.ts';
+import { PluginUnavailableError, recheckRisk, skillMdHash } from './indexer.ts';
 import type { Job, JobControl } from './jobs.ts';
-import { GitHubError, GRAPHQL_BATCH } from './sources/github.ts';
+import { GitHubError, GRAPHQL_BATCH, pruneRepoStars } from './sources/github.ts';
 import { syncMarketplace } from './sources/marketplace.ts';
 import { collectPopularRepos, popularState } from './sources/popularRepos.ts';
 import { searchActivity } from './search/activity.ts';
@@ -164,7 +168,7 @@ async function repoMetaPass(ctx: AppContext, got: { stored: number; left: number
   const repos = ctx.store.listReposToRefresh(new Date(Date.now() - REPO_META_STALE_MS).toISOString(), 10_000);
   let brokenInRow = 0;
   for (let i = 0; i < repos.length; i += GRAPHQL_BATCH) {
-    while (searchActivity.busy()) await sleep(500);
+    await yieldToSearch();
     const group = repos.slice(i, i + GRAPHQL_BATCH);
     const r = await refreshRepoGroup(ctx, group);
     got.stored += r.stored;
@@ -218,18 +222,30 @@ const RISK_RECHECK_BATCH = 50;
 const RISK_RECHECK_EVERY_MS = 20 * 60 * 60 * 1000;
 /** Setting: when the last risk re-check pass finished. */
 const RISK_RECHECK_KEY = 'riskRecheckAt';
+/** Setting: the id the signature fill (B8) stopped at, so the next pass goes on from there ('' = from the start). */
+const MINHASH_FILL_KEY = 'minhashFillAfter';
+
+/**
+ * Steps aside while a search runs, but not forever: a search left marked busy must not hold a background pass for good
+ * (as watch/heads.ts waits, review 2026-11-05).
+ */
+async function yieldToSearch(): Promise<void> {
+  for (let waited = 0; searchActivity.busy() && waited < 120_000; waited += 500) await sleep(500);
+}
 let riskRecheckRunning = false;
 
 /** One re-check pass; adds to `got` as it goes, throws on what stops it (the time of the pass is then not saved). */
-async function riskRecheckPass(ctx: AppContext, now: number, got: { checked: number; changed: number }): Promise<void> {
+async function riskRecheckPass(ctx: AppContext, now: number, got: { checked: number; changed: number }, signed = { n: 0 }): Promise<void> {
   for (let after = ''; ; ) {
     const rows = ctx.store.listSkillsForRiskRecheck(RISK_RULES_VERSION, after, RISK_RECHECK_BATCH);
     if (rows.length === 0) break;
     after = rows.at(-1)!.id;
     const results = await pool(rows, 8, async (row) => {
-      while (searchActivity.busy()) await sleep(500); // raw downloads share their slots with searches
+      await yieldToSearch(); // raw downloads share their slots with searches
       const r = await ctx.github.getRawText(row.repo!, row.ref!, skillMdPath(row.dir_path!));
-      return r.text == null ? null : recheckRisk(row, r.text);
+      const next = r.text == null ? null : recheckRisk(row, r.text);
+      // B8: the signature of a row indexed before it, from the file read anyway (recheckRisk checked it is the same text)
+      return next ? { ...next, minhash: row.minhash == null ? minhashBytes(skillMinhash(r.text!)) : null } : null;
     });
     ctx.store.transaction(() => {
       rows.forEach((row, i) => {
@@ -239,10 +255,59 @@ async function riskRecheckPass(ctx: AppContext, now: number, got: { checked: num
         if (!next || !ctx.store.setSkillRisk(row.id, row.skill_md_sha256!, next.risk_json, next.risk_level, RISK_RULES_VERSION)) return;
         got.checked++;
         if (next.risk_json !== row.risk_json || next.risk_level !== row.risk_level) got.changed++;
+        if (next.minhash && setSkillMinhash(ctx.store, row.id, row.skill_md_sha256!, next.minhash)) signed.n++;
       });
     });
   }
+  // rows the rules were current for but that have no signature yet (B8), at most a bounded number a day
+  try {
+    await minhashFillPass(ctx, signed);
+  } catch (err) {
+    console.warn('[minhash fill]', String((err as Error).message ?? err).slice(0, 200));
+  }
   ctx.store.setSetting(RISK_RECHECK_KEY, new Date(now).toISOString());
+}
+
+/** Signatures filled per day for rows the risk re-check does not read (indexed before B8 under current rules). */
+const MINHASH_FILL_MAX = 1000;
+
+/**
+ * B8 for rows with no signature that the re-check passes over (already under the current rules): reads their
+ * SKILL.md at the indexed commit, and only a file with the stored hash gives the signature. MINHASH_FILL_MAX a pass,
+ * so a few thousand unreadable rows (gone repos) cost a bounded number of downloads a day.
+ */
+async function minhashFillPass(ctx: AppContext, signed: { n: number }): Promise<void> {
+  const next = ctx.store.db.prepare(
+    `SELECT * FROM skills WHERE minhash IS NULL AND repo IS NOT NULL AND ref IS NOT NULL AND dir_path IS NOT NULL
+       AND skill_md_sha256 IS NOT NULL AND id > ? ORDER BY id LIMIT ?`,
+  );
+  // goes on from where the last pass stopped, and starts over once the end is reached: read from the first id every
+  // time, a thousand unreadable rows at the front (gone repos) would take each day's whole budget and the rows
+  // behind them would never be signed (review 2026-11-10)
+  let after = ctx.store.getSetting<string>(MINHASH_FILL_KEY) ?? '';
+  let read = 0;
+  while (read < MINHASH_FILL_MAX) {
+    const rows = next.all(after, RISK_RECHECK_BATCH) as SkillRow[];
+    if (rows.length === 0) {
+      after = '';
+      break;
+    }
+    after = rows.at(-1)!.id;
+    read += rows.length;
+    const results = await pool(rows, 8, async (row) => {
+      await yieldToSearch();
+      const r = await ctx.github.getRawText(row.repo!, row.ref!, skillMdPath(row.dir_path!));
+      if (r.text == null || skillMdHash(r.text) !== row.skill_md_sha256) return null;
+      return minhashBytes(skillMinhash(r.text));
+    });
+    ctx.store.transaction(() => {
+      rows.forEach((row, i) => {
+        const res = results[i];
+        if (res?.ok && res.value && setSkillMinhash(ctx.store, row.id, row.skill_md_sha256!, res.value)) signed.n++;
+      });
+    });
+  }
+  ctx.store.setSetting(MINHASH_FILL_KEY, after);
 }
 
 function riskRecheckDone(ctx: AppContext, got: { checked: number; changed: number }): void {
@@ -281,13 +346,14 @@ export async function runRiskRecheck(ctx: AppContext): Promise<TaskOutcome> {
   if (last && now - Date.parse(last) < RISK_RECHECK_EVERY_MS) return { skipped: true, note: '하루에 한 번' };
   riskRecheckRunning = true;
   const got = { checked: 0, changed: 0 };
+  const signed = { n: 0 };
   try {
-    await riskRecheckPass(ctx, now, got);
+    await riskRecheckPass(ctx, now, got, signed);
   } finally {
     riskRecheckRunning = false;
     riskRecheckDone(ctx, got);
   }
-  return { counts: got };
+  return { counts: { ...got, signed: signed.n } };
 }
 
 /**
@@ -311,9 +377,9 @@ export function relevelRisk(ctx: AppContext): number {
   return moved.length;
 }
 
-/** Scheduler task "기록 정리": the search log (90 days) and task runs (30 days). */
+/** Scheduler task "기록 정리": the search log (90 days), task runs (30 days) and daily star counts (90 days). */
 export async function runPrune(ctx: AppContext): Promise<TaskOutcome> {
-  return { counts: { searchLog: pruneSearchLog(ctx), taskRuns: schedulerFor(ctx).pruneRuns() } };
+  return { counts: { searchLog: pruneSearchLog(ctx), taskRuns: schedulerFor(ctx).pruneRuns(), repoStars: pruneRepoStars(ctx.store) } };
 }
 
 /** Deletes search-log entries older than 90 days (U5-2; at startup and daily). */
@@ -387,6 +453,9 @@ export function registerBuiltInTasks(): void {
     run: runUpdateCheck,
   });
   registerTask({ kind: 'db-maintenance', label: 'DB 점검', everyMs: 7 * DAY_MS, idle: true, timeoutMs: 2 * 60 * 1000, run: runDbMaintenance });
+  // B8: near-copy groups from the stored signatures (local only, ~1 s for 20,000 skills)
+  // idle: local and never urgent, so it waits for a moment without a search, a job or another task
+  registerTask({ kind: 'clusters', label: '비슷한 사본 묶기', everyMs: HOUR_MS, startup: true, idle: true, run: runClusterRefresh });
   registerTask({
     kind: 'popular',
     label: '인기 저장소 수집',

@@ -1,0 +1,31 @@
+/* Stage 3 bundle B (feature review 2026-11-04): the 설치됨 use columns (F11) and the kept copies list (F14). App
+   tokens only (styles.css). */
+@layer app {
+  .usage-idle-chip {
+    display: inline-block;
+    margin-top: 4px;
+    padding: 1px 8px;
+    border: 1px solid var(--warn);
+    border-radius: 999px;
+    background: var(--warn-soft);
+    color: var(--text-soft);
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: nowrap;
+  }
+  .quarantine-list {
+    margin-bottom: 24px;
+  }
+  .quarantine-list h3 {
+    margin: 0 0 6px;
+  }
+  .quarantine-list .mono {
+    word-break: break-all;
+  }
+  .quarantine-cmd {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+}

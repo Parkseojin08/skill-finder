@@ -75,24 +75,62 @@ function foldByRepo(sorted: ResultItem[], open: Set<string>, word: string | null
 
 /** Name key for same-name folding, as the README recommendation groups copies ("PDF_Tools" = "pdf-tools"). */
 const nameKey = (item: ResultItem) => item.name.normalize('NFC').toLowerCase().replace(/[\s_]+/g, '-');
-/** `copyOf`: an opened same-name copy shown under its first card; `last` gets the "접기" button. */
+/** The near-copy group the server put a result in (B8; `search/result.ts` sets it), or null. */
+export const clusterOf = (item: ResultItem): string | null => {
+  const c = (item as ResultItem & { clusterId?: string | null }).clusterId;
+  return typeof c === 'string' && c ? c : null;
+};
+/**
+ * `copyOf`: an opened copy shown under its first card; `last` gets the "접기" button. `same.renamed`: how many of the
+ * folded ones have another name (near-copies found by content, B8); left out when there are none.
+ */
 export type Row = {
   item: ResultItem;
   more?: { repo: string; count: number };
-  same?: { key: string; count: number; riskier: boolean };
+  same?: { key: string; count: number; riskier: boolean; renamed?: number };
   copyOf?: { key: string; last: boolean };
 };
 
 /**
- * Same-name skills (U2, user decision) fold under the first one in the current order: the others follow it
- * only when its "같은 이름 N개 더" is opened. Downloads are not summed (they are different copies), and the
- * button says when a folded copy is riskier than the one shown. Repository folding then runs on what is left.
+ * Groups of results to fold: the same name (U2), or the same near-copy group (B8), which also catches copies that
+ * were renamed. Results sharing either are one group (union-find). A group's key is stable across orders: its
+ * near-copy group (`c:` and the smallest one), else the name key as before.
+ */
+function copyGroups(sorted: ResultItem[]): Map<ResultItem, string> {
+  const parent = sorted.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const firstBy = new Map<string, number>();
+  sorted.forEach((it, i) => {
+    for (const k of [`n:${nameKey(it)}`, ...(clusterOf(it) ? [`c:${clusterOf(it)}`] : [])]) {
+      const j = firstBy.get(k);
+      if (j === undefined) firstBy.set(k, i);
+      else parent[find(i)] = find(j);
+    }
+  });
+  const keyOf = new Map<number, string>();
+  sorted.forEach((it, i) => {
+    const c = clusterOf(it);
+    const root = find(i);
+    const prev = keyOf.get(root);
+    const mine = c ? `c:${c}` : null;
+    if (prev === undefined) keyOf.set(root, mine ?? nameKey(sorted[root]));
+    else if (mine && (!prev.startsWith('c:') || mine < prev)) keyOf.set(root, mine);
+  });
+  return new Map(sorted.map((it, i) => [it, keyOf.get(find(i))!]));
+}
+
+/**
+ * Same-name skills (U2, user decision) and near-copies (B8) fold under the first one in the current order: the
+ * others follow it only when its "같은 이름 N개 더" is opened. Downloads are not summed (they are different copies,
+ * U4), and the button says when a folded copy is riskier than the one shown, and how many were renamed. Repository
+ * folding then runs on what is left.
  */
 export function foldResults(sorted: ResultItem[], openRepos: Set<string>, openNames: Set<string>, word: string | null, main: string | null = null): Row[] {
+  const groupOf = copyGroups(sorted);
   const copies = new Map<string, ResultItem[]>();
   const firsts: ResultItem[] = [];
   for (const it of sorted) {
-    const k = nameKey(it);
+    const k = groupOf.get(it)!;
     const g = copies.get(k);
     if (g) g.push(it);
     else {
@@ -102,13 +140,16 @@ export function foldResults(sorted: ResultItem[], openRepos: Set<string>, openNa
   }
   const out: Row[] = [];
   for (const row of foldByRepo(firsts, openRepos, word, main)) {
-    const k = nameKey(row.item);
+    const k = groupOf.get(row.item)!;
     const rest = copies.get(k)!;
     if (rest.length === 0) out.push(row);
     // opened: the copies come right after the card, and its repository's "N개 더" button after the last copy
     else if (openNames.has(k))
       out.push({ item: row.item }, ...rest.map((x, i) => ({ item: x, copyOf: { key: k, last: i === rest.length - 1 }, ...(i === rest.length - 1 && row.more ? { more: row.more } : {}) })));
-    else out.push({ ...row, same: { key: k, count: rest.length, riskier: rest.some((x) => RISK_RANK[x.riskLevel] > RISK_RANK[row.item.riskLevel]) } });
+    else {
+      const renamed = rest.filter((x) => nameKey(x) !== nameKey(row.item)).length;
+      out.push({ ...row, same: { key: k, count: rest.length, riskier: rest.some((x) => RISK_RANK[x.riskLevel] > RISK_RANK[row.item.riskLevel]), ...(renamed ? { renamed } : {}) } });
+    }
   }
   return out;
 }

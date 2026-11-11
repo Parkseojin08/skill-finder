@@ -17,6 +17,11 @@ export const SettingsSchema = z.object({
   minStars: z.number().int().min(0).max(1_000_000),
   /** Keep a search log on this PC (U5-2): what was searched and which results were opened, 90 days. */
   searchLog: z.boolean(),
+  /**
+   * Count skill uses from Claude Code's transcripts (~/.claude/projects, feature review F11, decision 14). Off by
+   * default; only skill name, day, folder and a count are kept, never conversation text, and nothing leaves the PC.
+   */
+  usageScan: z.boolean(),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -29,6 +34,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultProjectPath: '',
   minStars: 5000,
   searchLog: true,
+  usageScan: false,
 };
 
 /** Search log entries older than this are deleted (at startup and daily). */

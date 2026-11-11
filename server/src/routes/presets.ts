@@ -1,9 +1,13 @@
+import { homedir } from 'node:os';
 import { Router } from 'express';
 import { z } from 'zod';
+import { listClaudePlugins } from '../agentConfig/read.ts';
 import type { AppContext } from '../context.ts';
 import type { SkillRow } from '../db/store.ts';
+import { scanInstalledSkills } from '../install/installed.ts';
 import { installSummary, type InstallSummary } from '../install/summary.ts';
-import { isRepo } from '../install/validate.ts';
+import { isProjectDir, isRepo } from '../install/validate.ts';
+import { knownMarketplaces, skillFolderHash, withoutUserinfo } from '../projects/standard.ts';
 import { storeLookup } from '../search/result.ts';
 import { withTimeout } from '../util/limiter.ts';
 
@@ -23,7 +27,8 @@ const REPO_WAIT_MS = 10_000;
 
 const repoOfId = (id: string) => id.match(/^gh:([^:]+):/)?.[1] ?? null;
 
-export function presetsRouter(ctx: AppContext): Router {
+/** `home`: the home folder read for the snippet (tests use a temporary one); the user's own otherwise. */
+export function presetsRouter(ctx: AppContext, opts: { home?: string } = {}): Router {
   const r = Router();
   const { store } = ctx;
 
@@ -69,5 +74,92 @@ export function presetsRouter(ctx: AppContext): Router {
     res.json({ skills, missing });
   });
 
+  // F12: the standard files' text for what is installed here — a skills-lock.json and the enabledPlugins /
+  // extraKnownMarketplaces part of .claude/settings.json — to copy into a project. Read only; nothing is written.
+  r.get('/presets/snippet', async (req, res) => {
+    const projectPath = typeof req.query.projectPath === 'string' && req.query.projectPath.trim() ? req.query.projectPath.trim() : null;
+    if (projectPath && !isProjectDir(projectPath)) {
+      res.status(400).json({ error: '프로젝트 경로는 존재하는 디렉터리의 절대경로여야 합니다' });
+      return;
+    }
+    try {
+      res.json(await standardSnippet(store, projectPath, opts.home ?? homedir()));
+    } catch (err) {
+      res.status(500).json({ error: `조각을 만들지 못했습니다: ${String((err as Error).message ?? err).slice(0, 200)}` });
+    }
+  });
+
   return r;
+}
+
+export type StandardSnippet = {
+  /** skills-lock.json as the skills CLI writes it (version 1, skills by name, sorted). */
+  lock: string;
+  /** The enabledPlugins / extraKnownMarketplaces part of .claude/settings.json. */
+  settings: string;
+  skills: number;
+  plugins: number;
+  /** Installed skills left out: not from a GitHub repo the index knows (hand-made, other hosts). */
+  skippedSkills: number;
+  /** Marketplaces added from a folder or file on this PC: not written (a teammate has no such path). */
+  localMarkets: string[];
+};
+
+/**
+ * The lock entries follow skills@1.7.6 `projectLockEntry` (source, sourceType, skillPath, computedHash), the hash
+ * made over the installed copy as the CLI's update check does. No `ref`: the app installs the commit it checked.
+ */
+export async function standardSnippet(store: AppContext['store'], projectPath: string | null, home: string): Promise<StandardSnippet> {
+  const installed = [
+    ...(await scanInstalledSkills(store, 'user', null, undefined, { home })),
+    ...(projectPath ? await scanInstalledSkills(store, 'project', projectPath, undefined, { home }) : []),
+  ];
+  const lockSkills: Record<string, Record<string, string>> = {};
+  let skipped = 0;
+  for (const s of installed) {
+    const row = s.skillId ? store.getSkill(s.skillId) : undefined;
+    if (!row || row.origin === 'plugin' || !row.repo || !isRepo(row.repo) || !row.id.startsWith('gh:')) {
+      skipped++;
+      continue;
+    }
+    if (lockSkills[s.name]) continue; // the same skill in both scopes: once
+    const dir = (row.dir_path ?? '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    let hash: string | null = null;
+    try {
+      hash = await skillFolderHash(s.path);
+    } catch {
+      hash = null; // too large to hash: the CLI fills it in when it installs
+    }
+    lockSkills[s.name] = { source: row.repo, sourceType: 'github', skillPath: dir ? `${dir}/SKILL.md` : 'SKILL.md', ...(hash ? { computedHash: hash } : {}) };
+  }
+  const sorted = Object.fromEntries(Object.keys(lockSkills).sort().map((k) => [k, lockSkills[k]]));
+
+  const plugins = (await listClaudePlugins({ home, projectPath })).filter((p) => p.enabled);
+  const enabledPlugins: Record<string, boolean> = {};
+  for (const p of plugins) enabledPlugins[p.id] = true;
+  const known = knownMarketplaces(home);
+  const extraKnownMarketplaces: Record<string, { source: unknown }> = {};
+  const localMarkets: string[] = [];
+  for (const id of Object.keys(enabledPlugins)) {
+    const at = id.lastIndexOf('@');
+    const market = at > 0 ? id.slice(at + 1) : null;
+    if (!market || market === 'claude-plugins-official' || extraKnownMarketplaces[market] || localMarkets.includes(market)) continue;
+    const source = known.get(market) as { source?: unknown; url?: unknown } | null | undefined;
+    const kind = source && typeof source === 'object' ? source.source : null;
+    // the snippet goes into the repository: a token written into the marketplace's address stays out of it
+    if (kind === 'github' || kind === 'git' || kind === 'url') extraKnownMarketplaces[market] = { source: typeof source!.url === 'string' ? { ...source, url: withoutUserinfo(source!.url) } : source };
+    else localMarkets.push(market);
+  }
+  const settings = {
+    enabledPlugins,
+    ...(Object.keys(extraKnownMarketplaces).length ? { extraKnownMarketplaces } : {}),
+  };
+  return {
+    lock: `${JSON.stringify({ version: 1, skills: sorted }, null, 2)}\n`,
+    settings: `${JSON.stringify(settings, null, 2)}\n`,
+    skills: Object.keys(sorted).length,
+    plugins: Object.keys(enabledPlugins).length,
+    skippedSkills: skipped,
+    localMarkets,
+  };
 }

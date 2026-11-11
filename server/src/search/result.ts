@@ -3,6 +3,7 @@ import type { MarketplaceRow, PluginRow, SkillRow, Store } from '../db/store.ts'
 import { planInstall, type InstallMethod } from '../install/plan.ts';
 import { truncate } from '../util/sanitize.ts';
 import { categorize, type Category } from './category.ts';
+import { licenseValue, manualOnly } from './facets.ts';
 import type { InstallsSuspect } from './installsSuspect.ts';
 import { freshInstalls, freshness, TRUST_SCORE, trustTier, type Breakdown, type TrustTier } from './rank.ts';
 
@@ -42,6 +43,15 @@ export type ResultItem = {
    * for the card's "다운로드 수 의심" badge, with the rules it broke.
    */
   installsSuspect?: InstallsSuspect;
+  /**
+   * Stage 3 (feature review 2026-11-04). Each is left out when it says nothing, so a plain search's items keep
+   * their shape: the repo's license as an F19 facet value (search/facets.ts licenseValue; absent = "unknown"),
+   * `manualOnly` for `disable-model-invocation: true` (F19 "직접 부를 때만"), and the near-copy group (B8,
+   * skills.cluster_id) the result folding can use.
+   */
+  license?: string;
+  manualOnly?: true;
+  clusterId?: string;
 };
 
 /** A GitHub repository shown as a result of its own (one-word query equal to its name, e.g. "rea"). */
@@ -107,12 +117,15 @@ export type Lookup = {
   pluginSkillCount(id: string): number;
   /** The highest risk level among the plugin's skills (they all install together). */
   pluginTopRisk(id: string): RiskLevel;
+  /** The repo's license (SPDX id) from its stored row, or null. */
+  repoLicense?(repo: string | null): string | null;
 };
 
 export function storeLookup(store: Store): Lookup {
   const plugins = new Map<string, PluginRow | null>();
   const mps = new Map<string, MarketplaceRow | null>();
   const skillsOf = new Map<string, SkillRow[]>();
+  const licenses = new Map<string, string | null>();
   const list = (id: string) => {
     if (!skillsOf.has(id)) skillsOf.set(id, store.listSkillsByPlugin(id));
     return skillsOf.get(id)!;
@@ -133,6 +146,12 @@ export function storeLookup(store: Store): Lookup {
     },
     pluginTopRisk(id) {
       return list(id).reduce<RiskLevel>((top, s) => (RISK_ORDER[s.risk_level as RiskLevel] > RISK_ORDER[top] ? (s.risk_level as RiskLevel) : top), 'low');
+    },
+    repoLicense(repo) {
+      if (!repo) return null;
+      const k = repo.toLowerCase();
+      if (!licenses.has(k)) licenses.set(k, store.getRepo(repo)?.license ?? null);
+      return licenses.get(k)!;
     },
   };
 }
@@ -160,6 +179,7 @@ export function buildResultItem(a: {
   const plan = planInstall(skill, plugin, a.lookup.marketplace(plugin?.marketplace));
   const desc = skill.description ?? '';
   const { own, copies } = splitCopies(a.sources, skill.repo);
+  const license = licenseValue(a.lookup.repoLicense?.(skill.repo) ?? null);
   return {
     id: skill.id,
     name: skill.name,
@@ -198,5 +218,8 @@ export function buildResultItem(a: {
       : {}),
     trust: trustTier(skill, plugin),
     categories: categorize({ name: skill.name, description: desc, whenToUse: skill.when_to_use, marketplaceCategory: plugin?.category }),
+    ...(license && license !== 'unknown' ? { license } : {}),
+    ...(manualOnly(skill) ? { manualOnly: true as const } : {}),
+    ...(skill.cluster_id ? { clusterId: skill.cluster_id } : {}),
   };
 }

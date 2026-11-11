@@ -1,0 +1,103 @@
+@layer app {
+/* 설치됨 › 프로젝트 표준 (F12), 모든 프로젝트 (F13), and the team preset's standard-file snippet. App tokens only. */
+.project-standard,
+.all-projects {
+  margin: 16px 0 24px;
+  padding: 14px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--corner);
+  background: var(--surface);
+}
+.project-standard h2,
+.all-projects h2 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+}
+.project-standard-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+.standard-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+.std-status {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--corner-sm);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  white-space: nowrap;
+  color: var(--text-soft);
+}
+.std-status.ok {
+  color: var(--ok);
+  border-color: var(--ok);
+  background: var(--ok-soft);
+}
+.std-status.warn {
+  color: var(--warn);
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+.std-status.danger {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+.std-status.muted {
+  color: var(--text-muted);
+}
+.project-standard .table td,
+.all-projects .table td {
+  vertical-align: top;
+}
+.all-projects .table tbody tr.pickable {
+  cursor: pointer;
+}
+.all-projects .table tbody tr.pickable:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.all-projects .table td.num,
+.all-projects .table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.projects-table-wrap {
+  overflow-x: auto;
+}
+/* on a narrow screen the table scrolls sideways instead of squeezing the folder column to a letter a line */
+.all-projects .table th:first-child,
+.all-projects .table td:first-child {
+  min-width: 14rem;
+}
+.standard-snippet {
+  margin-top: 10px;
+}
+.standard-snippet-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.standard-snippet-code {
+  max-height: 260px;
+  overflow: auto;
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--corner-sm);
+  background: var(--bg-elev);
+  color: var(--text-soft);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  white-space: pre;
+}
+}

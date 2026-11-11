@@ -15,6 +15,7 @@ import { existingAgentFolders, undetectedAgents } from '../install/targets.ts';
 import { forgetPlugins, installedPluginCommits, listInstalledPlugins, pathKey, pluginCommitKey, pluginIndexInfo, pluginSkills, scanInstalledSkills, scanPluginSkills, type InstalledPlugin } from '../install/installed.ts';
 import { indexItem, storeLookup, type ResultItem } from '../search/result.ts';
 import { uninstallPlugin, uninstallSkill } from '../install/uninstall.ts';
+import { dropQuarantine, quarantineFolder, type QuarantineOutcome } from '../install/quarantine.ts';
 import { isAgentId, isProjectDir } from '../install/validate.ts';
 import { getSettings } from '../settings.ts';
 import { maskSecrets } from '../util/log.ts';
@@ -73,8 +74,18 @@ function enabledInSettings(id: string, scope: string, projectPath: string | null
 let installing = false;
 let picking = false;
 
-/** How the install recheck asks git for a head (B6); tests replace it. */
-export type InstallRouterOptions = { head?: HeadLookup };
+/** One install, removal or restore at a time (routes/quarantine.ts takes the same turn for a restore). */
+export function takeInstallTurn(): boolean {
+  if (installing) return false;
+  installing = true;
+  return true;
+}
+export function endInstallTurn(): void {
+  installing = false;
+}
+
+/** How the install recheck asks git for a head (B6), and the home folder for the user scope; tests replace them. */
+export type InstallRouterOptions = { head?: HeadLookup; home?: string };
 
 export function installRouter(ctx: AppContext, opts: InstallRouterOptions = {}): Router {
   const r = Router();
@@ -129,9 +140,12 @@ export function installRouter(ctx: AppContext, opts: InstallRouterOptions = {}):
       return;
     }
     let replaced = false;
+    /** F14: the folders the install replaces, copied first (the same skill unchanged is not: nothing would be lost). */
+    const toKeep: string[] = [];
     if (plan.method === 'skills-cli' && scope !== 'local') {
       const confirmed = new Set(typeof parsed.data.overwrite === 'string' ? [parsed.data.overwrite] : (parsed.data.overwrite ?? []));
-      for (const existing of await existingAgentFolders(store, skill.id, plan.skillName!, scope, projectPath, agents)) {
+      for (const existing of await existingAgentFolders(store, skill.id, plan.skillName!, scope, projectPath, agents, opts.home)) {
+        if (!(existing.same === true && existing.change === 'same')) toKeep.push(existing.path);
         if (existing.same === true) continue;
         if (!confirmed.has(existing.path)) {
           res.status(409).json({ error: `${existing.path}에 같은 이름의 다른 스킬이 있습니다. 설치 확인 창에서 덮어쓰기를 확인한 뒤 다시 설치하세요.` });
@@ -174,6 +188,18 @@ export function installRouter(ctx: AppContext, opts: InstallRouterOptions = {}):
       const settings = getSettings(store);
       const env = { ...process.env, ...(settings.telemetryDisabled ? { DISABLE_TELEMETRY: '1', DO_NOT_TRACK: '1' } : {}) };
       const steps = buildSteps(plan, scope, projectPath, agents);
+      const kept: QuarantineOutcome[] = [];
+      for (const path of toKeep) {
+        const k = await quarantineFolder(store, ctx.config.dataDir, { reason: 'overwrite', name: plan.skillName!, skillId: skill.id, scope: scope as 'user' | 'project', projectPath, agent: null, originalPath: path });
+        if (!k.kept && k.reason === 'failed') {
+          for (const done of kept) if (done.kept) await dropQuarantine(store, ctx.config.dataDir, done.id);
+          stream.send({ type: 'result', ok: false, exitCode: -1, message: '덮어쓰기 전에 되돌리기용 복사본을 만들지 못해 설치하지 않았습니다', quarantine: [k] });
+          return;
+        }
+        kept.push(k);
+        if (k.kept) stream.send({ type: 'log', line: `기존 폴더 복사본을 보관했습니다: ${path}`, stream: 'info' });
+        else if (k.reason === 'tooBig') stream.send({ type: 'log', line: `기존 폴더가 20MB를 넘어 복사본을 보관하지 않았습니다: ${path}`, stream: 'info' });
+      }
       const result = await executeInstall(plan, steps, (line, s) => stream.send({ type: 'log', line, stream: s ?? 'stdout' }), env);
       store.logInstall({
         skill_id: skill.id,
@@ -209,7 +235,7 @@ export function installRouter(ctx: AppContext, opts: InstallRouterOptions = {}):
           if (info.change === 'changed') message += ' 설치된 커밋이 위험 검사를 한 커밋과 다릅니다. 설치됨 화면에서 위험 등급을 다시 확인하세요.';
         }
       }
-      stream.send({ type: 'result', ok: result.ok, exitCode: result.exitCode, message });
+      stream.send({ type: 'result', ok: result.ok, exitCode: result.exitCode, message, ...(kept.length ? { quarantine: kept } : {}) });
     } catch (err) {
       const message = `실행 실패: ${String((err as Error).message ?? err).slice(0, 200)}`;
       if (out) out.send({ type: 'result', ok: false, exitCode: -1, message });
@@ -275,7 +301,13 @@ export function installRouter(ctx: AppContext, opts: InstallRouterOptions = {}):
         }
         const settings = getSettings(store);
         const env = { ...process.env, ...(settings.telemetryDisabled ? { DISABLE_TELEMETRY: '1', DO_NOT_TRACK: '1' } : {}) };
-        result = await uninstallSkill(b.id, b.scope, projectPath, env, isAgentId(b.agent) ? b.agent : CLAUDE_CODE);
+        const agent = isAgentId(b.agent) ? b.agent : CLAUDE_CODE;
+        const scope = b.scope;
+        result = await uninstallSkill(b.id, scope, projectPath, env, agent, opts.home, (target) =>
+          quarantineFolder(store, ctx.config.dataDir, { reason: 'delete', name: b.id, skillId: null, scope, projectPath, agent, originalPath: target }),
+        );
+        // nothing was removed: the copy made for it is of no use
+        if (!result.ok && result.quarantine?.kept) await dropQuarantine(store, ctx.config.dataDir, result.quarantine.id);
       }
       store.logInstall({
         skill_id: b.kind === 'skill' ? b.id : null,
@@ -288,7 +320,8 @@ export function installRouter(ctx: AppContext, opts: InstallRouterOptions = {}):
         output: result.output,
       });
       forgetPlugins();
-      res.status(result.ok ? 200 : 500).json(result.ok ? { ok: true, message: result.message } : { error: result.message });
+      const quarantine = 'quarantine' in result ? result.quarantine : undefined;
+      res.status(result.ok ? 200 : 500).json(result.ok ? { ok: true, message: result.message, ...(quarantine ? { quarantine } : {}) } : { error: result.message });
     } catch (err) {
       res.status(500).json({ error: `삭제 실패: ${String((err as Error).message ?? err).slice(0, 200)}` });
     } finally {

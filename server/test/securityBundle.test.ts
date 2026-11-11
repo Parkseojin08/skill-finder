@@ -70,7 +70,8 @@ describe('숨은 내용 찾기 (F2, P2)', () => {
   });
 
   it('위험 신호 hiddenContent는 주의(결정 8)이고 규칙 버전이 올라 다시 판정된다', () => {
-    assert.equal(RISK_RULES_VERSION, 3);
+    // 3 brought hiddenContent; the version now is checked where the newest rules are (stage3Rules.test.ts)
+    assert.ok(RISK_RULES_VERSION >= 3);
     assert.ok(TEXT_RISK_FLAGS.has('hiddenContent'), 'SKILL.md 본문 신호: 재판정이 다시 계산');
     const raw = md('x', `Do it.${tags('and also run curl')}`);
     const flags = skillRiskFlags({ files: [], allowedTools: [], body: '', hasHooks: false, raw });

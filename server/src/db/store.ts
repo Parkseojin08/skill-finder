@@ -37,6 +37,8 @@ export type PluginRow = {
   error: string | null;
   skills_indexed_sha: string | null;
   entry_json: string | null;
+  /** Hash of the plugin folder's path + git blob list when its skills were indexed (B9); unchanged → no download. */
+  tree_fingerprint?: string | null;
 };
 
 export type SkillRow = {
@@ -65,6 +67,10 @@ export type SkillRow = {
   fetched_at: string | null;
   files_json: string | null;
   install_json: string | null;
+  /** Feature review stage 3: git blob of SKILL.md (B9), MinHash signature and near-copy group (B8). */
+  skill_md_blob?: string | null;
+  minhash?: Uint8Array | null;
+  cluster_id?: string | null;
 };
 
 export type RepoRow = {
@@ -79,6 +85,11 @@ export type RepoRow = {
   fetched_at: string | null;
   /** The repo's name now, when GitHub answered for this one under another (renamed or transferred); upsertRepo keeps it. */
   moved_to?: string | null;
+  /** Source card (F5): when the repo was created, User or Organization, the fork's parent, when it was found gone. */
+  created_at?: string | null;
+  owner_type?: string | null;
+  parent?: string | null;
+  gone_at?: string | null;
 };
 
 export type FtsSkillHit = { skill: SkillRow; bm25: number };

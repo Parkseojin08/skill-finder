@@ -15,7 +15,9 @@ import { fileStem, resultsJson, resultsMarkdown, saveFile } from '../lib/exportL
 import { goInApp } from '../lib/links.ts';
 import { readPageSize, savePageSize } from '../lib/prefs.ts';
 import { byPopular, foldResults, nameMatches, navigationalWord, repoMainSkill, SORTS, type SortKey } from '../lib/resultOrder.ts';
-import { browseAddress, browseFromParams, browseQuery, type BrowseList, type BrowseView, type SearchResults, type Suggestion } from '../lib/searchExtras.ts';
+import { browseAddress, browseFromParams, browseQuery, RUN_FEATURES, sameFacets, toServerFacets, UPDATED_WITHIN, type BrowseList, type BrowseView, type SearchResults, type Suggestion } from '../lib/searchExtras.ts';
+import { itemRepo, useOwnerPrefs } from '../lib/ownerPrefs.ts';
+import '../components/search/owner-prefs.css';
 import type { Health, Job, OpenedFrom, ResultItem, RiskLevel, SearchEvent, SearchSource, SettingsResponse, SourceKind, SourceProgress } from '../types.ts';
 import { serverText, t } from '../i18n.ts';
 import { tj } from '../i18nNodes.tsx';
@@ -74,18 +76,47 @@ export function searchLogChanged(on: boolean): void {
 /** The address the search page last wrote (query, sort, page, filters), for coming back through the menu. */
 let lastSearchAddress: string | null = null;
 
-/** Side filters as an address value ("trust.official,category.pdf") and back. */
-const facetParam = (f: Facets) => (Object.keys(f) as Array<keyof Facets>).flatMap((g) => f[g].map((k) => `${g}.${k}`)).join(',');
+/** Side filters as an address value ("trust.official,category.pdf,license.Apache-2.0") and back. */
+const facetParam = (f: Facets) => (Object.keys(f) as Array<keyof Facets>).flatMap((g) => (f[g] ?? []).map((k) => `${g}.${k}`)).join(',');
+/** Whether `k` is a value of group `g` (only known values: a hand-edited address must not break the page). */
+function knownFacet(g: string, k: string): boolean {
+  switch (g) {
+    case 'trust':
+      return Object.hasOwn(TRUST, k);
+    case 'method':
+      return Object.hasOwn(METHOD, k);
+    case 'category':
+      return Object.hasOwn(CATEGORY, k);
+    case 'license':
+      return /^[A-Za-z0-9._+-]{1,60}$/.test(k);
+    case 'run':
+      return (RUN_FEATURES as readonly string[]).includes(k);
+    case 'updated':
+      return (UPDATED_WITHIN as readonly string[]).includes(k);
+    case 'owner':
+      return /^[a-z0-9-]{1,39}$/.test(k);
+    case 'trusted':
+      return k === 'trusted';
+    default:
+      return false;
+  }
+}
 function parseFacets(v: string): Facets {
   const out: Facets = { trust: [], category: [], method: [] };
   for (const part of v.split(',')) {
-    const [g, k] = part.split('.');
-    // only known values: a hand-edited address must not break the page
-    const known = Object.hasOwn(g === 'trust' ? TRUST : g === 'method' ? METHOD : g === 'category' ? CATEGORY : {}, k);
-    if (k && known && !out[g as keyof Facets].includes(k)) out[g as keyof Facets].push(k);
+    // the group ends at the first dot: a license value has its own ("Apache-2.0")
+    const at = part.indexOf('.');
+    const g = part.slice(0, at) as keyof Facets;
+    const k = part.slice(at + 1);
+    if (at < 1 || !k || !knownFacet(g, k)) continue;
+    const list = (out[g] ??= []);
+    if (!list.includes(k) && !(g === 'updated' && list.length)) list.push(k);
   }
   return out;
 }
+
+/** What a search was run with beyond the controls above: F19 facets for every candidate, F20 hidden repos shown. */
+type SearchExtra = { facets?: Facets | null; showHidden?: boolean };
 
 /** The search page's address with the last query, for the "검색" menu (so the query stays in the address). */
 export function searchUrl(): string {
@@ -101,6 +132,8 @@ type Snapshot = {
   q: string;
   risk: RiskLevel;
   sources: SourceKind[];
+  facets?: Facets | null;
+  showHidden?: boolean;
   items: ResultItem[];
   final: Extract<SearchEvent, { type: 'results' }>;
   doneInfo: { cached: boolean; elapsedMs: number } | null;
@@ -162,9 +195,11 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
     return () => window.removeEventListener(SEARCH_LOG_EVENT, on);
   }, []);
   /** The conditions the shown results were searched with (the controls may change after), for the snapshot. */
-  const searchedWith = useRef<{ risk: RiskLevel; sources: SourceKind[] }>({ risk: 'medium', sources: [] });
+  const searchedWith = useRef<{ risk: RiskLevel; sources: SourceKind[] } & SearchExtra>({ risk: 'medium', sources: [] });
   /** The same, for rendering: the controls above can differ from what the results on screen were searched with. */
-  const [searched, setSearched] = useState<{ risk: RiskLevel; sources: SourceKind[] }>({ risk: 'medium', sources: [] });
+  const [searched, setSearched] = useState<{ risk: RiskLevel; sources: SourceKind[] } & SearchExtra>({ risk: 'medium', sources: [] });
+  /** F20: hidden repositories (server list); a repo hidden from a card leaves the results on screen at once. */
+  const ownerPrefs = useOwnerPrefs();
   const [health, setHealth] = useState<Health | null>(null);
   const [syncJob, setSyncJob] = useState<Job | null>(null);
   const [lastQuery, setLastQuery] = useState('');
@@ -284,8 +319,11 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   }, []);
 
   const run = useCallback(
-    /** `liftStars`: search once without this star minimum (the setting itself stays). */
-    async (q: string, risk = maxRisk, liftStars: number | null = null, useSources = sources) => {
+    /**
+     * `liftStars`: search once without this star minimum (the setting itself stays). `extra`: the side filters
+     * applied to every candidate (F19 "전체에서 다시 찾기") and the hidden repos shown (F20), this search only.
+     */
+    async (q: string, risk = maxRisk, liftStars: number | null = null, useSources = sources, extra: SearchExtra = {}) => {
       const text = q.trim();
       if (!text) return;
       // hidden minigame (docs/arasaka-game.md): this query opens it instead of searching
@@ -318,14 +356,25 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       staleRef.current = false;
       setLastQuery(text);
       onQuery(text);
-      searchedWith.current = { risk, sources: useSources };
-      setSearched({ risk, sources: useSources });
+      const serverFacets = extra.facets ? toServerFacets(extra.facets) : null;
+      const searchExtra: SearchExtra = { facets: serverFacets ? extra.facets : null, showHidden: !!extra.showHidden };
+      searchedWith.current = { risk, sources: useSources, ...searchExtra };
+      setSearched({ risk, sources: useSources, ...searchExtra });
       // the query goes in the address (UI debate 2-3) without adding a history entry per search
       if (window.location.pathname === '/') window.history.replaceState(null, '', logOn ? `/?q=${encodeURIComponent(text)}` : '/');
       try {
         await streamNdjson<SearchEvent>(
           '/search',
-          { query: text, filters: { sources: useSources, maxRisk: risk, ...(liftStars != null ? { minStars: 0 } : {}) } },
+          {
+            query: text,
+            filters: {
+              sources: useSources,
+              maxRisk: risk,
+              ...(liftStars != null ? { minStars: 0 } : {}),
+              ...(serverFacets ? { facets: serverFacets } : {}),
+              ...(extra.showHidden ? { showHidden: true } : {}),
+            },
+          },
           (e) => {
             if (ac.signal.aborted) return;
             switch (e.type) {
@@ -380,7 +429,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
    * star and risk limits). `more`: the next page appended to the cards on screen.
    */
   const openBrowse = useCallback(
-    async (view: BrowseView, risk = maxRisk, liftStars: number | null = null, more = false) => {
+    async (view: BrowseView, risk = maxRisk, liftStars: number | null = null, more = false, showHidden = false) => {
       const seq = ++browseSeq.current;
       const page = more ? browsePage.page + 1 : 1;
       if (!more) {
@@ -405,17 +454,26 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
         // a repo picked by name is read whole, not folded to its first two cards
         setOpenRepos(view.repo ? new Set([view.repo]) : new Set());
         setBrowseView(view);
-        searchedWith.current = { risk, sources };
-        setSearched({ risk, sources });
+        searchedWith.current = { risk, sources, showHidden };
+        setSearched({ risk, sources, showHidden });
         if (window.location.pathname === '/') window.history.replaceState(null, '', `/?${browseAddress(view)}`);
       }
       setBrowsePage((p) => ({ ...p, loading: true }));
       try {
-        const r = await apiGet<BrowseList>('/browse', browseQuery(view, page, risk, liftStars != null));
+        const r = await apiGet<BrowseList>('/browse', browseQuery(view, page, risk, liftStars != null, showHidden));
         if (seq !== browseSeq.current) return;
         const next = more ? [...items, ...r.items.filter((x) => !items.some((y) => y.id === x.id))] : r.items;
         setItems(next);
-        setFinal({ type: 'results', items: next, hiddenHighRisk: r.hiddenHighRisk, hiddenNoDescription: 0, hiddenLowStars: r.hiddenLowStars, hiddenUnknownStars: r.hiddenUnknownStars, minStars: r.minStars });
+        setFinal({
+          type: 'results',
+          items: next,
+          hiddenHighRisk: r.hiddenHighRisk,
+          hiddenNoDescription: 0,
+          hiddenLowStars: r.hiddenLowStars,
+          hiddenUnknownStars: r.hiddenUnknownStars,
+          minStars: r.minStars,
+          ...(r.hiddenByPrefs ? { hiddenByPrefs: r.hiddenByPrefs } : {}),
+        });
         setBrowsePage({ total: r.total, page: r.page, loading: false });
         setStatus('done');
       } catch (err) {
@@ -442,10 +500,13 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
     inputRef.current?.focus();
   };
 
-  /** The same results again with other limits: a browse view is read again, a search is run again. */
-  const again = (risk = maxRisk, liftStars: number | null = null, useSources = sources) => {
-    if (browseView) void openBrowse(browseView, risk, liftStars);
-    else void run(lastQuery, risk, liftStars, useSources);
+  /**
+   * The same results again with other limits: a browse view is read again, a search is run again. `extra` keeps
+   * what the results on screen were searched with (F19 facets, F20 hidden shown) unless given.
+   */
+  const again = (risk = maxRisk, liftStars: number | null = null, useSources = sources, extra: SearchExtra = { facets: searched.facets, showHidden: searched.showHidden }) => {
+    if (browseView) void openBrowse(browseView, risk, liftStars, false, !!extra.showHidden);
+    else void run(lastQuery, risk, liftStars, useSources, extra);
   };
 
   /** A pick from the search box's suggestions (F16): a name is searched; a repo or owner opens its skills. */
@@ -504,8 +565,9 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
     onQuery(q);
     setMaxRisk(snap.risk);
     setSources(snap.sources);
-    searchedWith.current = { risk: snap.risk, sources: snap.sources };
-    setSearched({ risk: snap.risk, sources: snap.sources });
+    const snapExtra: SearchExtra = { facets: snap.facets ?? null, showHidden: !!snap.showHidden };
+    searchedWith.current = { risk: snap.risk, sources: snap.sources, ...snapExtra };
+    setSearched({ risk: snap.risk, sources: snap.sources, ...snapExtra });
     setItems(snap.items);
     setFinal(snap.final);
     setDoneInfo(snap.doneInfo);
@@ -533,8 +595,12 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   // The risk limit above narrows what is on screen at once (project review 2026-11-02: "낮음만" still showed
   // "주의" cards until the next search); a wider limit or other sources need a new search, offered below.
   const riskOk = (it: ResultItem) => RISK_RANK[it.riskLevel] <= RISK_RANK[maxRisk];
-  const riskHiddenNow = items.filter((it) => !riskOk(it)).length;
-  const filtered = items.filter((it) => riskOk(it) && matchFacets(it, facets));
+  // F20: a repo hidden since these results came (from a card's menu) leaves them at once; the server leaves it out
+  // of the next search before the cut. Not when this search shows the hidden ones.
+  const hiddenNow = searched.showHidden ? [] : items.filter((it) => ownerPrefs.hidden(itemRepo(it)));
+  const live = hiddenNow.length ? items.filter((it) => !hiddenNow.includes(it)) : items;
+  const riskHiddenNow = live.filter((it) => !riskOk(it)).length;
+  const filtered = live.filter((it) => riskOk(it) && matchFacets(it, facets));
   const conditionsChanged =
     status === 'done' &&
     (RISK_RANK[maxRisk] > RISK_RANK[searched.risk] || sources.length !== searched.sources.length || sources.some((s) => !searched.sources.includes(s)));
@@ -555,6 +621,15 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
   );
   const filtering = facetCount(facets) > 0;
   const showFacets = status !== 'idle' && (items.length > 0 || filtering);
+  // F19: the side filters on every candidate, not only the results on screen (a search, not a browse view, which
+  // already reads the whole index). Offered while what is picked differs from what the results were searched with.
+  const canSearchAll = !browseView && status === 'done' && !!lastQuery && filtering && !sameFacets(facets, searched.facets);
+  const searchAll = () => again(maxRisk, liftedStars, sources, { facets, showHidden: searched.showHidden });
+  /** The server's counts over all candidates, while the filters are the ones it searched with. */
+  const serverCounts = searched.facets && sameFacets(facets, searched.facets) ? final?.facetCounts : undefined;
+  // F20: "숨긴 저장소 N개 · 보기": what the server left out plus what was hidden since
+  const hiddenByPrefs = (final?.hiddenByPrefs ?? 0) + hiddenNow.length;
+  const hiddenRepoCount = (final?.hiddenRepos ?? 0) + new Set(hiddenNow.map((it) => itemRepo(it))).size;
   const changeFacets = (f: Facets) => {
     setFacets(f);
     setPage(1);
@@ -767,7 +842,22 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
       )}
 
       <div className={showFacets ? 'results-layout' : undefined}>
-        {showFacets && <FacetPanel items={items.filter(riskOk)} value={facets} onChange={changeFacets} />}
+        {showFacets && (
+          <FacetPanel
+            items={live.filter(riskOk)}
+            value={facets}
+            onChange={changeFacets}
+            more
+            serverCounts={serverCounts}
+            footer={
+              canSearchAll && (
+                <button type="button" className="ghost facet-search-all" title={t('사이드 필터는 받은 결과 안에서만 거릅니다. 이 조건을 모든 후보에 먼저 적용해 다시 찾습니다(이번 검색만).')} onClick={searchAll}>
+                  {t('이 조건으로 전체에서 다시 찾기')}
+                </button>
+              )
+            }
+          />
+        )}
         <div className="results-main">
           {status !== 'idle' && (
             <div className="results-toolbar" ref={resultsRef}>
@@ -804,12 +894,37 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                   <span>
                     {tj('{0}개 결과', <b>{shown.length}</b>)}
                     {sorted.length > shown.length && <span className="muted small"> · {t('{0}개 접힘', sorted.length - shown.length)}</span>}
-                    {filtering && <span className="muted small">{' '}{t('· 필터로 {0}개 뺌', items.length - riskHiddenNow - sorted.length)}</span>}
+                    {filtering && <span className="muted small">{' '}{t('· 필터로 {0}개 뺌', live.length - riskHiddenNow - sorted.length)}</span>}
                     {riskHiddenNow > 0 && <span className="muted small">{' '}{t('· 위험 조건으로 {0}개 뺌', riskHiddenNow)}</span>}
                     {doneInfo && <span className="muted small"> · {doneInfo.cached ? t('저장된 결과') : t('{0}초', (doneInfo.elapsedMs / 1000).toFixed(1))}</span>}
                   </span>
                 )}
                 <ActiveFacets value={facets} onChange={changeFacets} />
+                {canSearchAll && (
+                  <button type="button" className="status-chip action" title={t('사이드 필터는 받은 결과 안에서만 거릅니다. 이 조건을 모든 후보에 먼저 적용해 다시 찾습니다(이번 검색만).')} onClick={searchAll}>
+                    {t('이 조건으로 전체에서 다시 찾기')}
+                  </button>
+                )}
+                {status === 'done' && !browseView && searched.facets && (
+                  <button type="button" className="status-chip action" title={t('사이드 필터를 받은 결과 안에서만 쓰는 보통 검색으로 돌아갑니다')} onClick={() => again(maxRisk, liftedStars, sources, { facets: null, showHidden: searched.showHidden })}>
+                    {t('전체 후보에서 거른 결과 · 되돌리기')}
+                  </button>
+                )}
+                {hiddenByPrefs > 0 && !searched.showHidden && (
+                  <button
+                    type="button"
+                    className="status-chip action"
+                    title={t('숨긴 저장소의 결과 {0}개를 뺐습니다. 이번만 숨김 없이 다시 찾습니다(숨긴 목록은 그대로, 설정에서 관리).', hiddenByPrefs)}
+                    onClick={() => again(maxRisk, liftedStars, sources, { facets: searched.facets, showHidden: true })}
+                  >
+                    {hiddenRepoCount > 0 ? t('숨긴 저장소 {0}개 · 보기', hiddenRepoCount) : t('숨긴 저장소의 결과 {0}개 · 보기', hiddenByPrefs)}
+                  </button>
+                )}
+                {status === 'done' && searched.showHidden && (
+                  <button type="button" className="status-chip action" title={t('숨긴 저장소를 다시 뺍니다')} onClick={() => again(maxRisk, liftedStars, sources, { facets: searched.facets, showHidden: false })}>
+                    {t('숨긴 저장소도 보는 중 · 되돌리기')}
+                  </button>
+                )}
                 {hiddenRisky > 0 && (
                   <button
                     type="button"
@@ -1041,7 +1156,10 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
                       setOpenNames((s) => new Set(s).add(same.key));
                     }}
                   >
-                    {tj('같은 이름 {0} {1}개 더 보기', <span className="mono">{it.name}</span>, same.count)}
+                    {same.key.startsWith('c:')
+                      ? tj('같은 계열 {0} {1}개 더 보기', <span className="mono">{it.name}</span>, same.count)
+                      : tj('같은 이름 {0} {1}개 더 보기', <span className="mono">{it.name}</span>, same.count)}
+                    {same.renamed ? t(' · 이름 다른 사본 {0}개 포함', same.renamed) : null}
                     {same.riskier && <span className="warn-text">{t(' · 위험 주의 포함')}</span>}
                   </button>
                 )}
@@ -1145,7 +1263,7 @@ export function SearchPage({ onOpen, onQuery }: { onOpen: (item: ResultItem, fro
           {browseView && status === 'done' && items.length > 0 && items.length < browsePage.total && (
             // the next 50 of the view join the cards (and their pages) on screen
             <div className="browse-more">
-              <button type="button" className="ghost" disabled={browsePage.loading} onClick={() => void openBrowse(browseView, searched.risk, liftedStars, true)}>
+              <button type="button" className="ghost" disabled={browsePage.loading} onClick={() => void openBrowse(browseView, searched.risk, liftedStars, true, !!searched.showHidden)}>
                 {browsePage.loading ? t('불러오는 중…') : t('{0}개 더 불러오기', Math.min(50, browsePage.total - items.length))}
               </button>
             </div>

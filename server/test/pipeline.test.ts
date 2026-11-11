@@ -703,13 +703,15 @@ describe('결과 정리', () => {
 describe('캐시에 남는 검색의 모양 (전체 점검 #12)', () => {
   // A cached search replays these objects as they were stored. A field added, removed or changed in meaning here
   // must bump RESULTS_VERSION (pipeline.ts) so older cached searches are not shown, then this list.
-  const RESULT_FIELDS = ['type', 'items', 'hiddenHighRisk', 'hiddenNoDescription', 'hiddenLowStars', 'hiddenUnknownStars', 'minStars', 'hiddenNoMatch', 'suggestQuery', 'broadQuery', 'repos', 'aliases', 'spelling'];
-  const ITEM_FIELDS = ['id', 'name', 'copies', 'description', 'sources', 'installs', 'stars', 'lastCommitAt', 'score', 'breakdown', 'riskLevel', 'riskFlags', 'qualityWarnings', 'install', 'plugin', 'trust', 'categories', 'tier', 'installsSuspect'];
+  // stage 3 (version 23): hiddenByPrefs·hiddenRepos (F20), facets·facetCounts (F19) on results; license·manualOnly (F19)
+  // and clusterId (B8) on items, each only when it has a value
+  const RESULT_FIELDS = ['type', 'items', 'hiddenHighRisk', 'hiddenNoDescription', 'hiddenLowStars', 'hiddenUnknownStars', 'minStars', 'hiddenNoMatch', 'suggestQuery', 'broadQuery', 'repos', 'aliases', 'spelling', 'hiddenByPrefs', 'hiddenRepos', 'facets', 'facetCounts'];
+  const ITEM_FIELDS = ['id', 'name', 'copies', 'description', 'sources', 'installs', 'stars', 'lastCommitAt', 'score', 'breakdown', 'riskLevel', 'riskFlags', 'qualityWarnings', 'install', 'plugin', 'trust', 'categories', 'tier', 'installsSuspect', 'license', 'manualOnly', 'clusterId'];
   const WARNING_FIELDS = ['type', 'source', 'message', 'severity'];
 
-  it('결과·항목·경고의 필드가 정해 둔 것뿐이고, 버전은 18이다', async () => {
+  it('결과·항목·경고의 필드가 정해 둔 것뿐이고, 버전이 목록과 함께 간다', async () => {
     const { RESULTS_VERSION } = await import('../src/search/pipeline.ts');
-    assert.equal(RESULTS_VERSION, 22, '버전을 올렸으면 이 테스트의 필드 목록도 맞추세요');
+    assert.equal(RESULTS_VERSION, 23, '버전을 올렸으면 이 테스트의 필드 목록도 맞추세요');
     const ctx = ctxWithSkills();
     for (const q of ['pdf tables', 'PDF에서 표 추출', 'pdf']) {
       const events = await collect(deps(ctx), q);

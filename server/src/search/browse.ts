@@ -1,6 +1,7 @@
 import { RISK_ORDER, type RiskLevel } from '../analyze/risk.ts';
 import type { AppContext } from '../context.ts';
 import type { SkillRow, Store } from '../db/store.ts';
+import { ownerFilter, type OwnerFilter } from '../prefs/ownerPrefs.ts';
 import { getSettings } from '../settings.ts';
 import { CATEGORIES, categorize, type Category } from './category.ts';
 import { indexGeneration } from './indexGeneration.ts';
@@ -52,6 +53,8 @@ export type BrowseQuery = {
   maxRisk?: RiskLevel;
   /** Overrides the star-minimum setting (0: none), as a search's "별 기준 없이 다시 찾기". */
   minStars?: number;
+  /** This view shows the hidden repositories too (F20 "숨긴 저장소 N개 · 보기"). */
+  showHidden?: boolean;
 };
 
 type Entry = {
@@ -79,7 +82,7 @@ type Card = { rep: Entry; installs: number | null; suspect: InstallsSuspect | nu
 
 type Index = { gen: number; at: number; entries: Entry[]; pluginSize: Map<string, number>; visible: Map<string, { cards: Card[]; hidden: Hidden }> };
 /** Left out under the limits, one entry per SKILL.md not shown through another copy: counted per view. */
-type Hidden = { risky: Entry[]; low: Entry[]; unknown: Entry[] };
+type Hidden = { risky: Entry[]; low: Entry[]; unknown: Entry[]; prefs: Entry[] };
 
 const indexes = new WeakMap<Store, Index>();
 
@@ -180,8 +183,9 @@ const byCard = (a: Card, b: Card) =>
  * What a search would show of the whole index under these limits: risk and stars first (a hidden high-risk copy
  * does not take its lower-risk copies with it, as in buildResults), then one card per SKILL.md. Kept per limits.
  */
-function visibleCards(ix: Index, maxRisk: RiskLevel, minStars: number): { cards: Card[]; hidden: Hidden } {
-  const key = `${maxRisk}:${minStars}`;
+function visibleCards(ix: Index, maxRisk: RiskLevel, minStars: number, owners: OwnerFilter): { cards: Card[]; hidden: Hidden } {
+  // hidden repos (F20) leave first, as in a search; the hidden list's hash keeps one cached view per list
+  const key = `${maxRisk}:${minStars}:${owners.hideHash}`;
   const hit = ix.visible.get(key);
   if (hit) return hit;
   const exempt = (e: Entry) => e.tier === 'official' || e.tier === 'partner';
@@ -189,10 +193,17 @@ function visibleCards(ix: Index, maxRisk: RiskLevel, minStars: number): { cards:
   const risky: Array<{ k: string; e: Entry }> = [];
   const low: Array<{ k: string; e: Entry }> = [];
   const unknown: Array<{ k: string; e: Entry }> = [];
+  const prefs: Array<{ k: string; e: Entry }> = [];
   const groups = new Map<string, Entry[]>();
   const order: Entry[][] = [];
   for (const e of ix.entries) {
     const k = e.mdSha ?? `id:${e.id}`;
+    if (owners.anyHidden && owners.hidden(e.repo)) {
+      // counted only when showing hidden repos would bring it back: one also over the risk limit or under the star
+      // line stays out either way (the chip said 5 and showed 2; review 2026-11-10)
+      if (RISK_ORDER[e.risk] <= RISK_ORDER[maxRisk] && starsPass(e)) prefs.push({ k, e });
+      continue;
+    }
     if (RISK_ORDER[e.risk] > RISK_ORDER[maxRisk]) {
       if (starsPass(e)) risky.push({ k, e });
       continue;
@@ -223,7 +234,7 @@ function visibleCards(ix: Index, maxRisk: RiskLevel, minStars: number): { cards:
     const seen = new Set<string>();
     return list.filter((x) => !shown.has(x.k) && !seen.has(x.k) && (seen.add(x.k), true)).map((x) => x.e);
   };
-  const out = { cards, hidden: { risky: only(risky), low: only(low), unknown: only(unknown) } };
+  const out = { cards, hidden: { risky: only(risky), low: only(low), unknown: only(unknown), prefs: only(prefs) } };
   ix.visible.set(key, out);
   return out;
 }
@@ -272,6 +283,8 @@ export type BrowseList = {
   hiddenLowStars: number;
   hiddenUnknownStars: number;
   minStars: number;
+  /** Cards left out because their repo or owner is hidden (F20); absent when nothing is hidden. */
+  hiddenByPrefs?: number;
 };
 
 export function browse(store: Store, q: BrowseQuery, now = Date.now()): BrowseOverview | BrowseList {
@@ -279,7 +292,8 @@ export function browse(store: Store, q: BrowseQuery, now = Date.now()): BrowseOv
   const minStars = q.minStars ?? settings.minStars;
   const maxRisk = q.maxRisk ?? 'medium';
   const ix = indexOf(store, now);
-  const { cards, hidden } = visibleCards(ix, maxRisk, minStars);
+  const owners = ownerFilter(store, { showHidden: q.showHidden });
+  const { cards, hidden } = visibleCards(ix, maxRisk, minStars, owners);
   const since = newSince(store, now);
   if (q.section === 'overview') {
     const cats = new Map<Category, number>(CATEGORIES.map((c) => [c, 0]));
@@ -337,6 +351,7 @@ export function browse(store: Store, q: BrowseQuery, now = Date.now()): BrowseOv
     items.push(c.suspect ? { ...item, installsSuspect: c.suspect } : item);
   }
   const count = (list: Entry[]) => list.filter((e) => matches(q, e, since, ix.pluginSize)).length;
+  const hiddenByPrefs = hidden.prefs.length ? count(hidden.prefs) : 0;
   return {
     section: q.section,
     items,
@@ -347,6 +362,7 @@ export function browse(store: Store, q: BrowseQuery, now = Date.now()): BrowseOv
     hiddenLowStars: count(hidden.low),
     hiddenUnknownStars: count(hidden.unknown),
     minStars,
+    ...(hiddenByPrefs ? { hiddenByPrefs } : {}),
   };
 }
 

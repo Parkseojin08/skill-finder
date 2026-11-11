@@ -2,11 +2,27 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { AppContext } from '../context.ts';
 import { searchActivity } from '../search/activity.ts';
+import { RUN_FEATURES, UPDATED_WITHIN } from '../search/facets.ts';
 import { runSearch, type SearchDeps, type SearchEvent } from '../search/pipeline.ts';
 import { searchLogger } from '../search/searchLog.ts';
 import { getSettings } from '../settings.ts';
 import { searchSkillsSh } from '../sources/skillsSh.ts';
 import { ndjson } from '../util/ndjson.ts';
+
+const word = (max: number) => z.string().min(1).max(max).regex(/^[A-Za-z0-9._+-]+$/);
+/** search/facets.ts SearchFacets; values are free words of a closed alphabet (a category or license not known matches nothing). */
+const Facets = z
+  .object({
+    trust: z.array(z.enum(['official', 'partner', 'community', 'other'])).max(4).optional(),
+    category: z.array(word(40)).max(30).optional(),
+    method: z.array(word(40)).max(10).optional(),
+    license: z.array(word(60)).max(30).optional(),
+    run: z.array(z.enum(RUN_FEATURES)).max(3).optional(),
+    updated: z.enum(UPDATED_WITHIN).optional(),
+    owner: z.array(z.string().regex(/^[A-Za-z0-9-]{1,39}$/)).max(30).optional(),
+    trusted: z.boolean().optional(),
+  })
+  .strict();
 
 const Body = z.object({
   query: z.string().trim().min(1).max(300),
@@ -17,6 +33,10 @@ const Body = z.object({
       marketplaces: z.array(z.string().max(128)).max(20).optional(),
       // "별 N개 미만 숨김 · 보기": this search only, the setting stays
       minStars: z.number().int().min(0).max(10_000_000).optional(),
+      // "이 조건으로 전체에서 다시 찾기" (F19): the side filters, applied before the cut
+      facets: Facets.optional(),
+      // "숨긴 저장소 N개 · 보기" (F20): this search only, the hidden list stays
+      showHidden: z.boolean().optional(),
     })
     .optional(),
 });

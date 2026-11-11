@@ -21,6 +21,11 @@ import { ChangesTab } from '../components/ChangesTab.tsx';
 import { InstalledChangeChip, PluginPinChip, type Drift, type PinMoved } from '../components/InstalledChange.tsx';
 import { CHECK_LABEL, CheckChips, OverlapPairs } from '../components/InstalledChecks.tsx';
 import { installedChecks, shownPairs, type CheckKey, type InstalledCheckResponse } from '../lib/installedCheck.ts';
+import { Count30Cell, fetchUsage, LastUsedCell, OnlyProjectHint, usageOf, type UsageResponse } from '../components/UsageColumns.tsx';
+import { keptText, RemoveKeepNote, type QuarantineOutcome } from '../components/Quarantine.tsx';
+import { AllProjects } from '../components/AllProjects.tsx';
+import { ProjectStandard } from '../components/ProjectStandard.tsx';
+import { LintDialog } from '../components/LintDialog.tsx';
 
 /** How an install compares with the index (UI debate 3-3); shown only, nothing is updated from here. */
 const CHANGE: Record<InstallChange, string | null> = {
@@ -131,6 +136,9 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
   const [data, setData] = useState<InstalledResponse | null>(null);
   /** The folder `data` lists (the input may already hold another one). */
   const [loadedPath, setLoadedPath] = useState('');
+  const [allProjects, setAllProjects] = useState(false);
+  // "검사" on a skill the index does not know (F15): the folder being checked
+  const [linting, setLinting] = useState<{ path: string; projectPath: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -149,6 +157,10 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
   const [checkLoading, setCheckLoading] = useState(false);
   const [checkFilter, setCheckFilter] = useState<CheckKey | null>(null);
   const checkSeq = useRef(0);
+  /** Skill uses from the transcripts (F11); null while the setting is off or before the first read (columns hidden). */
+  const [usage, setUsage] = useState<UsageResponse | null>(null);
+  const [idleOnly, setIdleOnly] = useState(false);
+  const usageSeq = useRef(0);
 
   // Only the latest request may update the screen: typing a path fires one request per pause, and an
   // older answer for a half-typed path ("…skill finde") arriving last used to show "스킬 (0)".
@@ -168,6 +180,8 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
       .then((c) => cid === checkSeq.current && setCheck(c))
       .catch(() => cid === checkSeq.current && setCheck(null))
       .finally(() => cid === checkSeq.current && setCheckLoading(false));
+    const uid = ++usageSeq.current;
+    void fetchUsage(path.trim()).then((u) => uid === usageSeq.current && setUsage(u));
     apiGet<InstalledResponse>('/installed', { projectPath: path.trim() || undefined })
       .then((d) => {
         if (id !== seq.current) return;
@@ -197,9 +211,10 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
     setBusy(key);
     setMsg(null);
     try {
-      const r = await apiSend<{ ok: boolean; message: string }>('POST', '/uninstall', body);
+      const r = await apiSend<{ ok: boolean; message: string; quarantine?: QuarantineOutcome }>('POST', '/uninstall', body);
       forgetInstalled();
-      setMsg({ ok: true, text: `${label}: ${serverText(r.message)}` });
+      // F14: whether a copy was kept for undo
+      setMsg({ ok: true, text: `${label}: ${serverText(r.message)}${keptText(r.quarantine)}` });
       load(projectPath);
     } catch (e) {
       setMsg({ ok: false, text: `${label}: ${String((e as Error).message ?? e)}` });
@@ -265,7 +280,16 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
     tabRef.current = v;
     if (window.location.pathname === '/installed') window.history.replaceState(window.history.state, '', installedUrl(projectPath.trim(), v));
   };
-  const shownRows = rows.filter((r) => matchRow(r, rowFilters) && facetOk(r) && checkOk(r));
+  // F11: uses per row while reading is on; "idle": costs tokens every turn and not used in 30 days
+  const usageOn = !!usage?.enabled && !!usage.scannedAt;
+  const useOf = (r: Row) => usageOf(r, usage);
+  const isIdle = (r: Row) => {
+    const u = useOf(r);
+    return !!u && u.count30 === 0 && r.tokens.perTurn > 0 && r.plugin?.enabled !== false && forClaude(r);
+  };
+  const idleRows = usageOn ? rows.filter(isIdle) : [];
+  const usageFilterOk = (r: Row) => !idleOnly || !usageOn || isIdle(r);
+  const shownRows = rows.filter((r) => matchRow(r, rowFilters) && facetOk(r) && checkOk(r) && usageFilterOk(r));
   const unindexedSkills = rows.filter((r) => !r.skillId).length;
   // a plugin that is off loads none of its skills, and Claude Code does not read the other agents' folders
   const perTurn = rows.filter((r) => r.plugin?.enabled !== false && forClaude(r)).reduce((n, r) => n + r.tokens.perTurn, 0);
@@ -288,6 +312,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
     setFacets(NO_FACETS);
     setRowFilters(NO_ROW_FILTERS);
     setCheckFilter(null);
+    setIdleOnly(false);
     setPage(1);
   };
   const rowGroups = (
@@ -346,10 +371,10 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
           </button>
         )}
       </form>
-      {(data?.projects.length ?? 0) > 0 && (
+      {data && (
         <div className="examples">
-          <span className="muted small">{t('앱으로 설치한 프로젝트:')}</span>
-          {data!.projects.map((p) => (
+          {data.projects.length > 0 && <span className="muted small">{t('앱으로 설치한 프로젝트:')}</span>}
+          {data.projects.map((p) => (
             <button
               key={p}
               type="button"
@@ -361,17 +386,45 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
                 load(p);
               }}
             >
-              {chipLabel(p, data!.projects)}
+              {chipLabel(p, data.projects)}
             </button>
           ))}
+          <button type="button" className={`chip-btn${allProjects ? ' current' : ''}`} aria-expanded={allProjects} onClick={() => setAllProjects((v) => !v)}>
+            {t('모든 프로젝트')}
+          </button>
         </div>
+      )}
+      {allProjects && (
+        <AllProjects
+          onPickProject={(p) => {
+            clearTimeout(typingTimer.current);
+            setProjectPath(p);
+            load(p);
+            setAllProjects(false);
+          }}
+        />
       )}
       <div role="status">{msg && <p className={msg.ok ? 'ok-box' : 'warn-box'}>{msg.text}</p>}</div>
       {confirming && (
         <ConfirmDialog title={t('{0} 삭제', confirming.label)} confirmLabel={t('삭제')} danger onConfirm={() => remove(confirming)} onCancel={() => setConfirming(null)}>
           <p>{confirming.detail}</p>
-          <p className="muted small">{t('되돌릴 수 없습니다. 다시 쓰려면 다시 설치해야 합니다.')}</p>
+          {confirming.body.kind === 'skill' ? (
+            <RemoveKeepNote scope={confirming.body.scope} projectPath={confirming.body.projectPath} agent={confirming.body.agent} folder={confirming.body.id} />
+          ) : (
+            <p className="muted small">{t('되돌릴 수 없습니다. 다시 쓰려면 다시 설치해야 합니다.')}</p>
+          )}
         </ConfirmDialog>
+      )}
+      {linting && (
+        <LintDialog
+          path={linting.path}
+          projectPath={linting.projectPath}
+          onOpenChange={(open) => !open && setLinting(null)}
+          onOpenSkill={(id) => {
+            setLinting(null);
+            onOpenSkill(id, loadedPath || undefined);
+          }}
+        />
       )}
       <Tabs value={tab} onValueChange={(v) => changeTab(v as InstalledTab)}>
         <TabsList variant="line" aria-label={t('설치됨 보기')} className="mb-2 w-full justify-start border-b border-[var(--line)] group-data-horizontal/tabs:h-auto">
@@ -389,6 +442,8 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
       {error && <p className="warn-box">{error}</p>}
       {data && (
         <>
+          {/* keyed by the folder: another folder starts empty, not with the last one's missing list (review 2026-11-10) */}
+          {loadedPath && <ProjectStandard key={loadedPath} projectPath={loadedPath} reloadKey={data} onInstalled={() => load(loadedPath)} />}
           {rows.length + managed.length > 0 && <CheckChips chips={chips} active={activeCheck?.key ?? null} onToggle={toggleCheck} loadingCheck={checkLoading && !check} />}
           <section>
             <h2>{t('플러그인 ({0})', managed.length)}</h2>
@@ -523,6 +578,21 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
                           {t('점검 {0}', CHECK_LABEL[activeCheck.key](activeCheck.count))} ×
                         </button>
                       )}
+                      {usageOn && idleRows.length > 0 && (
+                        <button
+                          type="button"
+                          className={`status-chip action${idleOnly ? ' bg-[var(--neon-soft)]' : ''}`}
+                          aria-pressed={idleOnly}
+                          title={t('매 턴 컨텍스트를 차지하지만 최근 30일 대화 기록에서 한 번도 쓰지 않은 스킬입니다.')}
+                          onClick={() => {
+                            setIdleOnly(!idleOnly);
+                            setPage(1);
+                          }}
+                        >
+                          {t('30일 동안 안 씀 {0}개 · 매 턴 약 {1}토큰', idleRows.length, idleRows.reduce((n, r) => n + r.tokens.perTurn, 0).toLocaleString())}
+                          {idleOnly && ' ×'}
+                        </button>
+                      )}
                       {rowFiltersOn.map(([g, k]) => (
                         <button key={`${g}:${k}`} type="button" className="status-chip action" aria-label={t('필터 {0} 끄기', ROW_OPTIONS[g][k])} onClick={() => toggleRowFilter(g, k)}>
                           {t('필터 {0}', ROW_OPTIONS[g][k])} ×
@@ -562,6 +632,8 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
                           <th>{t('이름')}</th>
                           <th>{t('에이전트')}</th>
                           <th>{t('범위')}</th>
+                          {usageOn && <th>{t('마지막 사용')}</th>}
+                          {usageOn && <th>{t('30일')}</th>}
                           <th>{t('설명')}</th>
                           <th>{t('위험')}</th>
                           <th>
@@ -573,6 +645,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
                         {pageRows.map((s) => {
                           const key = `s:${s.path}`;
                           const item = itemOf(s);
+                          const use = usageOn ? useOf(s) : null;
                           return (
                             <tr key={key}>
                               <td>
@@ -607,7 +680,14 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
                                     {s.plugin.enabled === false && ` · ${t('꺼짐')}`}
                                   </div>
                                 )}
+                                {use && s.scope === 'user' && !s.plugin && <OnlyProjectHint use={use} />}
                               </td>
+                              {usageOn && <td>{use && <LastUsedCell use={use} />}</td>}
+                              {usageOn && (
+                                <td>
+                                  {use && <Count30Cell use={use} perTurn={s.plugin?.enabled === false || !forClaude(s) ? 0 : s.tokens.perTurn} loaded={usageOn} />}
+                                </td>
+                              )}
                               <td className="small">
                                 <Description text={s.description} />
                               </td>
@@ -632,6 +712,18 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
                                 {!s.plugin && s.removable === false && (
                                   <button type="button" className="ghost danger" disabled title={t('다른 에이전트 폴더의 스킬은 이 앱에서 지우지 않습니다. 그 에이전트에서 지우세요.')}>
                                     {t('삭제')}
+                                  </button>
+                                )}
+                                {/* a skill made here (not in the index) can be checked with the index's own rules (F15) */}
+                                {!s.plugin && !s.skillId && (
+                                  <button
+                                    type="button"
+                                    className="ghost"
+                                    onClick={() => setLinting({ path: s.path, projectPath: s.scope === 'project' ? loadedPath || null : null })}
+                                    aria-label={t('{0} 검사', s.name)}
+                                    title={t('색인에 없는 내 스킬을 색인과 같은 규칙으로 검사합니다. 파일은 읽기만 합니다.')}
+                                  >
+                                    {t('검사')}
                                   </button>
                                 )}
                                 {!s.plugin && s.removable !== false && (
@@ -687,7 +779,7 @@ export function InstalledPage({ onOpenSkill }: { onOpenSkill: (id: string, proje
           {(data || error) && <AgentConfigTab projectPath={loadedPath} />}
         </TabsContent>
         <TabsContent value="changes" className="text-[length:inherit] leading-[inherit]">
-          <ChangesTab onOpenSkill={(id) => onOpenSkill(id, loadedPath || undefined)} />
+          <ChangesTab onOpenSkill={(id) => onOpenSkill(id, loadedPath || undefined)} onRestored={() => load(loadedPath)} />
         </TabsContent>
       </Tabs>
     </div>

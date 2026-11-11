@@ -6,7 +6,7 @@ import type { SkillRow, Store } from '../db/store.ts';
 import type { Indexer, PluginRunConfig } from '../indexer.ts';
 import type { GitHub } from '../sources/github.ts';
 import type { InstallPlan } from './plan.ts';
-import { scanSkillFiles, type FileScan } from './scan.ts';
+import { needsTick, scanSkillFiles, type FileScan } from './scan.ts';
 
 /**
  * What the install brings besides SKILL.md (project review F1): a skill folder's other text files checked at the
@@ -20,14 +20,15 @@ export async function runInstallScan(ctx: { store: Store; github: GitHub; indexe
 }
 
 /**
- * The check found what needs the confirm tick, as the page's scanIsHigh judges it: a download-and-run line in an
- * installed file or a plugin's command, or a plugin command or agent document rated high (decision 10).
+ * The check found what needs the confirm tick, as the page's scanIsHigh judges it: a download-and-run line (or
+ * another signal of risk.ts TICK_FLAGS, decision 9) in an installed file or a plugin's command, or a plugin command
+ * or agent document rated high (decision 10).
  */
 export function scanNeedsTick(scan: InstallScanResult | null): boolean {
   if (!scan) return false;
   if (scan.kind === 'failed') return true;
-  if (scan.kind === 'files') return scan.scan.findings.some((f) => f.flags.includes('curlPipeShell'));
-  if (scan.kind === 'plugin') return scan.config.items.some((it) => it.flags.includes('curlPipeShell') || it.level === 'high');
+  if (scan.kind === 'files') return scan.scan.findings.some((f) => needsTick(f.flags));
+  if (scan.kind === 'plugin') return scan.config.items.some((it) => needsTick(it.flags) || it.level === 'high');
   return false;
 }
 

@@ -6,6 +6,7 @@ import { SizedCache } from '../util/sizedCache.ts';
 import { sanitizeLine } from '../util/sanitize.ts';
 import { RateLimitWait, Semaphore, sleep, TokenBucket } from '../util/limiter.ts';
 import { noteRepoChange, setRepoHeadSha, watchedRepos, type WatchedRepo } from '../watch/notices.ts';
+import { stmt } from '../dedupe/rows.ts';
 import { gitTree, lsRemote, type RemoteRef, type TreeEntry } from './gitTree.ts';
 
 /** Tree entries the tree cache may hold (perf debate 1-3); kubernetes, the largest seen, has about 42,000. */
@@ -46,9 +47,57 @@ type GraphRepo = {
   licenseInfo?: { spdxId?: unknown } | null;
   defaultBranchRef?: { name?: unknown; target?: { oid?: unknown } | null } | null;
   nameWithOwner?: unknown;
+  createdAt?: unknown;
+  parent?: { nameWithOwner?: unknown } | null;
+  owner?: { __typename?: unknown } | null;
 };
 const OID_RE = /^[0-9a-f]{40}$/;
+/** Known repos one metadata batch asks about again before marking them gone (each is one more request). */
+const GONE_CONFIRM_MAX = 20;
 const REPO_RE = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
+
+/** Source card (F5): what GitHub says about where a repo comes from. */
+export type RepoSource = { created_at: string | null; owner_type: string | null; parent: string | null };
+const OWNER_TYPES = new Set(['User', 'Organization', 'Bot', 'Enterprise', 'Mannequin']);
+const isoOrNull = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(v) ? v : null);
+/** Checked before it is stored: a GraphQL or REST answer is outside data. */
+export function repoSource(createdAt: unknown, ownerType: unknown, parent: unknown): RepoSource {
+  return {
+    created_at: isoOrNull(createdAt),
+    owner_type: typeof ownerType === 'string' && OWNER_TYPES.has(ownerType) ? ownerType : null,
+    parent: typeof parent === 'string' && REPO_RE.test(parent) ? parent : null,
+  };
+}
+
+/** A repo GitHub answered for: its source fields, no longer gone (upsertRepo leaves these columns alone). */
+export function saveRepoSource(store: Store, fullName: string, src: RepoSource): void {
+  stmt(store, 'UPDATE repos SET created_at = COALESCE(?, created_at), owner_type = COALESCE(?, owner_type), parent = ?, gone_at = NULL WHERE full_name = ?').run(
+    src.created_at,
+    src.owner_type,
+    src.parent,
+    fullName,
+  );
+}
+
+/** GitHub said the repo is not there (deleted, or made private): when that was first seen, kept until it is back. */
+export function markRepoGone(store: Store, fullName: string, at = new Date().toISOString()): void {
+  stmt(store, 'UPDATE repos SET gone_at = COALESCE(gone_at, ?) WHERE full_name = ?').run(at, fullName);
+}
+
+/** The UTC day of a time, as repo_stars_daily keys it. */
+export const starsDay = (at: string | number | Date = Date.now()) => new Date(at).toISOString().slice(0, 10);
+/** Days of star counts kept ("rising repos", F17 stage 2, needs two weeks of them). */
+export const STARS_DAILY_KEEP_DAYS = 90;
+
+/** One star count per repo a day (the first of the day is kept). */
+export function recordStars(store: Store, fullName: string, stars: number, at: string | number | Date = Date.now()): void {
+  stmt(store, 'INSERT OR IGNORE INTO repo_stars_daily (full_name, day, stars) VALUES (?, ?, ?)').run(fullName, starsDay(at), stars);
+}
+
+/** Deletes star counts older than STARS_DAILY_KEEP_DAYS; returns how many went. */
+export function pruneRepoStars(store: Store, now = Date.now()): number {
+  return Number(stmt(store, 'DELETE FROM repo_stars_daily WHERE day < ?').run(starsDay(now - STARS_DAILY_KEEP_DAYS * DAY_MS)).changes);
+}
 
 /**
  * P9: GitHub answers for a renamed or transferred repo under its old name with the new one's data; its name then
@@ -353,8 +402,10 @@ export class GitHub {
         if (res.status === 404 && cached?.stars == null) {
           const row: RepoRow = { full_name: cached?.full_name ?? repo, stars: null, pushed_at: null, archived: null, fork: null, license: null, default_branch: null, etag: null, fetched_at: new Date().toISOString() };
           this.store.upsertRepo(row);
+          markRepoGone(this.store, row.full_name);
           return row;
         }
+        if (res.status === 404 && cached) markRepoGone(this.store, cached.full_name);
         return cached ?? null;
       }
       const j = (await res.json()) as {
@@ -365,6 +416,9 @@ export class GitHub {
         fork: boolean;
         license: { spdx_id?: string | null } | null;
         default_branch: string;
+        created_at?: string;
+        owner?: { type?: string } | null;
+        parent?: { full_name?: string } | null;
       };
       const row: RepoRow = {
         full_name: cached?.full_name ?? repo,
@@ -380,7 +434,10 @@ export class GitHub {
       this.store.upsertRepo(row);
       row.moved_to = movedName(repo, j.full_name);
       this.store.setRepoMovedTo(row.full_name, row.moved_to);
-      return row;
+      const src = repoSource(j.created_at, j.owner?.type, j.fork ? j.parent?.full_name : null);
+      saveRepoSource(this.store, row.full_name, src);
+      if (typeof j.stargazers_count === 'number') recordStars(this.store, row.full_name, j.stargazers_count);
+      return { ...row, ...src, gone_at: null };
     } catch {
       return cached ?? null;
     }
@@ -406,7 +463,8 @@ export class GitHub {
       defs.push(`$o${i}: String!, $n${i}: String!`);
       // B3: the default branch's commit comes along (head_sha), so the repo watch knows which repos changed
       fields.push(
-        `r${i}: repository(owner: $o${i}, name: $n${i}) { stargazerCount pushedAt isArchived isFork licenseInfo { spdxId } defaultBranchRef { name target { ... on Commit { oid } } } nameWithOwner }`,
+        // F5: when it was made, whose it is and what it was forked from, for the source card
+        `r${i}: repository(owner: $o${i}, name: $n${i}) { stargazerCount pushedAt isArchived isFork licenseInfo { spdxId } defaultBranchRef { name target { ... on Commit { oid } } } nameWithOwner createdAt parent { nameWithOwner } owner { __typename } }`,
       );
     });
     const res = await fetch(`${API}/graphql`, {
@@ -428,6 +486,8 @@ export class GitHub {
     let stored = 0;
     // F7: the installed and favorite skills' repos, read once per call and only when one was archived or moved
     let watched: Map<string, WatchedRepo> | null = null;
+    // known repos GraphQL did not find: asked once more (REST, or git without a token) before they are marked gone
+    const confirmGone: string[] = [];
     list.forEach((repo, i) => {
       const g = body.data?.[`r${i}`];
       const cached = this.store.getRepo(repo);
@@ -445,6 +505,8 @@ export class GitHub {
           default_branch: typeof g.defaultBranchRef?.name === 'string' ? g.defaultBranchRef.name : null,
         });
         this.store.setRepoMovedTo(base.full_name, movedTo);
+        saveRepoSource(this.store, base.full_name, repoSource(g.createdAt, g.owner?.__typename, g.isFork ? g.parent?.nameWithOwner : null));
+        recordStars(this.store, base.full_name, g.stargazerCount, at);
         const oid = g.defaultBranchRef?.target?.oid;
         // an empty repo has no default branch commit: its head is unknown, not "changed"
         setRepoHeadSha(this.store, base.full_name, typeof oid === 'string' && OID_RE.test(oid) ? oid : null);
@@ -455,16 +517,24 @@ export class GitHub {
         stored++;
       } else if (notFound.has(`r${i}`)) {
         if (cached?.stars != null) {
-          // known before (the token may just not see it now): keep what we had, ask again next refresh
+          // known before (the token may just not see it now): keep what we had, ask again next refresh. "사라짐" on
+          // the source card (F5) waits for a second, definite answer below: this one alone showed a repo as gone
+          // that a later read found again (review 2026-11-10)
           this.store.touchRepo(cached.full_name);
+          if (confirmGone.length < GONE_CONFIRM_MAX) confirmGone.push(cached.full_name);
         } else {
           // deleted or private and never seen: remembered as unknown ("모르면 숨김") instead of asked every search
           this.store.upsertRepo({ ...base, stars: null, pushed_at: null, archived: null, fork: null, license: null, default_branch: null });
+          // F5: GitHub said it is not there; the source card says since when (cleared once it answers again)
+          markRepoGone(this.store, base.full_name, at);
         }
         stored++;
       }
       // any other error (a timeout, a permission problem) leaves the row as it was
     });
+    for (const name of confirmGone) {
+      if ((await this.repoExists(name).catch(() => null)) === false) markRepoGone(this.store, name, at);
+    }
     return stored;
   }
 

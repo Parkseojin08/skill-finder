@@ -1,5 +1,5 @@
 import type { InstallScan as Scan, RunConfigItem } from '../types.ts';
-import type { Evidence, HookRow, LspRow, McpRow, RunConfigTable } from '../lib/security.ts';
+import { TICK_FLAGS, type Evidence, type HookRow, type LspRow, type McpRow, type RunConfigTable } from '../lib/security.ts';
 import { RiskFlags } from './Badges.tsx';
 import { EvidenceLine } from './RiskEvidence.tsx';
 import { t } from '../i18n.ts';
@@ -28,16 +28,19 @@ type FilesScan = Extract<Scan, { kind: 'files' }>['scan'] & { evidence?: Array<E
 const configOf = (scan: Extract<Scan, { kind: 'plugin' }>) => scan.config as unknown as PluginConfig;
 
 /**
- * A download-and-run line in an installed file, or in a plugin's hook, MCP server or monitor command or a script they
- * run, or a plugin command or agent document rated high: as serious as one in SKILL.md (needs the confirm tick;
- * decision 10 for plugins). The server checks the same before installing (install/record.ts scanNeedsTick).
+ * A download-and-run line (or another signal of TICK_FLAGS: decoded text run as code, Claude Code's settings written,
+ * decision 9) in an installed file, or in a plugin's hook, MCP server or monitor command or a script they run, or a
+ * plugin command or agent document rated high: as serious as one in SKILL.md (needs the confirm tick; decision 10 for
+ * plugins). The server checks the same before installing (install/record.ts scanNeedsTick).
  */
+const isTick = (f: string) => TICK_FLAGS.has(f);
+
 export function scanIsHigh(scan: Scan | null | undefined): boolean {
   if (scan?.kind === 'plugin') {
     const c = configOf(scan);
-    return (c.findings ?? []).some((f) => f.flags.includes('curlPipeShell')) || c.items.some((it) => it.level === 'high');
+    return (c.findings ?? []).some((f) => f.flags.some(isTick)) || c.items.some((it) => it.level === 'high');
   }
-  return scan?.kind === 'files' && scan.scan.findings.some((f) => f.flags.includes('curlPipeShell'));
+  return scan?.kind === 'files' && scan.scan.findings.some((f) => f.flags.some(isTick));
 }
 
 const UNPINNED: Record<NonNullable<McpRow['unpinned']>, string> = {

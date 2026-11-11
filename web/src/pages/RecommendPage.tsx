@@ -9,11 +9,13 @@ import { TranslationNotice } from '../components/TranslationNotice.tsx';
 import { readPageSize, savePageSize } from '../lib/prefs.ts';
 import { ActiveFacets, FacetPanel, matchFacets, NO_FACETS, type Facets } from '../components/FacetPanel.tsx';
 import { stackExclude, type StackTag } from '../lib/searchExtras.ts';
+import { itemRepo, useOwnerPrefs } from '../lib/ownerPrefs.ts';
 import '../components/search/search-stage2.css';
+import '../components/search/owner-prefs.css';
 import type { RecommendResult as BaseResult, ResultItem, SettingsResponse } from '../types.ts';
 
-/** The answer with F21's detected stack (types.ts stays as it is). */
-type RecommendResult = BaseResult & { stack?: StackTag[] };
+/** The answer with F21's detected stack and F20's hidden count (types.ts stays as it is). */
+type RecommendResult = BaseResult & { stack?: StackTag[]; hiddenByPrefs?: number };
 
 type SkillMatch = RecommendResult['skills'][number];
 import { t } from '../i18n.ts';
@@ -60,6 +62,9 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem, from: und
   /** The stack found in the project's manifests (F21), and the tags turned off. */
   const [stack, setStack] = useState<StackTag[]>([]);
   const [offStack, setOffStack] = useState<Set<string>>(new Set());
+  /** F20: this result was asked for with the hidden repositories shown ("숨긴 저장소 N개 · 보기"). */
+  const [showHidden, setShowHidden] = useState(false);
+  const ownerPrefs = useOwnerPrefs();
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -68,15 +73,24 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem, from: und
       .catch(() => {});
   }, []);
 
-  /** `tuning`: the same project again with keywords turned off or added; without it a fresh analysis. */
-  const analyze = async (path = projectPath, tuning?: { off: Set<string>; added: string[]; offStack?: Set<string> }) => {
+  /**
+   * `tuning`: the same project again with keywords turned off or added; without it a fresh analysis. `withHidden`:
+   * the hidden repositories shown this once (F20); a fresh analysis leaves them out again.
+   */
+  const analyze = async (path = projectPath, tuning?: { off: Set<string>; added: string[]; offStack?: Set<string> }, withHidden = tuning ? showHidden : false) => {
     if (!path.trim() || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const body = { projectPath: path.trim(), exclude: tuning ? [...tuning.off, ...[...(tuning.offStack ?? offStack)].map(stackExclude)] : undefined, extra: tuning?.added };
+      const body = {
+        projectPath: path.trim(),
+        exclude: tuning ? [...tuning.off, ...[...(tuning.offStack ?? offStack)].map(stackExclude)] : undefined,
+        extra: tuning?.added,
+        ...(withHidden ? { showHidden: true } : {}),
+      };
       const r = await apiSend<RecommendResult>('POST', '/readme-skills', body);
       setResult(r);
+      setShowHidden(withHidden);
       setAnalyzedPath(path.trim());
       setPage(1);
       setShowRisky(false);
@@ -126,7 +140,11 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem, from: und
   };
 
   // narrowed in the search's order: risk, then the side filters (counted on what the risk limit leaves), then installed
-  const all = result?.skills ?? [];
+  // a repo hidden from a card's menu since this result came leaves it at once (F20)
+  const fetched = result?.skills ?? [];
+  const hiddenNow = showHidden ? [] : fetched.filter((m) => ownerPrefs.hidden(itemRepo(m.item)));
+  const all = hiddenNow.length ? fetched.filter((m) => !hiddenNow.includes(m)) : fetched;
+  const hiddenByPrefs = showHidden ? 0 : (result?.hiddenByPrefs ?? 0) + hiddenNow.length;
   const riskOk = (m: SkillMatch) => showRisky || m.item.riskLevel !== 'high';
   const faceted = all.filter((m) => matchFacets(m.item, facets));
   const hiddenRisky = faceted.filter((m) => !riskOk(m)).length;
@@ -265,10 +283,21 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem, from: und
           </section>
 
           {all.length === 0 ? (
-            <p className="empty">{t('비슷한 스킬을 찾지 못했습니다. README의 단어와 겹치는 스킬이 색인에 없습니다.')}</p>
+            <p className="empty">
+              {hiddenByPrefs > 0 ? (
+                <>
+                  {t('숨긴 저장소의 스킬만 비슷합니다.')}{' '}
+                  <button type="button" className="linkish" onClick={() => void analyze(analyzedPath || projectPath, { off, added, offStack }, true)}>
+                    {t('숨긴 저장소의 결과 {0}개 · 보기', hiddenByPrefs)}
+                  </button>
+                </>
+              ) : (
+                t('비슷한 스킬을 찾지 못했습니다. README의 단어와 겹치는 스킬이 색인에 없습니다.')
+              )}
+            </p>
           ) : (
             <div className="results-layout">
-              <FacetPanel items={all.filter(riskOk).map((m) => m.item)} value={facets} onChange={changeFacets} />
+              <FacetPanel items={all.filter(riskOk).map((m) => m.item)} value={facets} onChange={changeFacets} more />
               <div className="results-main">
                 <div className="results-toolbar" ref={listRef}>
                   <div className="toolbar-left">
@@ -300,6 +329,21 @@ export function RecommendPage({ onOpen }: { onOpen: (item: ResultItem, from: und
                         }}
                       >
                         {hideInstalled ? t('설치됨 {0}개 숨김 · 보기', installedCount) : t('설치됨 {0}개 · 숨기기', installedCount)}
+                      </button>
+                    )}
+                    {hiddenByPrefs > 0 && (
+                      <button
+                        type="button"
+                        className="status-chip action"
+                        title={t('숨긴 저장소의 비슷한 스킬입니다. 이번만 숨김 없이 다시 찾습니다(숨긴 목록은 그대로, 설정에서 관리).')}
+                        onClick={() => void analyze(analyzedPath || projectPath, { off, added, offStack }, true)}
+                      >
+                        {t('숨긴 저장소의 결과 {0}개 · 보기', hiddenByPrefs)}
+                      </button>
+                    )}
+                    {showHidden && (
+                      <button type="button" className="status-chip action" title={t('숨긴 저장소를 다시 뺍니다')} onClick={() => void analyze(analyzedPath || projectPath, { off, added, offStack }, false)}>
+                        {t('숨긴 저장소도 보는 중 · 되돌리기')}
                       </button>
                     )}
                     <ActiveFacets value={facets} onChange={changeFacets} />

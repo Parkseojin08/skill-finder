@@ -126,4 +126,38 @@ export const MIGRATIONS: string[] = [
   UPDATE skills SET first_seen_at = fetched_at WHERE first_seen_at IS NULL;
   CREATE INDEX skills_first_seen ON skills(first_seen_at);
   `,
+  // Feature review stage 3 (2026-11-09), one migration for the parallel pieces again:
+  // - skill_usage / usage_scan_files: skill uses counted from Claude Code's transcripts (F11, off by default): only
+  //   day, project, skill, plugin and a count; no conversation text. Each transcript is read on from where it stopped.
+  // - quarantine: copies kept before a delete or overwrite, for undo (F14; 30 days, 20 entries, 20MB a folder).
+  // - owner_prefs: hidden repos and trusted owners (F20, U7). key is a lower-case "owner/repo" or "owner".
+  // - skills.minhash / cluster_id: near-copies grouped (B8); minhash is 64 x 32-bit values, little-endian.
+  // - skills.skill_md_blob / plugins.tree_fingerprint: git blob of SKILL.md and a hash of a plugin's path+blob list,
+  //   so an unchanged plugin is not downloaded again when its marketplace moves (B9).
+  // - repos.created_at / owner_type / parent / gone_at: the source card (F5); fork was already there.
+  // - repo_stars_daily: one star count per repo a day, kept for "rising repos" (F17 stage 2) once two weeks exist.
+  `
+  CREATE TABLE skill_usage (day TEXT NOT NULL, project_path TEXT NOT NULL DEFAULT '', skill TEXT NOT NULL,
+    plugin TEXT NOT NULL DEFAULT '', count INTEGER NOT NULL, PRIMARY KEY (day, project_path, skill, plugin));
+  CREATE INDEX skill_usage_skill ON skill_usage(skill, day);
+  CREATE TABLE usage_scan_files (path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ms INTEGER NOT NULL,
+    offset INTEGER NOT NULL, scanned_at TEXT NOT NULL);
+  CREATE TABLE quarantine (id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, reason TEXT NOT NULL /* delete|overwrite */,
+    name TEXT NOT NULL, skill_id TEXT, scope TEXT, project_path TEXT, agent TEXT, original_path TEXT NOT NULL,
+    stored_path TEXT NOT NULL, bytes INTEGER NOT NULL, files INTEGER NOT NULL, restored_at TEXT);
+  CREATE INDEX quarantine_created ON quarantine(created_at);
+  CREATE TABLE owner_prefs (key TEXT PRIMARY KEY, kind TEXT NOT NULL /* repo|owner */, pref TEXT NOT NULL /* hide|trust */,
+    created_at TEXT NOT NULL);
+  ALTER TABLE skills ADD COLUMN minhash BLOB;
+  ALTER TABLE skills ADD COLUMN cluster_id TEXT;
+  CREATE INDEX skills_cluster ON skills(cluster_id);
+  ALTER TABLE skills ADD COLUMN skill_md_blob TEXT;
+  ALTER TABLE plugins ADD COLUMN tree_fingerprint TEXT;
+  ALTER TABLE repos ADD COLUMN created_at TEXT;
+  ALTER TABLE repos ADD COLUMN owner_type TEXT;
+  ALTER TABLE repos ADD COLUMN parent TEXT;
+  ALTER TABLE repos ADD COLUMN gone_at TEXT;
+  CREATE TABLE repo_stars_daily (full_name TEXT NOT NULL, day TEXT NOT NULL, stars INTEGER NOT NULL,
+    PRIMARY KEY (full_name, day));
+  `,
 ];

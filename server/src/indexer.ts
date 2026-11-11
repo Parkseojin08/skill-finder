@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 import { extractSkillMeta } from './analyze/frontmatter.ts';
 import { qualityWarnings } from './analyze/quality.ts';
-import { pluginRiskFlags, riskEvidence, RISK_RULES_VERSION, riskLevel, skillRiskFlags, TEXT_RISK_FLAGS, textEvidence, type Evidence, type FlagEvidence, type PluginSignals, type RiskFlag, type RiskLevel } from './analyze/risk.ts';
+import { pluginRiskFlags, riskEvidence, RISK_RULES_VERSION, riskLevel, SKILL_RULES, skillRiskFlags, TEXT_RISK_FLAGS, textEvidence, type Evidence, type FlagEvidence, type PluginSignals, type RiskFlag, type RiskLevel } from './analyze/risk.ts';
+import { blobOf, pluginTreeFingerprint } from './dedupe/fingerprint.ts';
+import { computeMinhash, minhashBytes, minhashText } from './dedupe/minhash.ts';
+import { moveSkillsToCommit, saveSkillExtras, setPluginFingerprint } from './dedupe/rows.ts';
 import { hookRows, lspRows, mcpRows, pluginRootPaths, type HookRow, type LspRow, type McpRow } from './analyze/runConfig.ts';
 import { maskSecrets } from './util/log.ts';
 import { isTextPath, MAX_FILE_BYTES } from './util/textFiles.ts';
@@ -40,6 +43,8 @@ export class PluginUnavailableError extends Error {}
 export type StoredFiles ={ files: Array<{ path: string; size: number | null }>; total: number };
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+/** The SKILL.md hash a row keeps (line endings aside). */
+export const skillMdHash = (raw: string) => sha256(raw.replace(/\r\n/g, '\n'));
 const now = () => new Date().toISOString();
 const MAX_FILES_STORED = 500;
 
@@ -92,7 +97,7 @@ export function buildSkillRow(a: BuildArgs): SkillRow {
     files: files.slice(0, MAX_FILES_STORED).map((f) => ({ path: f.path, size: f.size })),
     total: files.length,
   };
-  return {
+  const row: SkillRow = {
     id: skillId(a.repo, a.dirPath),
     origin: a.origin,
     plugin_id: a.pluginId,
@@ -116,7 +121,78 @@ export function buildSkillRow(a: BuildArgs): SkillRow {
     files_json: JSON.stringify(stored),
     install_json: a.install ? JSON.stringify(a.install) : null,
   };
+  const sig = computeMinhash(minhashText({ description: meta.description, whenToUse: meta.whenToUse, body: meta.body }));
+  ROW_EXTRAS.set(row, { skill_md_blob: blobOf(a.tree, skillMdPath(a.dirPath)), minhash: minhashBytes(sig) });
+  return row;
 }
+
+/**
+ * What a built row carries beyond the columns upsertSkill writes (B8 signature, B9 blob), kept beside the row and not
+ * on it: the index-change check (search/indexGeneration.ts) compares a row's fields with the stored ones, and a
+ * signature read back from SQLite is never the same object.
+ */
+const ROW_EXTRAS = new WeakMap<SkillRow, { skill_md_blob: string | null; minhash: Uint8Array | null }>();
+
+/** upsertSkill, then the blob and signature buildSkillRow worked out for the row (none for a reused row). */
+export function writeSkillRow(store: Store, row: SkillRow, pluginText: string): void {
+  store.upsertSkill(row, pluginText);
+  const extras = ROW_EXTRAS.get(row);
+  if (extras) saveSkillExtras(store, { id: row.id, ...extras });
+}
+
+/**
+ * A plugin skill whose SKILL.md blob is the one already indexed (B9): the row is built again from the stored one
+ * without downloading the file. What comes from the text (name, description, the text flags, quality) is kept; what
+ * comes from the tree (file list, the flags it gives) and the plugin (its flags) is worked out again. Null when the
+ * stored row cannot stand in for the text: other risk rules, or a file list cut short (the old file flags unknown).
+ */
+export function reuseSkillRow(
+  prev: SkillRow,
+  a: { sha: string; dirPath: string; tree: TreeIndex; extraFlags: RiskFlag[]; lastCommitAt: string | null },
+): SkillRow | null {
+  if (prev.risk_rules !== RISK_RULES_VERSION || !prev.skill_md_sha256 || !prev.files_json) return null;
+  const oldFiles = JSON.parse(prev.files_json) as StoredFiles;
+  if (oldFiles.total > oldFiles.files.length) return null;
+  const files = a.tree.filesUnder(a.dirPath);
+  const fileOnly = (paths: string[]) => skillRiskFlags({ files: paths, allowedTools: [], body: '', hasHooks: false, raw: '', partial: false });
+  const ruleFlags = new Set(SKILL_RULES.map((r) => r.flag));
+  const prevFlags = (prev.risk_json ? JSON.parse(prev.risk_json) : []) as RiskFlag[];
+  const dropped = new Set(fileOnly(oldFiles.files.map((f) => f.path)));
+  const added = new Set(fileOnly(files.map((f) => f.path)));
+  // the SKILL.md rules' flags of the text stay; those the old file list gave are replaced by the new list's; the
+  // plugin's flags (not SKILL.md rules) are the plugin's of now
+  const fromSkill = SKILL_RULES.map((r) => r.flag).filter((f) => (prevFlags.includes(f) && !dropped.has(f)) || added.has(f));
+  const flags = [...new Set([...fromSkill, ...a.extraFlags])];
+  if (prevFlags.some((f) => !ruleFlags.has(f) && !pluginFlagSet.has(f))) return null; // a flag of unknown origin
+  const stored: StoredFiles = { files: files.slice(0, MAX_FILES_STORED).map((f) => ({ path: f.path, size: f.size })), total: files.length };
+  return {
+    id: prev.id,
+    origin: prev.origin,
+    plugin_id: prev.plugin_id,
+    repo: prev.repo,
+    ref: a.sha,
+    dir_path: prev.dir_path,
+    name: prev.name,
+    description: prev.description,
+    when_to_use: prev.when_to_use,
+    frontmatter_json: prev.frontmatter_json,
+    body_lines: prev.body_lines,
+    skill_md_sha256: prev.skill_md_sha256,
+    name_desc_sha256: prev.name_desc_sha256,
+    installs: null,
+    quality_json: prev.quality_json,
+    risk_json: JSON.stringify(flags),
+    risk_level: riskLevel(flags),
+    risk_rules: RISK_RULES_VERSION,
+    last_commit_at: a.lastCommitAt,
+    fetched_at: now(),
+    files_json: JSON.stringify(stored),
+    install_json: null,
+  };
+}
+
+/** Every flag a plugin can give its skills (pluginRiskFlags with everything on). */
+const pluginFlagSet = new Set<RiskFlag>(pluginRiskFlags({ hooks: true, mcp: true, bin: true, monitors: true }, 'command'));
 
 /** A download cut at the limit (a split multi-byte character at the end costs at most 3 bytes), or a frontmatter too large to parse. */
 const checkedInPart = (meta: { frontmatterTooLarge: boolean }, raw: string) => meta.frontmatterTooLarge || Buffer.byteLength(raw) >= RAW_MAX_BYTES - 3;
@@ -252,6 +328,11 @@ export class Indexer {
   private readonly discoveryCache = new SizedCache<RepoLookup>({ maxSize: 60_000, ttlMs: 10 * 60 * 1000, sizeOf: (l) => l.snap.index.files.size });
   /** A plugin's run configuration per commit, for 30 minutes (the install tab, then the install's record of it). */
   private readonly runConfigCache = new SizedCache<PluginRunConfig>({ maxSize: 100, ttlMs: 30 * 60 * 1000, sizeOf: () => 1 });
+  /**
+   * B9 since start: plugins found unchanged by their folder's fingerprint (nothing downloaded), and SKILL.md files
+   * not downloaded because their blob was the one indexed.
+   */
+  readonly stats = { pluginsUnchanged: 0, skillMdReused: 0 };
 
   constructor(store: Store, github: GitHub) {
     this.store = store;
@@ -292,6 +373,12 @@ export class Indexer {
    * commit to read instead of the entry's (or the ref's head): the one `git ls-remote` just saw (B6).
    */
   private async openPlugin(plugin: PluginRow, atSha?: string) {
+    const opened = await this.openPluginTree(plugin, atSha);
+    return { ...opened, manifest: await this.readManifest(opened.snap, opened.root) };
+  }
+
+  /** The plugin's entry, commit, tree and folder: what is known before any file of it is downloaded. */
+  private async openPluginTree(plugin: PluginRow, atSha?: string) {
     const repo = plugin.repo!;
     const stored = (plugin.entry_json ? JSON.parse(plugin.entry_json) : null) as StoredPluginEntry | null;
     const entry = stored?.entry ?? ({ name: plugin.name, source: JSON.parse(plugin.source_json) } as MarketplaceEntry);
@@ -301,9 +388,12 @@ export class Indexer {
     const snap = await this.snapshot(repo, sha);
     const root = src.kind === 'relative' ? resolveRelativeRoot(src.raw, stored?.pluginRoot ?? null, snap.index) : (plugin.path ?? '');
     if (root == null || !snap.index.hasDir(root)) throw new Error(`플러그인 경로가 없습니다: ${root ?? '?'}`);
+    return { entry, src, sha, snap, root };
+  }
+
+  private async readManifest(snap: RepoSnapshot, root: string) {
     const manifestPath = joinPath(root, PLUGIN_JSON);
-    const manifest = snap.index.hasFile(manifestPath) ? parseJsonObject(await snap.read(manifestPath)) : null;
-    return { entry, src, sha, snap, root, manifest };
+    return snap.index.hasFile(manifestPath) ? parseJsonObject(await snap.read(manifestPath)) : null;
   }
 
   /**
@@ -437,13 +527,37 @@ export class Indexer {
       return 0;
     }
     try {
-      const { entry, src, sha, snap, root, manifest } = await this.openPlugin(plugin, opts.atSha);
+      const { entry, src, sha, snap, root } = await this.openPluginTree(plugin, opts.atSha);
+      // B9: the folder's files are the ones its skills were indexed from (only a marketplace commit moved): nothing
+      // is downloaded, the rows only point at the new commit
+      const fingerprint = pluginTreeFingerprint(snap.index, root, { entryJson: plugin.entry_json, sourceKind: plugin.source_kind });
+      if (fingerprint && fingerprint === plugin.tree_fingerprint) {
+        const lastCommitAt = await this.lastCommitAt(plugin.repo, snap.tree);
+        this.store.transaction(() => {
+          moveSkillsToCommit(this.store, pluginId, sha, lastCommitAt);
+          this.store.markPluginIndexed(pluginId, plugin.sha ?? sha, plugin.signals_json ? JSON.parse(plugin.signals_json) : null, null);
+        });
+        this.stats.pluginsUnchanged++;
+        return this.store.listSkillsByPlugin(pluginId).length;
+      }
+      const manifest = await this.readManifest(snap, root);
       const d = discoverPluginSkills(snap.index, root, manifest, entry, {
         entryAtMarketplaceRoot: src.kind === 'relative' && root === '',
       });
       const extraFlags = pluginRiskFlags(d.signals, plugin.source_kind);
       const lastCommitAt = await this.lastCommitAt(plugin.repo, snap.tree);
+      const before = new Map(this.store.listSkillsByPlugin(pluginId).map((s) => [s.id, s]));
       const results = await pool(d.skillDirs, 8, async (dirPath) => {
+        // B9: a SKILL.md whose blob is the one indexed is not downloaded; the row is built again from the stored one
+        const prev = before.get(skillId(plugin.repo!, dirPath));
+        const blob = blobOf(snap.index, skillMdPath(dirPath));
+        if (prev && blob && prev.skill_md_blob === blob) {
+          const reused = reuseSkillRow(prev, { sha, dirPath, tree: snap.index, extraFlags, lastCommitAt });
+          if (reused) {
+            this.stats.skillMdReused++;
+            return reused;
+          }
+        }
         const raw = await snap.read(skillMdPath(dirPath));
         if (raw == null) return null;
         return buildSkillRow({
@@ -468,16 +582,19 @@ export class Indexer {
       this.store.transaction(() => {
         const keep = new Set(rows.map((r) => r.id));
         if (!failed) for (const old of this.store.listSkillsByPlugin(pluginId)) if (!keep.has(old.id)) this.store.deleteSkill(old.id);
-        for (const row of rows) this.store.upsertSkill(row, text);
+        for (const row of rows) writeSkillRow(this.store, row, text);
         this.store.markPluginIndexed(
           pluginId,
           failed ? null : (plugin.sha ?? sha),
           { ...d.signals, strictConflict: d.strictConflict },
           failed ? `SKILL.md ${failed}개를 읽지 못해 다음 동기화 때 다시 읽습니다` : null,
         );
+        // a partial read is read in full next time, whatever the folder looks like then
+        setPluginFingerprint(this.store, pluginId, failed ? null : fingerprint);
       });
       return rows.length;
     } catch (err) {
+      setPluginFingerprint(this.store, pluginId, null);
       const reason = await this.unavailableReason(plugin.repo, err);
       if (reason) {
         // Indexed "as of" the marketplace's pinned commit, so it is skipped until the entry changes (an unpinned
@@ -529,7 +646,7 @@ export class Indexer {
   private async rowFromDiscovery(repo: string, snap: RepoSnapshot, discovery: RepoDiscovery, dirPath: string, raw: string): Promise<SkillRow> {
     const b = await this.buildFromDiscovery(repo, snap, discovery, dirPath, raw);
     if ('existing' in b) return b.existing;
-    this.store.upsertSkill(b.row, b.text);
+    writeSkillRow(this.store, b.row, b.text);
     return this.store.getSkill(b.row.id)!;
   }
 
@@ -664,7 +781,7 @@ export class Indexer {
     const writes = built.flatMap((b) => (b?.ok && b.value && 'row' in b.value ? [b.value] : []));
     for (let i = 0; i < writes.length; i += WRITE_BATCH) {
       this.store.transaction(() => {
-        for (const w of writes.slice(i, i + WRITE_BATCH)) this.store.upsertSkill(w.row, w.text);
+        for (const w of writes.slice(i, i + WRITE_BATCH)) writeSkillRow(this.store, w.row, w.text);
       });
       await new Promise((resolve) => setImmediate(resolve));
     }

@@ -135,21 +135,50 @@ async function localFileFindings(dir: string, files: string[]): Promise<Array<{ 
   return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-type LockEntry ={ source?: unknown; sourceType?: unknown; skillPath?: unknown };
+/**
+ * One skill of a skills CLI lock file, as skills@1.7.6 writes it (`projectLockEntry`): the project lock keeps `ref`
+ * (the branch or tag asked for, often none) and `computedHash` (computeSkillFolderHash of the skill folder); the
+ * user lock keeps `skillFolderHash` instead. Unknown or mistyped fields are left out.
+ */
+export type LockEntry = { name: string; source: string | null; sourceType: string | null; sourceUrl: string | null; skillPath: string | null; ref: string | null; computedHash: string | null };
+
+const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
+
+/** The entries of a lock file; null when there is no file or it cannot be read (not JSON, no `skills` object). */
+export function readLockEntries(file: string): LockEntry[] | null {
+  let skills: unknown;
+  try {
+    skills = (JSON.parse(readFileSync(file, 'utf8').replace(/^﻿/, '')) as { skills?: unknown }).skills;
+  } catch {
+    return null;
+  }
+  if (!skills || typeof skills !== 'object' || Array.isArray(skills)) return null;
+  return Object.entries(skills as Record<string, Record<string, unknown> | null>).map(([name, e]) => ({
+    name,
+    source: str(e?.source),
+    sourceType: str(e?.sourceType),
+    sourceUrl: str(e?.sourceUrl),
+    skillPath: str(e?.skillPath),
+    ref: str(e?.ref),
+    computedHash: str(e?.computedHash),
+  }));
+}
+
+/** The index id a lock entry names: GitHub sources only (gitlab etc. are not gh: rows). */
+export function lockSkillId(e: Pick<LockEntry, 'source' | 'sourceType' | 'skillPath'>): string | null {
+  if (!e.source || !e.skillPath || !/^[^/\s]+\/[^/\s]+$/.test(e.source)) return null;
+  if (e.sourceType !== null && e.sourceType !== 'github') return null;
+  const dir = posix.dirname(e.skillPath.replace(/\\/g, '/'));
+  // index ids keep the repo part in lower case (indexer.ts), so an exact lookup finds "ECC" as "ecc"
+  return `gh:${e.source.toLowerCase()}:${dir === '.' ? '' : dir}`;
+}
+
 /** skills CLI lock files: `skills-lock.json` in a project, `~/.agents/.skill-lock.json` for the user. */
 function readLock(file: string): Map<string, string> {
   const byFolder = new Map<string, string>();
-  try {
-    const skills = (JSON.parse(readFileSync(file, 'utf8')) as { skills?: Record<string, LockEntry> }).skills ?? {};
-    for (const [folder, e] of Object.entries(skills)) {
-      if (typeof e.source !== 'string' || typeof e.skillPath !== 'string' || !/^[^/\s]+\/[^/\s]+$/.test(e.source)) continue;
-      if (e.sourceType !== undefined && e.sourceType !== 'github') continue; // gitlab etc. are not gh: rows
-      const dir = posix.dirname(e.skillPath.replace(/\\/g, '/'));
-      // index ids keep the repo part in lower case (indexer.ts), so an exact lookup finds "ECC" as "ecc"
-      byFolder.set(folder.toLowerCase(), `gh:${e.source.toLowerCase()}:${dir === '.' ? '' : dir}`);
-    }
-  } catch {
-    // no lock file, or not one we can read
+  for (const e of readLockEntries(file) ?? []) {
+    const id = lockSkillId(e);
+    if (id) byFolder.set(e.name.toLowerCase(), id);
   }
   return byFolder;
 }

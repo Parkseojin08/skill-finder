@@ -1,0 +1,70 @@
+/* "내 스킬 검사" result dialog (feature review F15). App tokens only (styles.css). */
+@layer app {
+  .lint-dialog section {
+    margin: 0 0 14px;
+  }
+  .lint-dialog h3 {
+    margin: 0 0 6px;
+    font-size: 0.95rem;
+  }
+  .lint-problems {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .lint-problems li {
+    display: grid;
+    grid-template-columns: 1.4em 1fr;
+    gap: 2px 8px;
+    padding: 4px 0;
+    border-top: 1px solid var(--line);
+  }
+  .lint-problems li:first-child {
+    border-top: 0;
+  }
+  .lint-mark {
+    font-weight: 700;
+    text-align: center;
+  }
+  .lint-mark.error {
+    color: var(--danger);
+  }
+  .lint-mark.warning {
+    color: var(--warn);
+  }
+  .lint-mark.info {
+    color: var(--text-muted);
+  }
+  .lint-where {
+    color: var(--text-muted);
+    font-size: 0.85em;
+    overflow-wrap: anywhere;
+  }
+  .lint-listing {
+    max-height: 30vh;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--corner-sm);
+    background: var(--surface-muted);
+    color: var(--text-soft);
+  }
+  .lint-listing .lint-cut {
+    color: var(--text-muted);
+  }
+  .lint-similar {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .lint-similar li {
+    padding: 3px 0;
+  }
+  .lint-scroll {
+    max-height: 62vh;
+    overflow: auto;
+    padding-right: 4px;
+  }
+}

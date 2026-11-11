@@ -8,6 +8,9 @@ import { startLogFile } from './util/log.ts';
 import { registerBuiltInTasks, relevelRisk } from './tasks.ts';
 import { runNoticeCheck, runRepoHeadWatch } from './watch/heads.ts';
 import { runFirstSeenFill } from './search/browse.ts';
+import { runUsageScan, USAGE_SCAN_EVERY_MS } from './usage/scan.ts';
+import { runQuarantinePrune } from './install/quarantine.ts';
+import { getSettings } from './settings.ts';
 
 const HOST = '127.0.0.1';
 
@@ -43,6 +46,10 @@ registerBuiltInTasks();
 registerTask({ kind: 'repo-heads', label: '저장소 변경 확인', everyMs: 6 * 60 * 60 * 1000, network: true, startup: true, timeoutMs: 30 * 60 * 1000, run: (c) => runRepoHeadWatch(c) });
 registerTask({ kind: 'notice-check', label: '변화 알림 확인', everyMs: 60 * 60 * 1000, run: (c) => runNoticeCheck(c) });
 registerTask({ kind: 'first-seen', label: '새 스킬 시각 기록', everyMs: 60 * 60 * 1000, startup: true, run: (c) => runFirstSeenFill(c) });
+// feature review stage 3: skill uses from Claude Code's transcripts, only while the setting is on (F11, decision 14),
+// and the undo copies kept before a delete or overwrite (F14)
+registerTask({ kind: 'usage-scan', label: '스킬 사용 기록 읽기', everyMs: USAGE_SCAN_EVERY_MS, startup: true, timeoutMs: 2 * 60 * 1000, enabled: (c) => getSettings(c.store).usageScan, run: (c, info) => runUsageScan(c, info) });
+registerTask({ kind: 'quarantine-prune', label: '되돌리기 보관함 정리', everyMs: 24 * 60 * 60 * 1000, startup: true, timeoutMs: 2 * 60 * 1000, run: (c) => runQuarantinePrune(c) });
 const scheduler = schedulerFor(ctx);
 const app = createApp(ctx);
 

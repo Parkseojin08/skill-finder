@@ -6,6 +6,7 @@ import { t } from '../i18n.ts';
 import { useNotices, type Notice } from '../notices.ts';
 import type { RiskLevel } from '../types.ts';
 import { NoticeChip } from './NoticeChip.tsx';
+import { QuarantineList } from './Quarantine.tsx';
 
 /** One entry of `/history/installs`: a notice, or an install or removal the app ran with what was seen then. */
 type InstallEvent = {
@@ -54,9 +55,10 @@ function SeenAtInstall({ e }: { e: InstallEvent }) {
 
 /**
  * The 설치됨 screen's 변경·기록 tab (feature review F7): the notices about installed and favorite skills and the
- * app's installs and removals as one timeline, newest first, with a JSON export. `onOpenSkill` opens a skill's page.
+ * app's installs and removals as one timeline, newest first, with a JSON export. `onOpenSkill` opens a skill's page;
+ * `onRestored` tells the screen a kept copy was put back (its installed list is then out of date).
  */
-export function ChangesTab({ onOpenSkill }: { onOpenSkill?: (id: string) => void }) {
+export function ChangesTab({ onOpenSkill, onRestored }: { onOpenSkill?: (id: string) => void; onRestored?: () => void }) {
   const { counts, markSeen, refresh } = useNotices();
   const [events, setEvents] = useState<HistoryEvent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +97,8 @@ export function ChangesTab({ onOpenSkill }: { onOpenSkill?: (id: string) => void
 
   return (
     <section className="changes-tab" aria-label={t('변경·기록')}>
+      {/* F14: what was deleted or replaced lately, with undo (decision 15: for undo only) */}
+      <QuarantineList onRestored={onRestored} />
       <div className="results-toolbar">
         <span className="muted small">{counts.unseen ? t('새 알림 {0}개', counts.unseen) : t('새 알림 없음')}</span>
         <span className="inline-flex flex-wrap items-center gap-2">

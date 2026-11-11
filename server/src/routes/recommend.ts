@@ -9,6 +9,8 @@ const Body = z.object({
   /** Keywords turned off on the page, and words added there. */
   exclude: z.array(z.string().max(60)).max(50).optional(),
   extra: z.array(z.string().max(60)).max(20).optional(),
+  /** "숨긴 저장소 N개 · 보기" (F20): this recommendation only, the hidden list stays. */
+  showHidden: z.boolean().optional(),
 });
 
 /**
@@ -24,8 +26,8 @@ export function recommendRouter(ctx: AppContext): Router {
       return;
     }
     try {
-      const { projectPath, exclude, extra } = parsed.data;
-      res.json(recommendForProject(ctx.store, projectPath, getSettings(ctx.store).weights, { exclude, extra }));
+      const { projectPath, exclude, extra, showHidden } = parsed.data;
+      res.json(recommendForProject(ctx.store, projectPath, getSettings(ctx.store).weights, { exclude, extra, showHidden }));
     } catch (err) {
       if (err instanceof ReadmeError) {
         res.status(err.status).json({ error: err.message, code: err.code });

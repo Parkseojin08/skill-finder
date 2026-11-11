@@ -82,6 +82,35 @@ describe('미리 만든 색인 (2026-11-03)', () => {
     assert.throws(() => writeSeedFile(dbPath, join(dir, 'old.json.gz')), /옛 위험 규칙/);
   });
 
+  it('MinHash 서명(BLOB)은 base64로 내보내 되돌리고, blob·군집·fingerprint·출처 열도 옮긴다 (3단계 B8·B9·F5)', () => {
+    const { ctx: src, dbPath, dir } = sourceIndex();
+    const sig = new Uint8Array(256).map((_, i) => i);
+    src.store.db.prepare("UPDATE skills SET minhash = ?, cluster_id = 'gh:o/pdf:skills/pdf-tables', skill_md_blob = ? WHERE id = 'gh:o/pdf:skills/pdf-tables'").run(sig, 'b'.repeat(40));
+    src.store.db.prepare("UPDATE plugins SET tree_fingerprint = ? WHERE id = 'pdf@claude-plugins-official'").run('f'.repeat(64));
+    src.store.db.prepare("UPDATE plugins SET tree_fingerprint = ? WHERE id = 'broken@claude-plugins-official'").run('e'.repeat(64));
+    src.store.db.prepare("UPDATE repos SET created_at = '2024-01-01T00:00:00Z', owner_type = 'Organization' WHERE full_name = 'o/pdf'").run();
+    const seed = exportSeed(src.store.db);
+    assert.equal(typeof seed.skills[0].minhash, 'string', 'JSON에 바이트 객체로 들어가지 않는다');
+    assert.ok(!JSON.stringify(seed).includes('"minhash":{'));
+    const file = join(dir, 'sig.json.gz');
+    writeSeedFile(dbPath, file);
+    const ctx = newCtx();
+    importSeed(ctx.store, file);
+    const s = ctx.store.getSkill('gh:o/pdf:skills/pdf-tables')!;
+    assert.deepEqual([...(s.minhash as Uint8Array)], [...sig]);
+    assert.equal(s.cluster_id, 'gh:o/pdf:skills/pdf-tables');
+    assert.equal(s.skill_md_blob, 'b'.repeat(40));
+    assert.equal(ctx.store.getPlugin('pdf@claude-plugins-official')!.tree_fingerprint, 'f'.repeat(64));
+    assert.equal(ctx.store.getPlugin('broken@claude-plugins-official')!.tree_fingerprint, null, '실패했던 플러그인은 다시 전부 읽는다');
+    assert.equal(ctx.store.getRepo('o/pdf')!.owner_type, 'Organization');
+    // a seed made before stage 3 (no such fields) still goes in
+    const old = { ...seed, skills: seed.skills.map(({ minhash: _m, ...rest }) => rest) };
+    writeFileSync(join(dir, 'old3.json.gz'), gzipSync(JSON.stringify(old)));
+    const ctx2 = newCtx();
+    assert.equal(importSeed(ctx2.store, join(dir, 'old3.json.gz'))!.skills, 1);
+    assert.equal(ctx2.store.getSkill('gh:o/pdf:skills/pdf-tables')!.minhash, null);
+  });
+
   it('다시 검사할 수 없는 소수(1% 이하)의 옛 규칙 스킬은 빼고 만든다', () => {
     const { ctx: src, dbPath, dir } = sourceIndex();
     const db = src.store.db;
@@ -91,9 +120,15 @@ describe('미리 만든 색인 (2026-11-03)', () => {
       db.exec('INSERT INTO skills SELECT * FROM t');
     }
     db.exec("UPDATE skills SET risk_rules = 0 WHERE id = 'gh:o/pdf:skills/copy-7'");
+    db.exec("UPDATE plugins SET tree_fingerprint = 'f'");
     const file = join(dir, 'few-old.json.gz');
     assert.equal(writeSeedFile(dbPath, file).skills, 150);
-    const seed = JSON.parse(gunzipSync(readFileSync(file)).toString('utf8')) as { skills: Array<{ id: string }> };
+    const seed = JSON.parse(gunzipSync(readFileSync(file)).toString('utf8')) as { skills: Array<{ id: string }>; plugins: Array<{ id: string; tree_fingerprint: string | null }> };
     assert.ok(!seed.skills.some((s) => s.id === 'gh:o/pdf:skills/copy-7'));
+    // the plugin that lost a skill here must not look unchanged to the first sync (B9), or the skill never comes back;
+    // the others keep their fingerprint (review 2026-11-10)
+    const prints = Object.fromEntries(seed.plugins.map((p) => [p.id, p.tree_fingerprint]));
+    assert.equal(prints['pdf@claude-plugins-official'], null);
+    assert.equal(prints['broken@claude-plugins-official'], 'f');
   });
 });

@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
 import type { Store } from '../db/store.ts';
+import { ownerFilter, type OwnerFilter } from '../prefs/ownerPrefs.ts';
 import { installsSuspect } from '../search/installsSuspect.ts';
 import { koreanTerm } from '../search/koreanTerms.ts';
 import { freshInstalls, freshness, matchTokens, popularity, stem, totalScore, TRUST_SCORE, trustTier } from '../search/rank.ts';
@@ -324,6 +325,8 @@ export type RecommendResult = {
   stack: Array<StackTag & { off?: boolean }>;
   /** Skills similar to the README, most downloaded first (then stars). Empty when nothing is similar. */
   skills: SkillMatch[];
+  /** Similar skills left out because their repo or owner is hidden (F20); absent when none. */
+  hiddenByPrefs?: number;
 };
 
 const ftsTerm = (t: string) => `"${t.replace(/"/g, '')}"`;
@@ -342,7 +345,16 @@ const byPopularity = (a: { installs: number | null; stars: number | null }, b: {
  * words (×2 in the name). Similar = at least {@link CONFIG.similarFloor} of the best score and sharing
  * {@link CONFIG.minSharedWords} words, so a lone common word ("api") does not let a popular unrelated skill in.
  */
-export function matchSkills(store: Store, keywords: Keyword[], weights: Settings['weights']): SkillMatch[] {
+export function matchSkills(
+  store: Store,
+  keywords: Keyword[],
+  weights: Settings['weights'],
+  /**
+   * `owners`: hidden repos (F20) leave before the similarity floor and the cut; `onHidden` gets how many similar
+   * skills (one per name, none shown under that name) they took away.
+   */
+  opts: { owners?: OwnerFilter; onHidden?: (n: number) => void } = {},
+): SkillMatch[] {
   if (keywords.length === 0) return [];
   const hits = store.searchSkillsFts(keywords.map(ftsKeyword).join(' OR '), CONFIG.poolSize);
   const total = Math.max(1, store.countSkills());
@@ -382,11 +394,18 @@ export function matchSkills(store: Store, keywords: Keyword[], weights: Settings
     })
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score || a.skill.id.localeCompare(b.skill.id));
-  if (scored.length === 0) return [];
+  const owners = opts.owners;
+  const hiddenScored = owners?.anyHidden ? scored.filter((x) => owners.hidden(x.skill.repo)) : [];
+  const scoredVisible = hiddenScored.length ? scored.filter((x) => !owners!.hidden(x.skill.repo)) : scored;
+  if (scoredVisible.length === 0) {
+    if (hiddenScored.length) opts.onHidden?.(new Set(hiddenScored.map((x) => x.skill.name.toLowerCase().replace(/[\s_]+/g, '-'))).size);
+    return [];
+  }
 
-  const best = scored[0];
+  const best = scoredVisible[0];
   const minShared = Math.min(CONFIG.minSharedWords, best.matched.length);
-  const similar = scored.filter((x) => x.score >= CONFIG.similarFloor * best.score && x.matched.length >= minShared);
+  const isSimilar = (x: (typeof scored)[number]) => x.score >= CONFIG.similarFloor * best.score && x.matched.length >= minShared;
+  const similar = scoredVisible.filter(isSimilar);
 
   // One entry per skill name: the same skill is often republished elsewhere. Keep the trusted, most
   // installed copy.
@@ -420,6 +439,10 @@ export function matchSkills(store: Store, keywords: Keyword[], weights: Settings
     .map((x) => ({ ...x, stars: starsOf(x.skill.repo) }))
     .sort((a, b) => byPopularity(a, b) || b.score - a.score || a.skill.id.localeCompare(b.skill.id))
     .slice(0, CONFIG.maxResults);
+  if (hiddenScored.length) {
+    const shownNames = new Set(groups.keys());
+    opts.onHidden?.(new Set(hiddenScored.filter(isSimilar).map((x) => x.skill.name.toLowerCase().replace(/[\s_]+/g, '-')).filter((k) => !shownNames.has(k))).size);
+  }
 
   const maxInstalls = Math.max(0, ...unique.map((x) => x.installs ?? 0));
   const maxStars = Math.max(0, ...unique.map((x) => x.stars ?? 0));
@@ -543,7 +566,12 @@ const STACK_WEIGHT = { tag: CONFIG.weights.heading, broad: CONFIG.weights.body }
 /** What the page sends in `exclude` to turn a stack tag off (keywords are excluded by their word). */
 export const STACK_EXCLUDE_PREFIX = 'stack:';
 
-export function recommendForProject(store: Store, projectPath: unknown, weights: Settings['weights'], opts: { exclude?: string[]; extra?: string[] } = {}): RecommendResult {
+export function recommendForProject(
+  store: Store,
+  projectPath: unknown,
+  weights: Settings['weights'],
+  opts: { exclude?: string[]; extra?: string[]; showHidden?: boolean } = {},
+): RecommendResult {
   let source: { path: string; md: string; also?: string[] };
   let stack: StackTag[];
   try {
@@ -590,12 +618,18 @@ export function recommendForProject(store: Store, projectPath: unknown, weights:
     else stackKeywords.push({ key: `${STACK_EXCLUDE_PREFIX}${s.tag.toLowerCase()}`, term: s.tag, weight, alts: words.terms });
   }
   const readmeKeywords = keywords.slice(0, CONFIG.maxQueryTerms - stackKeywords.length);
+  let hiddenByPrefs = 0;
+  const skills = matchSkills(store, [...readmeKeywords, ...stackKeywords], weights, {
+    owners: ownerFilter(store, { showHidden: opts.showHidden }),
+    onHidden: (n) => (hiddenByPrefs = n),
+  });
   return {
     readmePath: source.path,
     ...(source.also ? { alsoRead: source.also } : {}),
     summary: { title: info.title, intro: info.intro, features: info.features },
     keywords: readmeKeywords.slice(0, 10).map(({ term, weight }) => ({ term, weight })),
     stack: stack.map((s) => (offStack.has(s.tag.toLowerCase()) ? { ...s, off: true } : s)),
-    skills: matchSkills(store, [...readmeKeywords, ...stackKeywords], weights),
+    skills,
+    ...(hiddenByPrefs ? { hiddenByPrefs } : {}),
   };
 }

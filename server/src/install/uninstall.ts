@@ -6,12 +6,20 @@ import { runClaude } from '../claude/cli.ts';
 import { SKILLS_CLI_PATH } from '../config.ts';
 import { run } from '../util/proc.ts';
 import { agentFolders, CLAUDE_CODE, type AgentId } from './agents.ts';
+import type { QuarantineOutcome } from './quarantine.ts';
 import { lastJsonLine } from './run.ts';
 
 export const PLUGIN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}@[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 export const SKILL_FOLDER_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$/;
 
-export type UninstallResult = { ok: boolean; message: string; output: string };
+/** `quarantine`: what became of the copy kept before a skill folder went (F14); absent for plugins. */
+export type UninstallResult = { ok: boolean; message: string; output: string; quarantine?: QuarantineOutcome };
+
+/**
+ * Called with the skill folder just before it is removed (F14): copies it for undo. A copy that broke stops the
+ * removal (the confirm dialog said one would be kept); one not made for size or a link does not.
+ */
+export type KeepBeforeRemove = (target: string) => Promise<QuarantineOutcome>;
 
 export function skillsRoot(scope: 'user' | 'project', projectPath: string | null): string {
   return scope === 'user' ? join(homedir(), '.claude', 'skills') : join(projectPath!, '.claude', 'skills');
@@ -52,6 +60,7 @@ export async function uninstallSkill(
   env: NodeJS.ProcessEnv,
   agent: AgentId = CLAUDE_CODE,
   home = homedir(),
+  keep?: KeepBeforeRemove,
 ): Promise<UninstallResult> {
   if (!SKILL_FOLDER_RE.test(folder) || folder.includes('..')) return { ok: false, message: '스킬 폴더 이름이 올바르지 않습니다', output: '' };
   const place = agentSkillsRoot(agent, scope, projectPath, home);
@@ -61,6 +70,12 @@ export async function uninstallSkill(
   if (dirname(target) !== root) return { ok: false, message: '스킬 폴더 위치가 올바르지 않습니다', output: '' };
   if (!existsSync(target)) return { ok: false, message: '이미 없는 스킬입니다', output: '' };
   if (!existsSync(join(target, 'SKILL.md'))) return { ok: false, message: 'SKILL.md가 없는 폴더라 지우지 않았습니다', output: '' };
+
+  // F14: a copy for undo first, while the folder is still whole
+  const quarantine = keep ? await keep(target) : undefined;
+  if (quarantine && !quarantine.kept && quarantine.reason === 'failed') {
+    return { ok: false, message: '지우기 전에 되돌리기용 복사본을 만들지 못해 지우지 않았습니다', output: quarantine.error ?? '', quarantine };
+  }
 
   // every agent reading this folder: removing it is removing it for all of them
   const cli = await run(process.execPath, [SKILLS_CLI_PATH, 'remove', folder, ...place.agents.flatMap((a) => ['-a', a]), '-y', ...(scope === 'user' ? ['-g'] : [])], {
@@ -77,5 +92,5 @@ export async function uninstallSkill(
     output += '\n(skills CLI가 지우지 않은 폴더를 직접 삭제했습니다)';
   }
   const gone = !existsSync(target);
-  return { ok: gone, message: gone ? '스킬을 삭제했습니다' : '스킬 폴더를 지우지 못했습니다', output };
+  return { ok: gone, message: gone ? '스킬을 삭제했습니다' : '스킬 폴더를 지우지 못했습니다', output, ...(quarantine ? { quarantine } : {}) };
 }

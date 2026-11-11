@@ -7,6 +7,8 @@ import { repoOf } from '../lib/resultOrder.ts';
 import { suspectReasonText, type SearchItem } from '../lib/searchExtras.ts';
 import { CopiesBadge, RiskSummary, SourceBadges } from './Badges.tsx';
 import { FavoriteButton } from './FavoriteButton.tsx';
+import { OwnerPrefMenu } from './search/OwnerPrefMenu.tsx';
+import { itemRepo } from '../lib/ownerPrefs.ts';
 import { t } from '../i18n.ts';
 
 
@@ -86,7 +88,11 @@ export function ResultCard({
             </span>
           )}
         </div>
-        <FavoriteButton id={item.id} name={item.name} />
+        <span className="card-actions">
+          <FavoriteButton id={item.id} name={item.name} />
+          {/* F20: hide this repository, trust its owner */}
+          <OwnerPrefMenu repo={itemRepo(item)} />
+        </span>
       </div>
       <p className="summary clamp" title={ko ? item.description : undefined} lang={ko ? (TRANSLATE_TO ?? 'en') : 'en'}>
         {waiting && <span className="translating">{t('번역 중 · ')}</span>}

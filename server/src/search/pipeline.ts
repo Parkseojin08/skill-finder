@@ -10,6 +10,8 @@ import { installSummary } from '../install/summary.ts';
 import { getSettings } from '../settings.ts';
 import { classifySkillsShSource, type SkillsShHit } from '../sources/skillsSh.ts';
 import { pool, Semaphore, sleep, withTimeout } from '../util/limiter.ts';
+import { ownerFilter } from '../prefs/ownerPrefs.ts';
+import { countFacets, facetValuesOf, matchFacetValues, mayMatchPending, normalizeFacets, type FacetCounts, type FacetValues, type SearchFacets } from './facets.ts';
 import { indexGeneration } from './indexGeneration.ts';
 import { installsSuspect, type InstallsSuspect } from './installsSuspect.ts';
 import { koreanSuggestion } from './koreanTerms.ts';
@@ -45,8 +47,11 @@ import {
   type SourceRef,
 } from './result.ts';
 
-/** `minStars` overrides the setting for one search (0 = no minimum). */
-export type SearchFilters = { sources?: SourceKind[]; maxRisk?: RiskLevel; marketplaces?: string[]; minStars?: number };
+/**
+ * `minStars` overrides the setting for one search (0 = no minimum). `facets`: "이 조건으로 전체에서 다시 찾기" (F19),
+ * applied to every candidate before the cut. `showHidden`: this search shows the hidden repositories too (F20).
+ */
+export type SearchFilters = { sources?: SourceKind[]; maxRisk?: RiskLevel; marketplaces?: string[]; minStars?: number; facets?: SearchFacets; showHidden?: boolean };
 
 /** local: the marketplace/GitHub index on this PC. repos: the repo-name search for one-word queries. */
 export type SourceName = 'local' | 'skillssh' | 'github' | 'repos';
@@ -54,8 +59,10 @@ export type SourceState = 'running' | 'done' | 'failed' | 'timeout' | 'skipped';
 /**
  * Part of the search cache key: bump it whenever what a cached search replays changes shape (results fields,
  * warning fields) or meaning, so older cached searches are not shown. test/pipeline.test.ts pins the shape.
+ * 23 (stage 3): items may carry license, manualOnly and clusterId; results may carry hiddenByPrefs, hiddenRepos,
+ * facets and facetCounts (each only when it has a value).
  */
-export const RESULTS_VERSION = 22;
+export const RESULTS_VERSION = 23;
 /** How many generations back a cached search is still shown first as "이전 결과" while it is searched again. */
 const STALE_GENERATIONS = 8;
 /** Below this many indexed skills (a first run still collecting, D#323b) an older cached search is not shown first. */
@@ -98,6 +105,15 @@ export type SearchEvent =
       aliases?: AliasUse[];
       /** Few results and a word with two letters swapped: the fixed query, offered as a button (user decision 6). */
       spelling?: SpellingSuggestion;
+      /**
+       * Left out because their repo (or its owner) is hidden (F20): results, one per SKILL.md, and how many hidden
+       * repos they came from ("숨긴 저장소 N개 · 보기"). Absent when nothing was hidden.
+       */
+      hiddenByPrefs?: number;
+      hiddenRepos?: number;
+      /** The facets this search applied before the cut (F19), and per value how many candidates each leaves. */
+      facets?: SearchFacets;
+      facetCounts?: FacetCounts;
       /**
        * A cached search from before the index last changed (B1), sent first while the search runs again; the
        * fresh results replace it. Never stored.
@@ -298,7 +314,16 @@ export async function runSearch(
   // g: the index generation (B1): a sync or collection that changed the index bumps it, so searches cached before
   // are not replayed as they are (they used to be dropped after every sync, changed or not)
   const generation = indexGeneration(store);
-  const keyOf = (g: number) => cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: RESULTS_VERSION, k: RISK_RULES_VERSION, c: SKILLS_CLI_VERSION, g });
+  // F20: hidden repos (unless this search shows them) and F19: facets picked for the whole candidate list. Each
+  // joins the key only when in use, so a plain search with nothing hidden keeps the key it had before them; a
+  // trusted-owner change matters only to a search that filters on it.
+  const owners = ownerFilter(store, { showHidden: filters.showHidden });
+  const facets = normalizeFacets(filters.facets);
+  const prefsKey = {
+    ...(owners.hideHash ? { h: owners.hideHash } : {}),
+    ...(facets ? { fc: facets, ...(facets.trusted ? { tr: owners.trustHash } : {}) } : {}),
+  };
+  const keyOf = (g: number) => cacheKey(query, filters, { w: settings.weights, t: !!ctx.config.githubToken, s: minStars, r: RESULTS_VERSION, k: RISK_RULES_VERSION, c: SKILLS_CLI_VERSION, g, ...prefsKey });
   const key = keyOf(generation);
 
   // The English query for a Korean one goes out first, cached search or not: it comes from the query alone,
@@ -429,6 +454,38 @@ export async function runSearch(
     droppedForStars.add(c);
     return true;
   };
+  // F20: a hidden repo's candidates leave as early as low-star ones (never looked up, no place in the top
+  // MAX_ENRICH), from every source; counted for the "숨긴 저장소" chip.
+  const droppedForPrefs = new Set<Candidate>();
+  /** Hidden repos (lower case) whose own card (a repository found by name) this search left out. */
+  const hiddenRepoCards = new Set<string>();
+  const dropForPrefs = (c: Candidate): boolean => {
+    if (!owners.anyHidden) return false;
+    const repo = candidateRepo(c);
+    if (!owners.hidden(repo)) return false;
+    droppedForPrefs.add(c);
+    return true;
+  };
+  // F19: picked facets, judged on the skill row when there is one, else on what the source says (repo, tier);
+  // the rest is checked when the candidate has been read. Kept for the counts over all candidates.
+  const valuesMemo = new Map<string, FacetValues>();
+  const licenseOf = (r: string | null) => lookup.repoLicense?.(r) ?? null;
+  const valuesOf = (s: SkillRow): FacetValues => {
+    let v = valuesMemo.get(s.id);
+    if (!v) valuesMemo.set(s.id, (v = facetValuesOf(lookup, s, owners, licenseOf)));
+    return v;
+  };
+  const facetPass = (s: SkillRow) => !facets || matchFacetValues(valuesOf(s), facets, t0);
+  const droppedForFacets = new Set<Candidate>();
+  const dropForFacets = (c: Candidate): boolean => {
+    if (!facets) return false;
+    const ok = c.skill ? facetPass(c.skill) : mayMatchPending(facets, candidateRepo(c), pendingTier(c), owners);
+    if (ok) return false;
+    droppedForFacets.add(c);
+    return true;
+  };
+  /** Left out before the top-MAX_ENRICH cut and never looked up: hidden repo, facets, too few stars. */
+  const dropped = (c: Candidate): boolean => dropForPrefs(c) || dropForFacets(c) || dropForStars(c);
 
   // Lookups for candidates that are not in the local index start as soon as their source answers, so
   // skills.sh hits are being resolved while the (slower) GitHub code search is still running.
@@ -444,7 +501,7 @@ export async function runSearch(
   let enrichStarted = false;
   const addLateIndexed = (list: Candidate[]) => {
     if (!enrichStarted) return;
-    for (const c of list) if (!c.pending && c.skill && !ready.includes(c) && !dropForStars(c)) ready.push(c);
+    for (const c of list) if (!c.pending && c.skill && !ready.includes(c) && !dropped(c)) ready.push(c);
   };
   const outcomes: Record<Outcome, number> = { found: 0, missing: 0, error: 0, timeout: 0, lowstars: 0 };
   const deadline = t0 + (deps.deadlineMs ?? SEARCH_DEADLINE_MS);
@@ -526,7 +583,7 @@ export async function runSearch(
   };
 
   const startLookup = (c: Candidate) => {
-    if (!c.pending || started.has(c) || dropForStars(c)) return;
+    if (!c.pending || started.has(c) || dropped(c)) return;
     started.add(c);
     const p = c.pending;
     const what = p.type === 'plugin' ? `plugin:${p.plugin.id}` : p.type === 'skillssh' ? `ss:${p.hit.source}/${p.hit.name}` : `gh:${p.repo}/${p.path}`;
@@ -572,6 +629,14 @@ export async function runSearch(
     for (const s of store.findSkillsByRepoName(word)) {
       if (s.repo && ![...repoInfo.keys()].some((k) => k.toLowerCase() === s.repo!.toLowerCase())) {
         repoInfo.set(s.repo, { stars: store.getRepo(s.repo)?.stars ?? null, description: null, topics: [] });
+      }
+    }
+    // a hidden repo gets no card and is not read (F20)
+    if (owners.anyHidden) {
+      for (const k of [...repoInfo.keys()]) {
+        if (!owners.hidden(k)) continue;
+        repoInfo.delete(k);
+        hiddenRepoCards.add(k.toLowerCase());
       }
     }
     // Found on GitHub but never indexed: read its skills now (a slow repo keeps indexing in the background).
@@ -722,6 +787,7 @@ export async function runSearch(
   const emitCandidates = () => {
     const shown = ranked().filter((c) => {
       if (!c.skill?.description || tooRisky(c.skill)) return false;
+      if (owners.hidden(c.skill.repo) || !facetPass(c.skill)) return false;
       // stars unknown is hidden in the end ("모르면 숨김"), so not shown early either
       const repo = c.skill.repo;
       if (minStars > 0 && !starsExempt(c) && (repo ? storedStarsOf(repo) : null) == null) return false;
@@ -772,7 +838,7 @@ export async function runSearch(
   // 2. enrich: wait for the lookups (already running), plus any top candidate not started yet
   emit({ type: 'stage', stage: 'enrich', message: '상위 후보의 SKILL.md와 저장소 정보를 확인하는 중' });
   const top = ranked()
-    .filter((c) => !dropForStars(c))
+    .filter((c) => !dropped(c))
     .slice(0, MAX_ENRICH);
   ready.push(...top.filter((c) => !c.pending));
   enrichStarted = true;
@@ -857,10 +923,15 @@ export async function runSearch(
       // before copies are merged, so a suspected count is not added to the copy shown (F18)
       return withSuspicion(c);
     });
+    // F20: a resolved candidate from a hidden repo (a plugin read under its marketplace name) leaves here too.
+    const visible = owners.anyHidden ? merged.filter((c) => !dropForPrefs(c)) : merged;
     // The risk filter comes before merging copies: a hidden high-risk representative used to take its
     // lower-risk copies with it, and high-risk candidates held places in the top MAX_ENRICH.
     const risky: Candidate[] = [];
-    const allowed = merged.filter((c) => (tooRisky(c.skill!) ? (risky.push(c), false) : true));
+    const allowedAll = visible.filter((c) => (tooRisky(c.skill!) ? (risky.push(c), false) : true));
+    // F19: the facets before copies are merged (a copy in another repo may pass where its representative would
+    // not) and before any cut. What they leave out still counts in facetCounts, with the candidates dropped early.
+    const allowed = facets ? allowedAll.filter((c) => facetPass(c.skill!)) : allowedAll;
     const deduped = dedupeByContent(allowed, lookup).sort((a, b) => prelim(b) - prelim(a));
 
     // Stars for every candidate repo (cached 24h; the minimum-stars filter needs them all). Interim results
@@ -905,9 +976,49 @@ export async function runSearch(
       .slice(0, MAX_ENRICH);
     // "위험 높음 N개 숨김" counts only what would otherwise have been shown (one per SKILL.md)
     const hiddenHighRisk = new Set(
-      risky.filter((c) => c.skill!.description && starsPass(c) && !noQueryWord(c, matchOf(c))).map((c) => c.skill!.skill_md_sha256 ?? c.skill!.id),
+      risky.filter((c) => c.skill!.description && facetPass(c.skill!) && starsPass(c) && !noQueryWord(c, matchOf(c))).map((c) => c.skill!.skill_md_sha256 ?? c.skill!.id),
     ).size;
     hiddenLowStars += foldDroppedForStars(finalists);
+    const facetCounts = facets ? countFacets(countPool(), facets, t0) : undefined;
+    /**
+     * Every candidate the facets are counted over: what this search would show without them (hidden repos, risk,
+     * stars, description and query-word rules applied, one per SKILL.md), including the ones dropped for the
+     * facets before the cut. Their stars are the stored counts.
+     */
+    function countPool(): FacetValues[] {
+      const byId = new Map<string, Candidate>();
+      for (const c of allowedAll) byId.set(c.skill!.id, c);
+      for (const c of droppedForFacets) {
+        const s = c.skill;
+        if (s && !byId.has(s.id) && !owners.hidden(s.repo) && !tooRisky(s)) byId.set(s.id, c);
+      }
+      const list = dedupeByContent([...byId.values()], lookup);
+      for (const c of list) {
+        const r = c.skill!.repo?.toLowerCase();
+        if (r && !stars.has(r)) stars.set(r, store.getRepo(c.skill!.repo!)?.stars ?? null);
+      }
+      return list.filter((c) => c.skill!.description && starsPass(c) && !noQueryWord(c, matchOf(c))).map((c) => valuesOf(c.skill!));
+    }
+    // "숨긴 저장소 N개" (F20): results left out for a hidden repo, one per SKILL.md (not one shown through a copy
+    // elsewhere), not the name-only ones
+    const shownMd = new Set(finalists.map((c) => c.skill!.skill_md_sha256).filter(Boolean));
+    // Only what showing them would bring back: a hidden repo's result that is also over the risk limit or under the
+    // star line stays out either way, and "숨긴 저장소 5개 · 보기" then showed two (review 2026-11-10). Stars are the
+    // stored counts; a candidate never read is counted, since nothing is known of it.
+    const backFromPrefs = owners.anyHidden
+      ? [...droppedForPrefs].filter((c) => {
+          const s = c.skill;
+          if (!s) return true;
+          if (!s.description || tooRisky(s)) return false;
+          const r = s.repo?.toLowerCase();
+          if (r && !stars.has(r)) stars.set(r, store.getRepo(s.repo!)?.stars ?? null);
+          return starsPass(c);
+        })
+      : [];
+    const hiddenByPrefs = new Set(
+      backFromPrefs.filter((c) => !(c.skill?.skill_md_sha256 && shownMd.has(c.skill.skill_md_sha256))).map((c) => c.skill?.skill_md_sha256 ?? droppedKey(c)),
+    ).size;
+    const hiddenRepoNames = new Set([...hiddenRepoCards, ...backFromPrefs.map((c) => candidateRepo(c)?.toLowerCase()).filter((r): r is string => !!r)]);
 
     const bm = finalists.map((c) => c.bm25).filter((b): b is number => b != null);
     const best = bm.length ? Math.min(...bm) : 0;
@@ -985,6 +1096,8 @@ export async function runSearch(
       ...(suggestQuery ? { suggestQuery } : {}),
       ...(aliases.length ? { aliases } : {}),
       ...(spelling ? { spelling } : {}),
+      ...(hiddenByPrefs > 0 || hiddenRepoNames.size > 0 ? { hiddenByPrefs, hiddenRepos: hiddenRepoNames.size } : {}),
+      ...(facets ? { facets, facetCounts } : {}),
     };
   }
 }

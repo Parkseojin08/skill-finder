@@ -10,6 +10,8 @@ export type SourceRef = { kind: SourceKind; label: string; url: string };
 export type ResultItem = {
   id: string;
   name: string;
+  /** Near-copy group (B8): the smallest skill id of the group; absent when the skill stands alone. */
+  clusterId?: string;
   /** Pages of copies in other repos folded into this result (not this skill's own badges). */
   copies?: SourceRef[];
   description: string;
@@ -182,6 +184,8 @@ export type Settings = {
   minStars: number;
   /** Keep a search log on this PC (what was searched, which results were opened), 90 days. */
   searchLog: boolean;
+  /** Count skill uses from Claude Code's transcripts on this PC (F11, off by default). */
+  usageScan: boolean;
 };
 
 export type MarketplaceInfo = {

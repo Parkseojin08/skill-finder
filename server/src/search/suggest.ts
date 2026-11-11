@@ -1,4 +1,5 @@
 import type { Store } from '../db/store.ts';
+import { ownerFilter } from '../prefs/ownerPrefs.ts';
 import { indexGeneration } from './indexGeneration.ts';
 import { ratioSuspect } from './installsSuspect.ts';
 import { freshInstalls } from './rank.ts';
@@ -139,11 +140,14 @@ export function suggest(store: Store, text: string, limit = SUGGEST_LIMIT, now =
   const q = text.normalize('NFC').trim().toLowerCase().replace(/\s+/g, ' ');
   if (!q || q.length > SUGGEST_MAX_QUERY) return [];
   const ix = indexOf(store, now);
+  // a hidden repository or owner (F20) is not offered by name either; a skill name stays (other repos may have it)
+  const owners = ownerFilter(store);
   const found = new Map<number, number>(); // entry → 0 exact, 1 name starts with q, 2 a word in it does
   for (let i = lowerBound(ix.starts, q); i < ix.starts.length && found.size < MAX_GATHER; i++) {
     const s = ix.starts[i];
     if (!s.key.startsWith(q)) break;
     const e = ix.entries[s.entry];
+    if (owners.anyHidden && ((e.kind === 'repo' && owners.hidden(e.text)) || (e.kind === 'owner' && owners.hidden(`${e.text}/-`)))) continue;
     const rank = e.key === q ? 0 : e.key.startsWith(q) ? 1 : 2;
     const prev = found.get(s.entry);
     if (prev == null || rank < prev) found.set(s.entry, rank);

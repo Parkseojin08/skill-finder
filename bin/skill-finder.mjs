@@ -5,13 +5,15 @@
 // so Claude Code can call them from its shell. Nothing here installs or removes a skill: that stays in the app,
 // behind its confirm dialog (user decision 2026-11-02). Each result carries an appUrl, the app's install tab for
 // that skill and project, and `open <id>` opens it in the browser (F23 (a)): the agent hands the link over, the
-// user installs. (launcher/SkillFinder.cs has a `skill-finder` command of its own; this is not it.)
+// user installs. `check` (F12) compares a project with its standard files through the app's API; `lint` (F15) checks
+// a hand-made skill folder in this process (read only, any folder, with or without the app). Both exit 1 on a finding,
+// for CI or a hook. (launcher/SkillFinder.cs has a `skill-finder` command of its own; this is not it.)
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version ?? '?';
@@ -33,6 +35,9 @@ const T = {
   skill-finder recommend [폴더]    프로젝트 README·기술 스택과 비슷한 스킬 (기본: 지금 폴더)
   skill-finder installed [폴더]    설치된 플러그인·스킬
   skill-finder open <id>           앱에서 그 스킬의 설치 확인 창까지 엽니다 (--project [폴더])
+  skill-finder check [폴더]        프로젝트 표준(skills-lock.json, .claude/settings.json)과 설치된 것을 대조합니다
+                                   (맞으면 0, 어긋나면 1. "표준에 없음"은 알림만)
+  skill-finder lint <폴더>         직접 만든 스킬 폴더를 검사합니다 (문제가 있으면 1)
   skill-finder stop                이 명령이 백그라운드로 켠 앱을 끕니다
 
 공통: --json(기계가 읽는 출력), --port N, --no-open, --lang ko|en|ja, --project 폴더(appUrl의 프로젝트, 기본: 지금 폴더)
@@ -63,6 +68,19 @@ const T = {
     opened: (u) => `브라우저에서 열었습니다: ${u}\n설치는 앱의 확인 창에서 직접 하세요.`,
     openUrl: (u) => `이 주소를 브라우저로 여세요: ${u}`,
     failed: (m) => `실패: ${m}`,
+    status: { ok: '맞음', missing: '설치 안 됨', differs: '내용 다름', extra: '표준에 없음', disabled: '플러그인 꺼짐', unregistered: '마켓 미등록' },
+    kind: { skill: '스킬', plugin: '플러그인', marketplace: '마켓' },
+    noStandard: (p) => `${p}에 프로젝트 표준(skills-lock.json, .claude/settings.json의 플러그인)이 없습니다.`,
+    unreadable: (f) => `${f}을(를) 읽지 못했습니다.`,
+    checkOk: '프로젝트 표준과 맞습니다.',
+    checkBad: (n) => `프로젝트 표준과 어긋난 것이 ${n}개 있습니다. 빠진 것은 앱의 설치됨 화면에서 설치 확인 창을 거쳐 설치하세요.`,
+    notForClaude: 'Claude Code 폴더에는 없음',
+    needFolder: '검사할 스킬 폴더를 넣으세요. 예: skill-finder lint .claude/skills/my-skill',
+    lintOk: '고칠 문제를 찾지 못했습니다.',
+    lintBad: (n) => `고칠 문제 ${n}개 (오류·경고)`,
+    lintSummary: (risk, perTurn, onUse) => `${risk} · 토큰(추정): 매 턴 ${perTurn}, 쓸 때 ${onUse}`,
+    severity: { error: '오류', warning: '경고', info: '정보' },
+    notFolder: (p) => `폴더가 아닙니다: ${p}`,
   },
   en: {
     usage: `Skill Finder ${VERSION} — find Claude Code skills (read-only commands)
@@ -74,6 +92,9 @@ Usage:
   skill-finder recommend [folder]  skills like the project's README and tech stack (default: this folder)
   skill-finder installed [folder]  installed plugins and skills
   skill-finder open <id>           open the app at that skill's install confirm dialog (--project [folder])
+  skill-finder check [folder]      compare the project standard (skills-lock.json, .claude/settings.json) with what
+                                   is installed (0 when it matches, 1 when not; "not in the standard" is only reported)
+  skill-finder lint <folder>       check a skill folder you made (1 when there are problems)
   skill-finder stop                stop the app this command started in the background
 
 Common: --json (machine-readable), --port N, --no-open, --lang ko|en|ja, --project folder (appUrl's project, default: this folder)
@@ -104,6 +125,19 @@ Each result has an appUrl (the app's install confirm dialog). Installing and rem
     opened: (u) => `Opened in the browser: ${u}\nInstall from the app's confirm dialog yourself.`,
     openUrl: (u) => `Open this address in a browser: ${u}`,
     failed: (m) => `Failed: ${m}`,
+    status: { ok: 'OK', missing: 'not installed', differs: 'content differs', extra: 'not in the standard', disabled: 'plugin off', unregistered: 'marketplace not added' },
+    kind: { skill: 'skill', plugin: 'plugin', marketplace: 'marketplace' },
+    noStandard: (p) => `${p} has no project standard (skills-lock.json, plugins in .claude/settings.json).`,
+    unreadable: (f) => `Could not read ${f}.`,
+    checkOk: 'Matches the project standard.',
+    checkBad: (n) => `${n} item(s) differ from the project standard. Install missing ones from the app's Installed screen, through its confirm dialog.`,
+    notForClaude: 'not in a Claude Code folder',
+    needFolder: 'Give a skill folder to check. Example: skill-finder lint .claude/skills/my-skill',
+    lintOk: 'Nothing to fix.',
+    lintBad: (n) => `${n} problem(s) to fix (errors and warnings)`,
+    lintSummary: (risk, perTurn, onUse) => `${risk} · tokens (estimate): ${perTurn} every turn, ${onUse} when used`,
+    severity: { error: 'error', warning: 'warning', info: 'info' },
+    notFolder: (p) => `Not a folder: ${p}`,
   },
   ja: {
     usage: `Skill Finder ${VERSION} — Claude Code スキル検索(読み取り専用のコマンド)
@@ -115,6 +149,9 @@ Each result has an appUrl (the app's install confirm dialog). Installing and rem
   skill-finder recommend [フォルダ] プロジェクトの README・技術スタックに似たスキル(既定: 今のフォルダ)
   skill-finder installed [フォルダ] インストール済みのプラグイン・スキル
   skill-finder open <id>           アプリでそのスキルのインストール確認画面まで開く (--project [フォルダ])
+  skill-finder check [フォルダ]    プロジェクト標準(skills-lock.json, .claude/settings.json)とインストール済みを照合する
+                                   (一致で 0、ずれがあれば 1。「標準にない」は通知のみ)
+  skill-finder lint <フォルダ>     自作のスキルフォルダを検査する(問題があれば 1)
   skill-finder stop                このコマンドがバックグラウンドで起動したアプリを止める
 
 共通: --json(機械向け出力), --port N, --no-open, --lang ko|en|ja, --project フォルダ(appUrl のプロジェクト、既定: 今のフォルダ)
@@ -145,6 +182,19 @@ Each result has an appUrl (the app's install confirm dialog). Installing and rem
     opened: (u) => `ブラウザで開きました: ${u}\nインストールはアプリの確認画面でご自身で行ってください。`,
     openUrl: (u) => `このアドレスをブラウザで開いてください: ${u}`,
     failed: (m) => `失敗: ${m}`,
+    status: { ok: '一致', missing: '未インストール', differs: '内容が異なる', extra: '標準にない', disabled: 'プラグイン無効', unregistered: 'マーケット未登録' },
+    kind: { skill: 'スキル', plugin: 'プラグイン', marketplace: 'マーケット' },
+    noStandard: (p) => `${p} にプロジェクト標準(skills-lock.json、.claude/settings.json のプラグイン)がありません。`,
+    unreadable: (f) => `${f} を読めませんでした。`,
+    checkOk: 'プロジェクト標準と一致しています。',
+    checkBad: (n) => `プロジェクト標準とずれている項目が ${n} 個あります。足りないものはアプリのインストール済み画面から確認画面を経てインストールしてください。`,
+    notForClaude: 'Claude Code のフォルダにはない',
+    needFolder: '検査するスキルフォルダを指定してください。例: skill-finder lint .claude/skills/my-skill',
+    lintOk: '直すべき問題は見つかりませんでした。',
+    lintBad: (n) => `直すべき問題 ${n} 件(エラー・警告)`,
+    lintSummary: (risk, perTurn, onUse) => `${risk} · トークン(推定): 毎ターン ${perTurn}、使用時 ${onUse}`,
+    severity: { error: 'エラー', warning: '警告', info: '情報' },
+    notFolder: (p) => `フォルダではありません: ${p}`,
   },
 };
 
@@ -445,6 +495,86 @@ async function main() {
     for (const p of d.plugins) console.log(`  ${p.id}  [${p.scope}]${p.topRisk ? `  ${t.risk[p.topRisk]}` : ''}`);
     console.log(`${t.skills} (${d.skills.length})`);
     for (const s of d.skills) console.log(`  ${s.name}  [${s.scope}]  ${t.risk[s.risk.level]}`);
+    return;
+  }
+
+  if (command === 'check') {
+    // F12: for CI and a SessionStart hook; 0 when the project matches its standard, 1 when not (an error is 1 too)
+    const projectPath = resolve(rest[0] ?? process.cwd());
+    const port = await ensureRunning();
+    const s = JSON.parse(await api(port, 'GET', `/projects/standard?projectPath=${encodeURIComponent(projectPath)}`));
+    const failing = s.items.filter((i) => ['missing', 'differs', 'disabled', 'unregistered'].includes(i.status));
+    process.exitCode = s.ok ? 0 : 1;
+    if (json) {
+      return console.log(
+        JSON.stringify(
+          {
+            projectPath: s.projectPath,
+            ok: s.ok,
+            hasStandard: s.hasStandard,
+            files: s.files,
+            counts: s.counts,
+            items: s.items.map((i) => ({
+              kind: i.kind,
+              name: i.name,
+              status: i.status,
+              source: i.source,
+              ref: i.ref,
+              skillPath: i.skillPath,
+              skillId: i.skillId,
+              paths: i.paths,
+              notForClaude: i.notForClaude,
+              lockHash: i.lockHash,
+              localHash: i.localHash,
+              hashNote: i.hashNote,
+              marketplace: i.marketplace,
+            })),
+          },
+          null,
+          2,
+        ),
+      );
+    }
+    if (s.files.lock === 'unreadable') console.log(t.unreadable('skills-lock.json'));
+    if (s.files.settings === 'unreadable') console.log(t.unreadable('.claude/settings.json'));
+    if (!s.hasStandard) return console.log(t.noStandard(s.projectPath));
+    for (const i of s.items) {
+      const where = i.kind === 'skill' && i.source ? `  ${i.source}${i.ref ? `#${i.ref}` : ''}` : i.kind !== 'skill' && i.marketplace ? `  ${i.marketplace}` : '';
+      console.log(`  [${t.status[i.status] ?? i.status}] ${t.kind[i.kind] ?? i.kind} ${i.name}${where}${i.notForClaude ? `  (${t.notForClaude})` : ''}`);
+    }
+    console.log(`\n${failing.length || !s.ok ? t.checkBad(failing.length) : t.checkOk}`);
+    return;
+  }
+
+  if (command === 'lint') {
+    // F15 (feature review): the index's own checks on a skill folder made by hand, read in this process: any folder,
+    // with or without the app (its POST /api/lint-skill takes only folders the 설치됨 screen lists), and without the
+    // index, so no similar skills. Nothing in the folder is run. 0: nothing to fix (notes only), 1: an error or a
+    // warning, 2: not a folder.
+    if (!rest[0]) throw new Error(t.needFolder);
+    const dir = resolve(rest[0]);
+    let isDir = false;
+    try {
+      isDir = statSync(dir).isDirectory();
+    } catch {
+      // missing: not a folder
+    }
+    if (!isDir) {
+      process.exitCode = 2;
+      return console.log(json ? JSON.stringify({ ok: false, error: t.notFolder(dir) }, null, 2) : t.failed(t.notFolder(dir)));
+    }
+    const { lintSkillFolder } = await import(pathToFileURL(join(ROOT, 'server', 'src', 'lint', PACKAGED ? 'lint.js' : 'lint.ts')).href);
+    const r = await lintSkillFolder(dir);
+    process.exitCode = r.ok ? 0 : 1;
+    if (json) return console.log(JSON.stringify(r, null, 2));
+    console.log(`${r.name}  (${r.path})`);
+    console.log(t.lintSummary(t.risk[r.risk.level] ?? r.risk.level, r.tokens.perTurn, r.tokens.onUse ?? '?'));
+    const toFix = r.problems.filter((p) => p.severity !== 'info').length;
+    console.log(toFix ? t.lintBad(toFix) : t.lintOk);
+    for (const p of r.problems) {
+      const at = [p.file, p.line].filter((x) => x != null && x !== '').join(':');
+      console.log(`  [${t.severity[p.severity] ?? p.severity}] ${p.message}${at ? `  (${at})` : ''}`);
+    }
     return;
   }
 

@@ -1,5 +1,6 @@
 import type { InstallMethod, Job, RiskLevel, TrustTier } from './types.ts';
 import { t } from './i18n.ts';
+import { B5_RISK_FLAGS } from './lib/security.ts';
 
 export const RISK_FLAGS: Record<string, { label: string; meaning: string; info?: boolean }> = {
   scripts: { label: t('스크립트 포함'), meaning: t('실행 가능한 코드(.sh, .py, .js 등)가 들어 있습니다(정보). Bash로만 실행되고, 그 전에 Claude Code가 허락을 묻습니다.'), info: true },
@@ -20,6 +21,8 @@ export const RISK_FLAGS: Record<string, { label: string; meaning: string; info?:
     label: t('숨은 내용'),
     meaning: t('화면에는 보이지 않지만 Claude는 읽는 내용이 있습니다(글이 든 HTML 주석, 숨김 HTML, 보이지 않는 글자, 긴 base64, 글자와 실제 주소가 다른 링크). SKILL.md 탭의 "Claude가 읽는 원문"에서 확인하세요.'),
   },
+  // stage 3 (B5, decision 9): obfuscated execution, settings tampering, credentials, exfiltration, persistence, …
+  ...B5_RISK_FLAGS,
 };
 
 /** The kinds of hidden content the SKILL.md tab marks in the raw text (server analyze/hiddenContent.ts). */
@@ -115,7 +118,8 @@ export function formatBytes(n: number | null): string {
 /** "?" explanations next to a few headings (UI debate stage 4), read from the same labels as the badges. */
 export const HELP = {
   risk:
-    t('위험 낮음·주의·위험 높음은 SKILL.md와 파일 목록을 규칙으로 검사한 결과입니다. 위험 높음: 내려받은 코드를 바로 실행하거나, 아무 명령이나 미리 허락하고 셸을 실행합니다. 주의: 스크립트·훅·MCP 서버처럼 내 PC에서 무언가 실행될 수 있습니다. ') +
+    // stage 3 (decision 9): decoded code run and Claude Code's settings changed are high too; the new medium signals are named
+    t('위험 낮음·주의·위험 높음은 SKILL.md와 파일 목록을 규칙으로 검사한 결과입니다. 위험 높음: 내려받거나 인코딩해 숨긴 코드를 바로 실행하거나, 아무 명령이나 미리 허락하고 셸을 실행하거나, Claude Code 설정·권한 확인을 바꿉니다. 주의: 스크립트·훅·MCP 서버처럼 내 PC에서 무언가 실행될 수 있거나, 자격 증명 접근·외부 수집 주소·자동 재실행 등록 같은 신호가 있습니다. ') +
     LOW_RISK_NOTE,
   scope: t('개인: 내 모든 프로젝트에서 씁니다. 프로젝트: 고른 폴더에서만 쓰고, 설정 파일이 git으로 팀과 공유될 수 있습니다. 로컬: 고른 폴더에서 나만 씁니다(플러그인만).'),
   score: t('점수는 관련도·인기·최신성·신뢰도를 고정 비율(55·20·10·15)로 더한 참고값입니다. 결과 순서는 이름 일치 → 다운로드 → 스타 기준이라 점수 순서와 다를 수 있습니다.'),

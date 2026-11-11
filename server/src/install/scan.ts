@@ -1,7 +1,7 @@
 // What an install brings besides SKILL.md (project review 2026-11-02 F1). The risk rules run on SKILL.md when a
 // skill is indexed; the other text files of the folder (scripts, references) are installed unchecked. Before an
 // install the app reads them at the pinned commit and runs the same text rules on each. Remote files are only read.
-import { TEXT_FILE_RULES, textEvidence, type Evidence, type RiskFlag } from '../analyze/risk.ts';
+import { TEXT_FILE_RULES, textEvidence, textFileInput, TICK_FLAGS, type Evidence, type RiskFlag } from '../analyze/risk.ts';
 import type { SkillRow } from '../db/store.ts';
 import type { StoredFiles } from '../indexer.ts';
 import type { GitHub } from '../sources/github.ts';
@@ -31,11 +31,18 @@ export type FileScan = {
   evidence: Array<Evidence & { flag: RiskFlag }>;
 };
 
-/** The text rules that apply outside SKILL.md: download-and-run and rm -rf (the rest read frontmatter). */
-export function textFileFlags(text: string): RiskFlag[] {
-  const input = { files: [], allowedTools: [], body: '', hasHooks: false, raw: text };
+/**
+ * The text rules that apply outside SKILL.md: download-and-run, rm -rf and the B5 malicious-pattern rules (the rest
+ * read frontmatter). `path`: a Markdown or text document is read as SKILL.md is (commands only where they are
+ * written); without it, or for a script or command line, all of the text is code.
+ */
+export function textFileFlags(text: string, path?: string): RiskFlag[] {
+  const input = textFileInput(text, path);
   return TEXT_FILE_RULES.filter((r) => r.scan(input, 1).length > 0).map((r) => r.flag);
 }
+
+/** A file finding as serious as download-and-run (needs the install's confirm tick, decision 9). */
+export const needsTick = (flags: readonly RiskFlag[]) => flags.some((f) => TICK_FLAGS.has(f));
 
 const cache = new SizedCache<FileScan>({ maxSize: 500, ttlMs: 30 * 60 * 1000, sizeOf: () => 1 });
 
@@ -73,7 +80,7 @@ async function runScan(github: GitHub, skill: SkillRow): Promise<FileScan> {
     if (out.truncated) return skipped.push({ path: f.path, reason: 'large' });
     if (looksBinary(out.text)) return skipped.push({ path: f.path, reason: 'binary' });
     checked++;
-    const flags = textFileFlags(out.text);
+    const flags = textFileFlags(out.text, f.path);
     if (flags.length) {
       findings.push({ path: f.path, flags });
       evidence.push(...textEvidence(out.text, f.path));

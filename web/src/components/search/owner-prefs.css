@@ -1,0 +1,125 @@
+/* Stage 3, bundle D (feature review 2026-11-04): the card's "…" menu (F20), the hidden-repos list in the settings,
+   and the "전체에서 다시 찾기" button under the side filters (F19). App tokens only (styles.css). */
+@layer app {
+  .owner-menu {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+  /* above the card's cover link, like the favorite star */
+  .card .owner-menu {
+    z-index: 2;
+  }
+  /* open: above the card's own badges and the next card's (they sit at 2 as well and come later in the page, so
+     they painted over the open menu) */
+  .card .owner-menu[open] {
+    z-index: 6;
+  }
+  .owner-menu > summary {
+    list-style: none;
+  }
+  .owner-menu > summary::-webkit-details-marker {
+    display: none;
+  }
+  .owner-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 0 4px;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    line-height: 1;
+    font-size: 18px;
+  }
+  .owner-menu-btn:hover,
+  .owner-menu[open] > .owner-menu-btn {
+    color: var(--text);
+    border-color: var(--line);
+  }
+  .owner-menu-btn:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  .owner-menu-items {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 6;
+    display: grid;
+    gap: 4px;
+    min-width: 200px;
+    padding: 8px;
+    background: var(--bg-elev);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--corner);
+    white-space: nowrap;
+  }
+  .owner-menu-items > button {
+    justify-content: flex-start;
+    text-align: left;
+  }
+  .owner-menu-items p {
+    margin: 2px 4px 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    max-width: 260px;
+  }
+  .owner-menu-error {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 7;
+    width: max-content;
+    max-width: 260px;
+    margin-top: 4px;
+    padding: 6px 8px;
+    border: 1px solid var(--danger);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  .card-actions {
+    display: inline-flex;
+    align-items: flex-start;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  /* settings: hidden repositories and trusted owners */
+  .owner-prefs-list {
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 6px;
+  }
+  .owner-prefs-list li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+  }
+  .owner-prefs-list .mono {
+    overflow-wrap: anywhere;
+  }
+  .owner-prefs-add {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .owner-prefs-add input {
+    flex: 1 1 200px;
+    min-width: 0;
+  }
+
+  /* F19: under the side filters */
+  .facet-search-all {
+    margin-top: 10px;
+    width: 100%;
+  }
+}
