@@ -10,6 +10,7 @@ import { runClaude } from '../claude/cli.ts';
 import { SKILLS_CLI_VERSION } from '../config.ts';
 import type { Store } from '../db/store.ts';
 import { looksBinary } from '../util/http.ts';
+import { FOLD_CASE, pathKey, sameName } from '../util/paths.ts';
 import { truncate } from '../util/sanitize.ts';
 import { isTextPath, MAX_FILE_BYTES } from '../util/textFiles.ts';
 import { skillTokens } from '../util/tokens.ts';
@@ -178,10 +179,17 @@ function readLock(file: string): Map<string, string> {
   const byFolder = new Map<string, string>();
   for (const e of readLockEntries(file) ?? []) {
     const id = lockSkillId(e);
-    if (id) byFolder.set(e.name.toLowerCase(), id);
+    if (id) byFolder.set(lockFolderKey(e.name), id);
   }
   return byFolder;
 }
+
+/**
+ * A lock entry's folder, as found by folder name (lock.get(lockFolderKey(folder))). Where case tells folders apart,
+ * the folder the skills CLI made (skillFolderName), so that a folder of another case written by hand is not taken for
+ * it; elsewhere any case, as before.
+ */
+const lockFolderKey = (name: string) => (FOLD_CASE ? name.toLowerCase() : skillFolderName(name));
 
 /** The folder the skills CLI installs a skill into (its `sanitizeName`, the same in skills@1.7.4 and 1.7.6). */
 export function skillFolderName(name: string): string {
@@ -208,7 +216,7 @@ export async function scanInstalledSkills(store: Store, scope: 'user' | 'project
   const lock = readLock(scope === 'user' ? join(home, '.agents', '.skill-lock.json') : join(root, 'skills-lock.json'));
   const logged = new Map<string, { id: string; risk: string | null; md: string | null }>();
   for (const l of installedSkillLog(store)) {
-    if (l.scope !== scope || (scope === 'project' && l.project_path?.toLowerCase() !== root.toLowerCase())) continue;
+    if (l.scope !== scope || (scope === 'project' && (l.project_path == null || pathKey(l.project_path) !== pathKey(root)))) continue;
     const name = store.getSkill(l.skill_id)?.name.toLowerCase();
     if (name && !logged.has(name)) logged.set(name, { id: l.skill_id, risk: l.risk_level, md: l.skill_md_sha256 });
   }
@@ -224,7 +232,7 @@ export async function scanInstalledSkills(store: Store, scope: 'user' | 'project
       continue; // no such folder
     }
     for (const folder of entries.sort()) {
-      if (onlyFolder && folder.toLowerCase() !== onlyFolder.toLowerCase()) continue;
+      if (onlyFolder && !sameName(folder, onlyFolder)) continue;
       const path = join(dir, folder);
       const real = pathKey(await realpath(path).catch(() => path));
       const seen = byReal.get(real);
@@ -234,7 +242,7 @@ export async function scanInstalledSkills(store: Store, scope: 'user' | 'project
       }
       const hit = await inspectSkill(store, path, folder, (name) => {
         const log = isClaude ? (logged.get(name.toLowerCase()) ?? logged.get(folder.toLowerCase())) : undefined;
-        const fromLock = lock.get(folder.toLowerCase());
+        const fromLock = lock.get(FOLD_CASE ? folder.toLowerCase() : folder);
         const id = (fromLock && store.getSkill(fromLock)?.id) || (log && store.getSkill(log.id) ? log.id : null);
         const ours = !!log && log.id === id;
         return { id: id || null, installedRisk: ours ? (log.risk as RiskLevel | null) : null, installedMd: ours ? log.md : null };
@@ -479,8 +487,8 @@ export function installedPluginEntries(home: string = homedir()): Array<{ id: st
   return out;
 }
 
-/** Windows paths compared as Claude Code writes them: backslashes, no trailing one, any case. */
-export const pathKey = (p: string) => p.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+// the comparison rule lives in util/paths.ts (the database layer uses it too); kept importable from here
+export { pathKey, pathWithin, sameName } from '../util/paths.ts';
 export const pluginCommitKey = (id: string, scope: string, projectPath: string | null) => `${id}|${scope}|${scope === 'user' ? '' : pathKey(projectPath ?? '')}`;
 
 /** How a plugin install compares with the index: its skills' top risk and whether it came from the indexed commit. */

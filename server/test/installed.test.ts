@@ -75,8 +75,13 @@ describe('설치된 스킬과 색인 연결 (UI 토론 3단계)', () => {
     assert.deepEqual(pluginIndexInfo(ctx.store, 'pl@own-market', 'c'.repeat(40)), { indexed: true, topRisk: 'high', change: 'unknown' });
   });
 
-  it('플러그인 커밋 키는 경로 모양(슬래시·끝 구분자·대소문자)을 맞춰 비교한다', () => {
-    assert.equal(pluginCommitKey('p@m', 'project', 'C:/Work/App/'), pluginCommitKey('p@m', 'project', 'c:\\work\\app'));
+  it('플러그인 커밋 키는 경로 모양(슬래시·끝 구분자·대소문자)을 그 OS의 규칙대로 맞춰 비교한다', () => {
+    const key = (p: string) => pluginCommitKey('p@m', 'project', p);
+    if (process.platform === 'win32') assert.equal(key('C:/Work/App/'), key('c:\\work\\app'));
+    else {
+      assert.equal(key('/work/App/'), key('/work/App'), '끝 구분자');
+      assert.equal(key('/work/App') === key('/work/app'), process.platform === 'darwin', '대소문자는 macOS에서만 같음');
+    }
     assert.equal(pluginCommitKey('p@m', 'user', 'C:/x'), 'p@m|user|');
   });
 

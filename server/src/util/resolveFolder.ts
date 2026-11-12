@@ -1,6 +1,7 @@
 import { readdirSync, statSync, type Dirent } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { pathKey, sameName } from './paths.ts';
 
 /**
  * Drag & drop of a folder into the browser gives its name and the names inside it, never its absolute
@@ -18,7 +19,6 @@ const MIN_OVERLAP = 0.6;
 
 export type FolderMatch = { path: string; overlap: number };
 
-const sameName = (a: string, b: string) => (process.platform === 'win32' || process.platform === 'darwin' ? a.toLowerCase() === b.toLowerCase() : a === b);
 
 function listNames(dir: string): Dirent[] | null {
   try {
@@ -41,7 +41,8 @@ export function resolveDroppedFolder(name: string, entries: string[], hints: str
   let visited = 0;
   while (queue.length && visited < MAX_DIRS && Date.now() - started < TIME_LIMIT_MS) {
     const [dir, depth] = queue.shift()!;
-    const key = dir.toLowerCase();
+    // one visit per folder as this platform tells folders apart (Linux: Demo and demo are two)
+    const key = pathKey(dir);
     if (seen.has(key)) continue;
     seen.add(key);
     visited++;
@@ -56,7 +57,7 @@ export function resolveDroppedFolder(name: string, entries: string[], hints: str
         if (inside) {
           const names = new Set(inside.map((e) => e.name.toLowerCase()));
           const hit = wanted.size ? [...wanted].filter((w) => names.has(w)).length / wanted.size : 1;
-          if (hit >= MIN_OVERLAP && !matches.some((m) => m.path.toLowerCase() === full.toLowerCase())) matches.push({ path: full, overlap: hit });
+          if (hit >= MIN_OVERLAP && !matches.some((m) => pathKey(m.path) === pathKey(full))) matches.push({ path: full, overlap: hit });
         }
       }
       if (depth + 1 < MAX_DEPTH && !lower.startsWith('.') && !SKIP.has(lower)) queue.push([full, depth + 1]);

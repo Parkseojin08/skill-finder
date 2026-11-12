@@ -7,7 +7,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { AppContext } from '../context.ts';
 import { skillMdPath } from '../discovery/tree.ts';
-import { pathKey, scanInstalledSkills } from '../install/installed.ts';
+import { pathKey, sameName, scanInstalledSkills } from '../install/installed.ts';
 import { isProjectDir } from '../install/validate.ts';
 import { isPlainFolderName } from '../util/resolveFolder.ts';
 import { unifiedDiff } from '../watch/diff.ts';
@@ -27,7 +27,7 @@ export function claudeSkillFolder(path: unknown, home: string): { scope: 'user' 
   const folder = basename(full);
   const skills = dirname(full);
   const claude = dirname(skills);
-  if (!isPlainFolderName(folder) || basename(skills).toLowerCase() !== 'skills' || basename(claude).toLowerCase() !== '.claude') return null;
+  if (!isPlainFolderName(folder) || !sameName(basename(skills), 'skills') || !sameName(basename(claude), '.claude')) return null;
   const root = dirname(claude);
   if (pathKey(root) === pathKey(home)) return { scope: 'user', root, folder, path: full };
   return isProjectDir(root) ? { scope: 'project', root, folder, path: full } : null;

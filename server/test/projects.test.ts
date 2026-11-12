@@ -337,7 +337,8 @@ describe('라우트 (임시 홈 폴더, 읽기 전용)', () => {
       join(home, '.claude.json'),
       json({
         projects: {
-          [project.replace(/\\/g, '/').toLowerCase()]: {},
+          // another spelling of the same folder (Windows: slashes and any case; elsewhere a trailing slash)
+          [process.platform === 'win32' ? project.replace(/\\/g, '/').toLowerCase() : `${project}/`]: {},
           [claudeProj.replace(/\\/g, '/')]: { mcpServers: { local: { command: 'node', args: ['x.js'] } } },
           [home]: {},
           'relative/path': {},

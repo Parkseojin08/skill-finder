@@ -9,7 +9,7 @@ import { join, relative, sep } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { listClaudePlugins } from '../agentConfig/read.ts';
 import { agentFolders, agentRef, CLAUDE_CODE, type AgentRef } from '../install/agents.ts';
-import { lockSkillId, readLockEntries, skillFolderName, type LockEntry } from '../install/installed.ts';
+import { lockSkillId, pathKey, readLockEntries, skillFolderName, type LockEntry } from '../install/installed.ts';
 
 export type StandardStatus = 'ok' | 'missing' | 'differs' | 'extra' | 'disabled' | 'unregistered';
 /** The states that make `check` fail; `extra` (installed, not in the standard) is only reported. */
@@ -227,7 +227,7 @@ export async function projectStandard(projectPath: string, opts: StandardOptions
     const want = skillFolderName(e.name);
     const found = folders.filter((f) => f.name.toLowerCase() === want || f.name.toLowerCase() === e.name.toLowerCase());
     const item: StandardItem = { ...blank('skill', e.name, 'ok'), source: e.source, ref: e.ref, skillPath: e.skillPath, skillId: lockSkillId(e), lockHash: e.computedHash };
-    for (const f of found) claimed.add(f.path.toLowerCase());
+    for (const f of found) claimed.add(pathKey(f.path));
     item.paths = found.map((f) => f.path);
     item.agents = found.flatMap((f) => f.agents).filter((a, i, all) => all.findIndex((x) => x.id === a.id) === i);
     if (!found.length) {
@@ -283,7 +283,7 @@ export async function projectStandard(projectPath: string, opts: StandardOptions
   if (lock) {
     const extra = new Map<string, StandardItem>();
     for (const f of folders) {
-      if (claimed.has(f.path.toLowerCase())) continue;
+      if (claimed.has(pathKey(f.path))) continue;
       const key = f.name.toLowerCase();
       const hit = extra.get(key) ?? { ...blank('skill', f.name, 'extra') };
       hit.paths.push(f.path);

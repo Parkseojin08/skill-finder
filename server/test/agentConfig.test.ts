@@ -281,7 +281,8 @@ describe('readAgentConfig (임시 홈 폴더)', () => {
         'command = "node"',
         'enabled = false',
         '',
-        `[projects.'${project.toLowerCase()}']`,
+        // Codex writes the folder in lower case on Windows (where case does not tell folders apart), as it is elsewhere
+        `[projects.'${process.platform === 'win32' ? project.toLowerCase() : project}']`,
         'trust_level = "trusted"',
       ].join('\n'),
     );

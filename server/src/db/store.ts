@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import type { SQLInputValue, StatementSync } from 'node:sqlite';
 import type { Db } from './index.ts';
 import { tx } from './index.ts';
+import { pathKey } from '../util/paths.ts';
 
 export type IndexMode = 'eager' | 'lazy';
 
@@ -633,10 +634,12 @@ export class Store {
     return this.all<{ project_path: string }>(
       `SELECT project_path, MAX(id) AS last FROM install_log
         WHERE project_path IS NOT NULL AND exit_code = 0 AND method NOT LIKE 'uninstall-%'
-        GROUP BY lower(project_path) ORDER BY last DESC LIMIT ?`,
-      limit * 3,
+        GROUP BY project_path ORDER BY last DESC LIMIT ?`,
+      limit * 6,
     )
       .map((r) => r.project_path)
+      // one per folder as this platform tells folders apart (util/paths.ts), the newest spelling first
+      .filter((p, i, all) => all.findIndex((q) => pathKey(q) === pathKey(p)) === i)
       .filter((p) => existsSync(p))
       .slice(0, limit);
   }

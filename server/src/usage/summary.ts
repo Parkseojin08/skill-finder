@@ -2,7 +2,7 @@
 // in the last 30 days, everywhere and in the folder listed. A use counts for a folder when Claude Code ran in it or
 // in a folder inside it (cwd).
 import type { Store } from '../db/store.ts';
-import { pathKey } from '../install/installed.ts';
+import { pathKey, pathWithin } from '../install/installed.ts';
 import { localDay } from './parse.ts';
 
 export type UsageEntry = {
@@ -34,12 +34,7 @@ export function windowStart(now: Date, days = USAGE_WINDOW_DAYS): string {
   return localDay(d.toISOString())!;
 }
 
-const inFolder = (cwd: string, folder: string): boolean => {
-  if (!cwd) return false;
-  const a = pathKey(cwd);
-  const b = pathKey(folder);
-  return a === b || a.startsWith(b + '\\');
-};
+const inFolder = (cwd: string, folder: string): boolean => !!cwd && pathWithin(cwd, folder);
 
 export function usageSummary(store: Store, enabled: boolean, projectPath: string | null, now = new Date()): UsageSummary {
   const meta = store.db.prepare('SELECT COUNT(*) AS n, MAX(scanned_at) AS at FROM usage_scan_files').get() as { n: number; at: string | null };

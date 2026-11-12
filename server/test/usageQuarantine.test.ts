@@ -39,13 +39,20 @@ const usageRows = (ctx: AppContext) =>
   ctx.store.db.prepare('SELECT day, project_path, skill, plugin, count FROM skill_usage ORDER BY day, skill, project_path').all() as Array<{ day: string; project_path: string; skill: string; plugin: string; count: number }>;
 const total = (ctx: AppContext) => usageRows(ctx).reduce((n, r) => n + r.count, 0);
 
+/**
+ * The fixture's working folders (Windows ones, C:\work\…) as Claude Code would write them on this platform: on Linux
+ * and macOS `\` is a character of a name, so the folders there are /work/… with slashes.
+ */
+const ALPHA = process.platform === 'win32' ? 'C:\\work\\alpha' : '/work/alpha';
+const onThisPlatform = (jsonl: string) => (process.platform === 'win32' ? jsonl : jsonl.replaceAll('C:\\\\work\\\\', '/work/').replaceAll('alpha\\\\sub', 'alpha/sub'));
+
 /** A home with the fixture as one session and one subagent file of another project. */
-function homeWithTranscripts(): { home: string; main: string; sub: string } {
+function homeWithTranscripts(fixture = FIXTURE): { home: string; main: string; sub: string } {
   const home = tmp('sf-s3b-home-');
   const dir = join(home, '.claude', 'projects', 'C--work-alpha');
   mkdirSync(join(dir, 's1', 'subagents'), { recursive: true });
   const main = join(dir, 's1.jsonl');
-  writeFileSync(main, FIXTURE);
+  writeFileSync(main, fixture);
   const sub = join(dir, 's1', 'subagents', 'agent-x.jsonl');
   writeFileSync(sub, line({ id: 'toolu_SUB', skill: 'exa-search', ts: '2026-11-03T12:00:00.000Z', cwd: 'C:\\work\\alpha' }) + '\n');
   // not transcripts: another extension, a file one level too deep
@@ -248,16 +255,18 @@ describe('F11 usage-scan 작업', () => {
   it('요약: 마지막 사용일, 30일 횟수, 이 폴더(안쪽 폴더 포함), 한 프로젝트에서만 쓴 것', async () => {
     const ctx = ctxOf();
     turnOn(ctx);
-    const { home } = homeWithTranscripts();
+    const { home } = homeWithTranscripts(onThisPlatform(FIXTURE));
     await runUsageScan(ctx, undefined, { home });
     const now = new Date('2026-11-09T12:00:00.000Z');
     assert.equal(windowStart(now), localDay('2026-10-11T12:00:00.000Z'));
-    const s = usageSummary(ctx.store, true, 'C:\\work\\alpha', now);
+    const s = usageSummary(ctx.store, true, ALPHA, now);
     const get = (plugin: string, skill: string) => s.skills.find((x) => x.plugin === plugin && x.skill === skill)!;
     assert.deepEqual(
       { ...get('', 'tidy-notes') },
-      { skill: 'tidy-notes', plugin: '', lastUsed: localDay('2026-11-01T12:01:00.000Z'), count30: 1, lastUsedHere: localDay('2026-11-01T12:01:00.000Z'), count30Here: 1, onlyProject: 'C:\\work\\alpha' },
+      { skill: 'tidy-notes', plugin: '', lastUsed: localDay('2026-11-01T12:01:00.000Z'), count30: 1, lastUsedHere: localDay('2026-11-01T12:01:00.000Z'), count30Here: 1, onlyProject: ALPHA },
     );
+    // a folder whose name only begins like it is another folder
+    assert.equal(usageSummary(ctx.store, true, ALPHA.slice(0, -1), now).skills.find((x) => x.skill === 'tidy-notes')!.count30Here, 0);
     assert.equal(get('', 'game-engine').count30, 2);
     assert.equal(get('', 'game-engine').count30Here, 1, 'alpha\\sub는 alpha 안');
     assert.equal(get('', 'game-engine').onlyProject, null);

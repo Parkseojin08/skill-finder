@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { isAbsolute } from 'node:path';
 import { readAgentConfig } from '../agentConfig/read.ts';
 import { CLAUDE_CODE } from '../install/agents.ts';
-import { pathKey, scanInstalledSkills, scanPluginSkills, type InstalledSkill, type PluginSkill } from '../install/installed.ts';
+import { pathKey, pathWithin, scanInstalledSkills, scanPluginSkills, type InstalledSkill, type PluginSkill } from '../install/installed.ts';
 import type { Store } from '../db/store.ts';
 import { getSettings } from '../settings.ts';
 import { projectStandard, type StandardStatus } from './standard.ts';
@@ -63,13 +63,13 @@ export function claudeJsonProjects(home: string): string[] {
   }
 }
 
-/** The known folders, newest app install first; only existing absolute directories, one per path (any case, either slash). */
+/** The known folders, newest app install first; only existing absolute directories, one per folder (pathKey). */
 export function knownProjects(store: Store, home: string): Array<{ path: string; from: Array<'install' | 'claude'> }> {
   const rows = store.db
     .prepare(
       `SELECT project_path, MAX(id) AS last FROM install_log
         WHERE project_path IS NOT NULL AND project_path != '' AND method NOT LIKE 'uninstall-%'
-        GROUP BY lower(project_path) ORDER BY last DESC LIMIT 500`,
+        GROUP BY project_path ORDER BY last DESC LIMIT 500`,
     )
     .all() as Array<{ project_path: string }>;
   const out = new Map<string, { path: string; from: Array<'install' | 'claude'> }>();
@@ -121,12 +121,7 @@ function usageRows(store: Store, since: string): UsageRow[] | null {
 }
 
 /** A use counts for a folder when Claude Code ran in it or in a folder inside it (as the usage summary counts). */
-const inFolder = (cwd: string, folder: string) => {
-  if (!cwd) return false;
-  const a = pathKey(cwd);
-  const b = pathKey(folder);
-  return a === b || a.startsWith(`${b}\\`);
-};
+const inFolder = (cwd: string, folder: string) => !!cwd && pathWithin(cwd, folder);
 
 /** The first local day of the last `days` days, today included (YYYY-MM-DD, as the usage scan stores days). */
 export function usageWindowStart(now: number, days = USAGE_DAYS): string {

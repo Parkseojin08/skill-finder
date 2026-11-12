@@ -4,7 +4,8 @@
 // skill list, whether the skills CLI finds it (D#532d), notes for other agents, and similar indexed skills (F4).
 // Files are only read; nothing in the folder is run. No AI call: every check is a rule.
 import { createHash } from 'node:crypto';
-import { lstat, open, readdir, readFile, realpath } from 'node:fs/promises';
+import { constants, existsSync } from 'node:fs';
+import { lstat, open, readdir, realpath, stat, type FileHandle } from 'node:fs/promises';
 import { basename, join, sep } from 'node:path';
 import { extractSkillMeta } from '../analyze/frontmatter.ts';
 import { LISTING_LIMIT, qualityWarnings, type QualityCode } from '../analyze/quality.ts';
@@ -61,7 +62,22 @@ export type LintContext = {
   settings?: Pick<Settings, 'weights' | 'minStars'>;
   /** Similar skills listed (default 5). */
   similarMax?: number;
+  /**
+   * Where the caller found the folder to be (after links) when it allowed it: the folder is read only from there, and
+   * the result is void if the path leads elsewhere, before or after reading (FolderMovedError).
+   */
+  expectRealPath?: string;
 };
+
+/**
+ * The folder is no longer where it was allowed: a link in its path was changed between the check and the reading, or
+ * during it. What was read is not returned.
+ */
+export class FolderMovedError extends Error {
+  constructor() {
+    super('검사하는 동안 폴더의 위치가 바뀌었습니다. 다시 검사하세요');
+  }
+}
 
 /** Flags whose meaning is Claude Code's own (web lib/security.ts CLAUDE_ONLY_FLAGS keeps the same list). */
 export const CLAUDE_ONLY_FLAGS: ReadonlySet<RiskFlag> = new Set<RiskFlag>(['preapprovedBash', 'unscopedBash', 'shellInjection', 'skillHooks', 'pluginRootDependency', 'preapprovedNetwork', 'preapprovedWrite']);
@@ -131,19 +147,86 @@ async function listFiles(root: string): Promise<string[]> {
   return out;
 }
 
-/** A file inside `realRoot` (after links), read as text if it is one and small enough; null otherwise. */
-async function readInside(realRoot: string, rel: string): Promise<string | null> {
-  const full = join(realRoot, ...rel.split('/'));
+type FileId = { dev: bigint; ino: bigint };
+const sameId = (a: FileId, b: FileId) => a.dev === b.dev && a.ino === b.ino;
+/** Not on Windows (0 there): the last name of the path is then followed, and the identity check below decides. */
+const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
+
+/**
+ * The folder being checked: its real path, its identity, and on Linux the folder itself held open, so that files are
+ * found beneath that very folder (its /proc/self/fd entry), not by a path whose names can be swapped meanwhile.
+ */
+type LintRoot = { path: string; id: FileId; dir: FileHandle | null };
+const BENEATH = process.platform === 'linux' && existsSync('/proc/self/fd');
+
+/**
+ * On Linux: the file `rel` beneath the open folder, no name along the way followed if it is a link (each folder of
+ * `rel` opened in turn the same way). Renaming or swapping the folder or anything in it cannot lead this elsewhere.
+ */
+async function openBeneath(dir: FileHandle, rel: string): Promise<FileHandle> {
+  const parts = rel.split('/');
+  const opened: FileHandle[] = [];
+  let at = dir;
   try {
-    const st = await lstat(full);
-    if (!st.isFile() || st.size > MAX_FILE_BYTES) return null;
-    const real = await realpath(full);
-    if (!(real === realRoot || real.startsWith(realRoot + sep))) return null;
-    const text = await readFile(real, 'utf8');
-    return looksBinary(text) ? null : text;
+    for (const part of parts.slice(0, -1)) {
+      at = await open(`/proc/self/fd/${at.fd}/${part}`, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      opened.push(at);
+    }
+    return await open(`/proc/self/fd/${at.fd}/${parts.at(-1)}`, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } finally {
+    for (const h of opened) await h.close().catch(() => {});
+  }
+}
+
+/**
+ * Up to `limit` bytes of a file inside the folder (`more`: the file is longer), or null when it is not a plain file
+ * of the folder. The file is opened first and only that opened file is read: checking a path and then opening it
+ * again would read whatever a link put there in between (review 2026-11-12: a SKILL.md or a script swapped for a link
+ * to a file outside, while "검사" ran). On Linux it is opened beneath the open folder (openBeneath). Elsewhere it is
+ * checked to be the file the folder holds at that path (same device and inode as the path's real location inside the
+ * folder), with the folder itself checked before and after: a folder swapped and swapped back between those checks
+ * can still slip through there, as no openat() is available. `skipOver`: files larger than this are not read.
+ */
+async function readInsideBytes(root: LintRoot, rel: string, limit: number, skipOver = Infinity): Promise<{ data: Buffer; more: boolean } | null> {
+  const full = join(root.path, ...rel.split('/'));
+  const rootStill = async () => {
+    const now = await lstat(root.path, { bigint: true });
+    return now.isDirectory() && sameId(now, root.id);
+  };
+  let fh: FileHandle | undefined;
+  try {
+    if (root.dir) fh = await openBeneath(root.dir, rel);
+    else {
+      if (!(await rootStill())) return null;
+      // the last name not followed where the system allows it: a link in the file's place fails here (ELOOP)
+      fh = await open(full, constants.O_RDONLY | NO_FOLLOW);
+    }
+    const st = await fh.stat({ bigint: true });
+    if (!st.isFile() || st.size > BigInt(Math.min(skipOver, Number.MAX_SAFE_INTEGER))) return null;
+    if (!root.dir) {
+      const real = await realpath(full);
+      if (!real.startsWith(root.path + sep)) return null;
+      if (!sameId(await stat(real, { bigint: true }), st)) return null;
+      if (!(await rootStill())) return null;
+    }
+    // only what is checked is read (one byte more tells a longer file): a huge file is not loaded whole
+    const buf = Buffer.alloc(Math.min(Number(st.size), limit) + 1);
+    let got = 0;
+    for (let n = -1; got < buf.length && n !== 0; got += n) n = (await fh.read(buf, got, buf.length - got, got)).bytesRead;
+    return { data: buf.subarray(0, Math.min(got, limit)), more: got > limit };
   } catch {
     return null;
+  } finally {
+    await fh?.close().catch(() => {});
   }
+}
+
+/** A file inside the folder, read as text if it is one and small enough; null otherwise. */
+async function readInside(root: LintRoot, rel: string): Promise<string | null> {
+  const got = await readInsideBytes(root, rel, MAX_FILE_BYTES, MAX_FILE_BYTES);
+  if (!got) return null;
+  const text = got.data.toString('utf8');
+  return looksBinary(text) ? null : text;
 }
 
 /** Indexed skills like a local one (F4's words and matching, findSimilar's "similar" section), high risk left out. */
@@ -173,28 +256,44 @@ export function similarToLocal(store: Store, skill: { name: string; description:
  */
 export async function lintSkillFolder(dir: string, ctx: LintContext = {}): Promise<LintResult> {
   const realRoot = await realpath(dir);
+  let rootDir: FileHandle | null = null;
+  try {
+    // The folder by identity, not by spelling (a case-sensitive volume can hold Twin and twin side by side). On Linux
+    // the folder is held open from here on, and its identity is that of what was opened: a link put in its place by
+    // now fails to open (ELOOP).
+    let rootId: FileId;
+    if (BENEATH) {
+      rootDir = await open(realRoot, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW).catch(() => {
+        throw new FolderMovedError();
+      });
+      rootId = await rootDir.stat({ bigint: true });
+    } else rootId = await stat(realRoot, { bigint: true });
+    if (ctx.expectRealPath != null) {
+      const expected = await lstat(ctx.expectRealPath, { bigint: true }).catch(() => null);
+      if (!expected?.isDirectory() || !sameId(expected, rootId)) throw new FolderMovedError();
+    }
+    const result = await lintAt(dir, { path: realRoot, id: rootId, dir: rootDir }, ctx);
+    // Each file was checked as it was read (readInsideBytes). The folder too: should the path have led elsewhere
+    // meanwhile, or realRoot itself have been put a link in its place, the file names may be another folder's.
+    const [viaDir, atRoot] = await Promise.all([stat(dir, { bigint: true }).catch(() => null), lstat(realRoot, { bigint: true }).catch(() => null)]);
+    if (!viaDir || !atRoot?.isDirectory() || !sameId(viaDir, rootId) || !sameId(atRoot, rootId)) throw new FolderMovedError();
+    return result;
+  } finally {
+    await rootDir?.close().catch(() => {});
+  }
+}
+
+async function lintAt(dir: string, root: LintRoot, ctx: LintContext): Promise<LintResult> {
   const folder = basename(dir);
   const problems: LintProblem[] = [];
   const add = (severity: LintSeverity, code: string, message: string, file?: string, line?: number | null) => problems.push({ severity, code, message, ...(file ? { file } : {}), ...(line != null ? { line } : {}) });
 
   let raw: string | null = null;
-  try {
-    const st = await lstat(join(realRoot, 'SKILL.md'));
-    if (st.isFile()) {
-      // only what is checked is read (one byte more tells a longer file): a huge SKILL.md is not loaded whole
-      const fh = await open(join(realRoot, 'SKILL.md'), 'r');
-      try {
-        const buf = Buffer.alloc(Math.min(st.size, RAW_MAX_BYTES) + 1);
-        let got = 0;
-        for (let n = -1; got < buf.length && n !== 0; got += n) n = (await fh.read(buf, got, buf.length - got, got)).bytesRead;
-        raw = buf.subarray(0, Math.min(got, RAW_MAX_BYTES)).toString('utf8');
-        if (got > RAW_MAX_BYTES) add('warning', 'skillMdTooLarge', `SKILL.md가 512KB를 넘어 앞부분만 검사했습니다`, 'SKILL.md');
-      } finally {
-        await fh.close();
-      }
-    }
-  } catch {
-    // no SKILL.md
+  // as the other files: only the folder's own plain file, up to the index's limit
+  const md = await readInsideBytes(root, 'SKILL.md', RAW_MAX_BYTES);
+  if (md) {
+    raw = md.data.toString('utf8');
+    if (md.more) add('warning', 'skillMdTooLarge', `SKILL.md가 512KB를 넘어 앞부분만 검사했습니다`, 'SKILL.md');
   }
   if (raw == null) {
     add('error', 'skillMdMissing', 'SKILL.md가 없습니다');
@@ -221,7 +320,8 @@ export async function lintSkillFolder(dir: string, ctx: LintContext = {}): Promi
   for (const q of quality) add(QUALITY_TEXT[q][0], q, QUALITY_TEXT[q][1], 'SKILL.md');
 
   // the folder's other text files, as the install check reads them (scan.ts), scripts first
-  const files = await listFiles(realRoot);
+  // on Linux the names too come from the folder held open
+  const files = await listFiles(root.dir ? `/proc/self/fd/${root.dir.fd}` : root.path);
   const text = files
     .filter((f) => f !== 'SKILL.md' && isTextPath(f))
     .sort((a, b) => Number(SCRIPT_EXT.test(b)) - Number(SCRIPT_EXT.test(a)) || a.localeCompare(b));
@@ -229,7 +329,7 @@ export async function lintSkillFolder(dir: string, ctx: LintContext = {}): Promi
   let checked = 0;
   let skipped = Math.max(0, text.length - SCAN_MAX_FILES);
   for (const rel of text.slice(0, SCAN_MAX_FILES)) {
-    const body = await readInside(realRoot, rel);
+    const body = await readInside(root, rel);
     if (body == null) {
       skipped++;
       continue;
