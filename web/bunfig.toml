@@ -1,0 +1,2 @@
+# Bun would read a .env in this folder into process.env; nothing here should see one (server/bunfig.toml says why).
+env = false

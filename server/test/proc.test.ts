@@ -109,7 +109,8 @@ describe('로그·진단·오류 처리 (전체 점검 F2)', () => {
       const r = await rawRequest({ port: srv.port, path: '/api/diagnostics', headers });
       assert.equal(r.status, 200);
       const { text } = JSON.parse(r.body) as { text: string };
-      assert.match(text, /^Skill Finder .* · Node v/);
+      // the runtime it runs on: Bun in development, Node in the zip and the npm package (D#b7e3)
+      assert.match(text, process.versions.bun ? /^Skill Finder .* · Bun \d/ : /^Skill Finder .* · Node v/);
       assert.match(text, /GitHub 토큰 있음/);
       assert.match(text, /boom in SearchPage/, '방금 남긴 화면 오류가 최근 로그에 있음');
       assert.ok(!text.includes(token));

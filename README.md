@@ -74,12 +74,14 @@ GitHub 토큰은 선택입니다. 설정 화면에서 넣거나 `.env`의 `GITHU
 ## 개발
 
 ```bash
-npm run dev        # 서버(--watch) + Vite
-npm test           # 서버·웹 테스트
+npm run dev        # 서버(Bun --watch) + Vite
+npm test           # 서버·웹 테스트 (Bun)
+npm run test:node  # 같은 테스트를 Node로 (배포본이 도는 런타임)
 npm run typecheck
 ```
 
-- `server/`: Node가 TypeScript를 그대로 실행합니다(타입만 지우는 문법, import에 `.ts`). Express 5, `node:sqlite`.
+- 개발·테스트는 Bun으로, 배포본(zip·npm 꾸러미)은 사용자의 Node 22.20 이상으로 돕니다. Bun은 개발 의존성이라 `npm install`이 고정된 버전(1.4.4)을 함께 설치하고, 따로 깔 필요는 없습니다. 코드는 Bun 전용 API를 쓰지 않아 양쪽에서 같게 돕니다.
+- `server/`: Bun·Node가 TypeScript를 그대로 실행합니다(타입만 지우는 문법, import에 `.ts`). Express 5, `node:sqlite`.
 - `web/`: React 19 + Vite, Tailwind v4 + shadcn/ui.
 - `docs/DECISIONS.md`: 처음 명세와 다르게 정한 것들의 기록입니다. 고칠 때 먼저 확인하세요.
 

@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit -p .",
-    "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.ts\""
+    "test": "bun --no-env-file test ./test --isolate --timeout 60000",
+    "test:node": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.ts\""
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

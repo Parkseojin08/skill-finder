@@ -85,7 +85,7 @@ export function adminRouter(ctx: AppContext): Router {
     const s = getSettings(store);
     const broken = marketplaces().filter((m) => m.error || m.pendingSkillIndex);
     const lines = [
-      `Skill Finder ${APP_VERSION ?? '?'} · Node ${process.version} · ${platform()} ${release()} ${arch()}`,
+      `Skill Finder ${APP_VERSION ?? '?'} · ${process.versions.bun ? `Bun ${process.versions.bun}` : `Node ${process.version}`} · ${platform()} ${release()} ${arch()}`,
       `Claude Code ${(await claudeVersion()) ?? '찾지 못함'} · skills CLI ${SKILLS_CLI_VERSION}`,
       `GitHub 토큰 ${ctx.config.githubToken ? '있음' : '없음'} · 포트 ${ctx.config.port}`,
       `데이터 ${ctx.config.dataDir} · 로그 ${logFilePath() ?? '없음'}`,

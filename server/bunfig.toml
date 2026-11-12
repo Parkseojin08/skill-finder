@@ -1,0 +1,7 @@
+# Bun reads .env from the folder it runs in and puts it in process.env, which every child process (skills CLI, git,
+# claude) would inherit with the GitHub token. The app reads its own .env (config.ts), so Bun must not.
+env = false
+
+[test]
+# tells scripts/release.mjs it runs inside tests, as NODE_TEST_CONTEXT does under node --test
+preload = ["./test/bun-setup.ts"]

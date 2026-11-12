@@ -181,7 +181,8 @@ step('실행기와 서버가 같은 값을 쓰는지 확인');
 step('타입 검사·서버 테스트');
 // npm is a .cmd file on Windows, which only runs through a shell; the arguments are fixed strings.
 execFileSync('npm', ['run', 'typecheck'], { cwd: ROOT, stdio: 'inherit', shell: true });
-execFileSync('npm', ['test'], { cwd: ROOT, stdio: 'inherit', shell: true });
+// on Node, as the zip runs: npm test runs the same files on Bun, the development runtime (D#b7e3)
+execFileSync('npm', ['run', 'test:node'], { cwd: ROOT, stdio: 'inherit', shell: true });
 
 step('웹 빌드');
 execFileSync('npm', ['run', 'build'], { cwd: ROOT, stdio: 'inherit', shell: true });

@@ -3,9 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node --disable-warning=ExperimentalWarning src/index.ts",
-    "dev": "node --disable-warning=ExperimentalWarning --watch src/index.ts --dev",
-    "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.ts\"",
+    "start": "bun --no-env-file src/index.ts",
+    "dev": "bun --no-env-file --watch src/index.ts --dev",
+    "test": "bun --no-env-file test ./test --isolate --timeout 60000",
+    "test:node": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {

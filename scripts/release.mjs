@@ -280,9 +280,10 @@ const shown = (step, root) => {
  * npx-cli.js (as scripts/pack-npm.mjs does for npm).
  */
 export function runStep(step) {
-  // node's test runner sets this for the files it runs (and they pass it on to what they start): a test that forgot
-  // to pass its own runner must not start a real build, let alone deploy
-  if (process.env.NODE_TEST_CONTEXT) throw new Stop(`테스트 안에서는 실제 명령을 실행하지 않습니다: ${step.tool} ${step.args.join(' ')}`);
+  // node's test runner sets NODE_TEST_CONTEXT for the files it runs (and they pass it on to what they start), and
+  // server/test/bun-setup.ts sets SKILL_FINDER_TESTING under bun test: a test that forgot to pass its own runner
+  // must not start a real build, let alone deploy
+  if (process.env.NODE_TEST_CONTEXT || process.env.SKILL_FINDER_TESTING) throw new Stop(`테스트 안에서는 실제 명령을 실행하지 않습니다: ${step.tool} ${step.args.join(' ')}`);
   let file = process.execPath;
   let args = step.args;
   if (step.tool === 'npx') {

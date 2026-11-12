@@ -10,6 +10,7 @@
     "build": "npm run build -w web",
     "start": "npm run build && npm start -w server",
     "test": "npm test -w server && npm test -w web",
+    "test:node": "npm run test:node -w server && npm run test:node -w web",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web && tsc --noEmit -p e2e && tsc --noEmit -p e2e/server",
     "lint": "oxlint",
     "knip": "knip",
@@ -19,7 +20,11 @@
   "devDependencies": {
     "@axe-core/playwright": "4.14.0",
     "@playwright/test": "1.64.1",
+    "bun": "1.4.4",
     "knip": "6.43.0",
     "oxlint": "1.89.0"
+  },
+  "allowScripts": {
+    "bun@1.4.4": true
   }
 }

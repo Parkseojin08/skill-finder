@@ -55,6 +55,30 @@ jobs:
         run: node --disable-warning=ExperimentalWarning --test --test-concurrency=1 "test/**/*.test.ts"
       - run: npm run build
 
+  # The same server and web tests on Bun, the development runtime (D#b7e3): npm test runs them there, while the zip
+  # and the npm package run on the user's Node (the job above). Bun is the bun devDependency, at the version the lock
+  # file pins; npm ci installs it. --isolate gives each file its own module registry, as node --test's one process
+  # per file does, and files run one at a time.
+  bun:
+    name: test (${{ matrix.os }}, bun)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm exec -- bun --version
+      - run: npm test
+
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 10
