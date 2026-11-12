@@ -8,6 +8,8 @@ export const SERVER_DIR = join(ROOT_DIR, 'server');
 export const WEB_DIST_DIR = join(ROOT_DIR, 'web', 'dist');
 /** The release launcher keeps the token outside the app folder (UI debate D-6); from the environment only. */
 export const ENV_PATH = process.env.SKILL_FINDER_ENV_PATH ? resolve(process.env.SKILL_FINDER_ENV_PATH) : join(ROOT_DIR, '.env');
+/** ENV_PATH is the app folder's own .env: the one with the user's real token in a checkout. */
+const OWN_ENV = !process.env.SKILL_FINDER_ENV_PATH;
 /** The bundled skills CLI: under the app, or wherever npm put it when installed as a package (npx hoists it). */
 const SKILLS_DIR = (() => {
   const local = join(ROOT_DIR, 'node_modules', 'skills');
@@ -71,6 +73,12 @@ export function ensureDataDirs(): void {
  * file first and renamed over .env, so a crash or a full disk mid-write cannot leave a cut-off .env.
  */
 export function saveGithubToken(token: string | null): void {
+  // Inside a test run (node --test sets NODE_TEST_CONTEXT, bun test SKILL_FINDER_TESTING) only a .env the test named
+  // may be written. Run as one bun process, a test got this module as an earlier file had imported it, pointing at
+  // the checkout's .env, and replaced the user's real token with its fake one (2026-11-12, D#b7e3).
+  if (OWN_ENV && (process.env.NODE_TEST_CONTEXT || process.env.SKILL_FINDER_TESTING)) {
+    throw new Error(`테스트 안에서는 앱 폴더의 .env에 토큰을 쓰지 않습니다: ${ENV_PATH} (SKILL_FINDER_ENV_PATH로 임시 파일을 주세요)`);
+  }
   const value = token?.trim() || '';
   const lines = existsSync(ENV_PATH) ? readFileSync(ENV_PATH, 'utf8').split(/\r?\n/) : [];
   let found = false;

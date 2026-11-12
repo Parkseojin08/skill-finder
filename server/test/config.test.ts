@@ -12,7 +12,10 @@ describe('설정 파일과 버전 (전체 점검 3차)', () => {
     writeFileSync(env, 'OTHER=1\nGITHUB_TOKEN=old\n');
     // config.ts reads the path once, when first imported in this test process
     process.env.SKILL_FINDER_ENV_PATH = env;
-    const { config, saveGithubToken } = await import('../src/config.ts');
+    const { config, ENV_PATH, saveGithubToken } = await import('../src/config.ts');
+    // only when the module points at this test's file: imported earlier in the same process (bun test without
+    // --isolate), it pointed at the checkout's .env and this test replaced the real token (2026-11-12)
+    assert.equal(ENV_PATH, env, 'config.ts가 이 테스트의 .env를 가리킬 때만 쓴다');
     saveGithubToken('github_pat_new');
     assert.equal(readFileSync(env, 'utf8'), 'OTHER=1\nGITHUB_TOKEN=github_pat_new\n');
     assert.deepEqual(readdirSync(dir), ['.env'], '임시 파일이 남지 않음');
