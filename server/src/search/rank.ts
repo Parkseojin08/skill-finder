@@ -83,9 +83,11 @@ export function stem(word: string): string {
   return w;
 }
 
+/** A Latin word with a Korean ending attached ("pdf에서", "엑셀로") counts as the Latin word alone, as in ftsQuery. */
+const latinPart = (t: string): string[] => (/[a-z0-9]/.test(t) && /\p{Script=Hangul}/u.test(t) ? (t.match(/[a-z0-9]+/g) ?? []) : [t]);
+
 export function matchTokens(text: string): string[] {
-  // A Latin word with a Korean ending attached ("pdf에서", "엑셀로") counts as the Latin word alone, as in ftsQuery.
-  const words = (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).flatMap((t) => (/[a-z0-9]/.test(t) && /\p{Script=Hangul}/u.test(t) ? (t.match(/[a-z0-9]+/g) ?? []) : [t]));
+  const words = (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).flatMap(latinPart);
   return words.filter((t) => t.length >= 2 && !MATCH_STOPWORDS.has(t)).map(stem);
 }
 
@@ -95,10 +97,14 @@ export function matchTokens(text: string): string[] {
  */
 export type LexicalMatch = { name: number; text: number; any: number; phrase: number; aliased?: AliasUse[] };
 
-/** The query's aliases by the stem of the query word: [alias as written, its stem]. Kept for the last query. */
-let aliasMemo: { query: string; map: Map<string, Array<[string, string]>>; raw: Map<string, string> } | null = null;
-function aliasStems(query: string): { map: Map<string, Array<[string, string]>>; raw: Map<string, string> } {
-  if (aliasMemo?.query === query) return aliasMemo;
+type QueryParts = { q: string[]; map: Map<string, Array<[string, string]>>; raw: Map<string, string> };
+/**
+ * What lexicalMatch needs from the query, kept for the last query (one search matches it against every
+ * candidate): its words (queryTokens), and its aliases by the stem of the query word: [alias as written, its stem].
+ */
+let queryMemo: (QueryParts & { query: string }) | null = null;
+function queryParts(query: string): QueryParts {
+  if (queryMemo?.query === query) return queryMemo;
   const map = new Map<string, Array<[string, string]>>();
   const raw = new Map<string, string>();
   for (const [w, list] of queryAliases(query)) {
@@ -106,8 +112,8 @@ function aliasStems(query: string): { map: Map<string, Array<[string, string]>>;
     map.set(k, [...(map.get(k) ?? []), ...list.map((a): [string, string] => [a, stem(a)])]);
     raw.set(k, w);
   }
-  aliasMemo = { query, map, raw };
-  return aliasMemo;
+  queryMemo = { query, q: queryTokens(query), map, raw };
+  return queryMemo;
 }
 
 /**
@@ -130,22 +136,31 @@ export function queryTokens(query: string): string[] {
  */
 export const GENERIC_WORDS = new Set(['skill', 'skills', 'claude', 'code', 'tool', 'tools']);
 const genericWords = (text: string) => (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((t) => GENERIC_WORDS.has(t)).map(stem);
-/** Words a name or description is matched on: matchTokens plus the generic words a stopword-only query uses. */
-const textWords = (text: string) => new Set([...matchTokens(text), ...genericWords(text)]);
+/**
+ * Words a name or description is matched on: matchTokens plus the generic words a stopword-only query uses, read
+ * in one pass (two passes over the text were most of the time spent matching a candidate).
+ */
+export function textWords(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const t of text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []) {
+    if (GENERIC_WORDS.has(t)) out.add(stem(t));
+    for (const w of latinPart(t)) if (w.length >= 2 && !MATCH_STOPWORDS.has(w)) out.add(stem(w));
+  }
+  return out;
+}
 
 /**
  * How directly a skill matches the query words: share of query words in the skill name, share in the
  * description/when_to_use, and whether the description contains the query as a phrase.
  */
 export function lexicalMatch(query: string, name: string, text: string): LexicalMatch {
-  const q = queryTokens(query);
+  const { q, map: aliases, raw } = queryParts(query);
   if (q.length === 0) return { name: 0, text: 0, any: 0, phrase: 0 };
   const nameSet = textWords(name.replace(/[-_.]+/g, ' '));
   const textSet = textWords(text);
   // a longer query word also matches as a prefix ("docker" in "dockerfile"); short ones ("pdf", "ui") must be exact
   const own = (set: Set<string>, t: string) => set.has(t) || (t.length >= 4 && [...set].some((w) => w.startsWith(t)));
   // an alias matches as a whole word only, as measured ("ppt" → "pptx", "k8s" → "kubernetes")
-  const { map: aliases, raw } = aliasStems(query);
   const viaAlias = (set: Set<string>, t: string) => (aliases.get(t) ?? []).filter(([, s]) => set.has(s)).map(([a]) => a);
   const has = (set: Set<string>, t: string) => own(set, t) || viaAlias(set, t).length > 0;
   const cover = (set: Set<string>) => q.filter((t) => has(set, t)).length / q.length;

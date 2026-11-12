@@ -5,9 +5,9 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { createContext } from '../src/bootstrap.ts';
 import { openDb } from '../src/db/index.ts';
-import { clipOutput } from '../src/db/store.ts';
+import { Store, clipOutput } from '../src/db/store.ts';
 import { TreeIndex } from '../src/discovery/tree.ts';
-import { buildSkillRow } from '../src/indexer.ts';
+import { buildSkillRow, writeSkillRow } from '../src/indexer.ts';
 
 describe('DB 인덱스', () => {
   it('대소문자를 무시하는 저장소 조회도 인덱스를 쓴다', () => {
@@ -95,6 +95,136 @@ describe('데이터 백업·손상 복구 (전체 점검 #4)', () => {
     const fresh = openContext(config);
     assert.equal(fresh.store.countSkills(), 0);
     fresh.store.db.close();
+  });
+});
+
+describe('트랜잭션 중첩과 검색 한 번의 묶음 쓰기', () => {
+  const setup = () => {
+    const store = new Store(openDb(':memory:'));
+    const row = (name: string) =>
+      buildSkillRow({ repo: 'o/r', sha: 'a'.repeat(40), dirPath: `skills/${name}`, raw: `---\nname: ${name}\ndescription: ${name} widget.\n---\n`, tree: new TreeIndex([]), origin: 'generic', pluginId: null, extraFlags: [], install: null, lastCommitAt: null });
+    const installs = (id: string) => store.getSkill(id)?.installs ?? null;
+    // a transaction left open makes BEGIN fail
+    const txOpen = () => {
+      try {
+        store.db.exec('BEGIN');
+        store.db.exec('ROLLBACK');
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    return { store, row, installs, txOpen };
+  };
+
+  it('안쪽 transaction은 savepoint가 되어 바깥이 커밋할 때 함께 쓰이고, 안쪽만 실패하면 안쪽만 되돌린다', () => {
+    const { store, row, txOpen } = setup();
+    const [a, b, c] = [row('a'), row('b'), row('c')];
+    const out = store.transaction(() => {
+      store.upsertSkill(a, '');
+      const inner = store.transaction(() => {
+        store.upsertSkill(b, '');
+        return store.transaction(() => store.countSkills()); // two levels down, reads its own writes
+      });
+      assert.throws(() =>
+        store.transaction(() => {
+          store.upsertSkill(c, '');
+          throw new Error('inner');
+        }),
+      /inner/);
+      return inner;
+    });
+    assert.equal(out, 2);
+    assert.ok(store.getSkill(a.id) && store.getSkill(b.id));
+    assert.equal(store.getSkill(c.id), undefined, '실패한 안쪽만 되돌림');
+    assert.equal(store.countSkillsFts('"widget"'), 2, '전문 검색 항목도 같이');
+    assert.equal(txOpen(), false);
+  });
+
+  it('바깥이 실패하면 이미 끝난 안쪽까지 모두 되돌리고 트랜잭션을 열어 두지 않는다', () => {
+    const { store, row, txOpen } = setup();
+    assert.throws(() =>
+      store.transaction(() => {
+        store.upsertSkill(row('a'), '');
+        store.transaction(() => store.upsertSkill(row('b'), ''));
+        throw new Error('outer');
+      }),
+    /outer/);
+    assert.equal(store.countSkills(), 0);
+    assert.equal(store.countSkillsFts('"widget"'), 0);
+    assert.equal(txOpen(), false);
+    // the next one is a real transaction again: its own throw undoes it
+    assert.throws(() =>
+      store.transaction(() => {
+        store.upsertSkill(row('c'), '');
+        throw new Error('again');
+      }),
+    /again/);
+    assert.equal(store.countSkills(), 0);
+    store.transaction(() => store.upsertSkill(row('d'), ''));
+    assert.equal(store.countSkills(), 1);
+    assert.equal(txOpen(), false);
+  });
+
+  it('후보마다의 설치 수를 한 트랜잭션으로 쓰면 같은 값이 쓰이고, 중간에 실패하면 하나도 남지 않는다', () => {
+    const { store, row, installs, txOpen } = setup();
+    const rows = ['a', 'b', 'c'].map(row);
+    for (const r of rows) store.upsertSkill(r, '');
+    // the pass in buildResults: a write per candidate, each read back (as withSuspicion's facts do) in between
+    const seen = store.transaction(() =>
+      rows.map((r, i) => {
+        store.setSkillInstalls(r.id, (i + 1) * 100, '2026-11-12T00:00:00.000Z');
+        return installs(r.id);
+      }),
+    );
+    assert.deepEqual(seen, [100, 200, 300], '같은 트랜잭션 안에서 앞 후보의 쓰기가 보임');
+    assert.deepEqual(rows.map((r) => installs(r.id)), [100, 200, 300]);
+    assert.deepEqual(rows.map((r) => store.getSkill(r.id)?.installs_at), Array(3).fill('2026-11-12T00:00:00.000Z'));
+    assert.throws(() =>
+      store.transaction(() =>
+        rows.map((r, i) => {
+          if (i === 2) throw new Error('mid-pass');
+          store.setSkillInstalls(r.id, 0);
+          return r;
+        }),
+      ),
+    /mid-pass/);
+    assert.deepEqual(rows.map((r) => installs(r.id)), [100, 200, 300], '실패한 묶음은 되돌림');
+    assert.equal(txOpen(), false);
+  });
+
+  it('호출한 쪽이 직접 연 BEGIN 안에서도 savepoint로 돌고, 그 BEGIN은 열어 둔 채 돌려준다 (벤치의 검색마다 롤백)', () => {
+    const { store, row, txOpen } = setup();
+    store.db.exec('BEGIN');
+    store.transaction(() => store.upsertSkill(row('a'), ''));
+    assert.throws(() =>
+      store.transaction(() => {
+        store.upsertSkill(row('b'), '');
+        throw new Error('inner');
+      }),
+    /inner/);
+    assert.equal(store.db.isTransaction, true, '바깥 BEGIN은 그대로');
+    assert.equal(store.countSkills(), 1);
+    store.db.exec('ROLLBACK');
+    assert.equal(store.countSkills(), 0, '바깥 ROLLBACK이 안쪽 쓰기도 되돌림');
+    assert.equal(txOpen(), false);
+  });
+
+  it('한 행씩 transaction으로 쓰는 writeSkillRow도 저장소 색인의 묶음 안에서 함께 커밋·롤백된다', () => {
+    const { store, row, txOpen } = setup();
+    const batch = (names: string[], failAt = -1) =>
+      store.transaction(() =>
+        names.forEach((n, i) => {
+          if (i === failAt) throw new Error('batch');
+          store.transaction(() => writeSkillRow(store, row(n), ''));
+        }),
+      );
+    assert.throws(() => batch(['a', 'b', 'c'], 2), /batch/);
+    assert.equal(store.countSkills(), 0);
+    batch(['a', 'b', 'c']);
+    assert.equal(store.countSkills(), 3);
+    assert.equal(store.countSkillsFts('"widget"'), 3);
+    assert.equal(txOpen(), false);
   });
 });
 

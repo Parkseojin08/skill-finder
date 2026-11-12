@@ -375,9 +375,19 @@ export async function runSearch(
   // Only the first MATCH_TEXT_MAX chars of each field count, the spec's description limit: a keyword list
   // stuffed past it (the longest stored description is 13.5K chars) would otherwise buy a higher tier.
   const capped = (t: string | null) => (t ?? '').slice(0, MATCH_TEXT_MAX);
-  // names are capped too (the spec allows 64 chars), or a name stuffed with keywords would buy the name tier
-  const matchOf = (c: Candidate) =>
-    lexicalMatch(query, c.skill!.name.slice(0, MATCH_NAME_MAX), [capped(c.skill!.description), capped(c.skill!.when_to_use)].join(' '));
+  // names are capped too (the spec allows 64 chars), or a name stuffed with keywords would buy the name tier.
+  // One search matches the same skill (and its same-text copies) on every early-cards pass and in each results
+  // pass, so each name and text is read once per search: by text, then name.
+  const matchMemo = new Map<string, Map<string, LexicalMatch>>();
+  const matchOf = (c: Candidate): LexicalMatch => {
+    const name = c.skill!.name.slice(0, MATCH_NAME_MAX);
+    const text = [capped(c.skill!.description), capped(c.skill!.when_to_use)].join(' ');
+    let byName = matchMemo.get(text);
+    if (!byName) matchMemo.set(text, (byName = new Map()));
+    let m = byName.get(name);
+    if (!m) byName.set(name, (m = lexicalMatch(query, name, text)));
+    return m;
+  };
   /**
    * Not one query word in the name or description (user decision A): mostly skills.sh's semantic matches and
    * GitHub code-search hits on a SKILL.md body. Kept: a skill found by name (a plugin matched by name, the repo
@@ -917,12 +927,16 @@ export async function runSearch(
 
   /** Scores the indexed candidates plus the resolved ones; `final` also refreshes star counts from GitHub. */
   async function buildResults(resolved: Candidate[], final: boolean): Promise<Extract<SearchEvent, { type: 'results' }>> {
-    const merged = mergeById([...ready, ...resolved]).map((c) => {
-      if (c.installs != null && c.skill) store.setSkillInstalls(c.skill.id, c.installs); // the latest count, even 0 (U4)
-      if (c.installs == null && c.skill) c.installs = freshInstalls(c.skill);
-      // before copies are merged, so a suspected count is not added to the copy shown (F18)
-      return withSuspicion(c);
-    });
+    // One transaction for the pass, not an autocommit per candidate (10.9ms a search). The writes and reads stay
+    // interleaved as before: withSuspicion's facts read the installs written for the candidates before it.
+    const merged = store.transaction(() =>
+      mergeById([...ready, ...resolved]).map((c) => {
+        if (c.installs != null && c.skill) store.setSkillInstalls(c.skill.id, c.installs); // the latest count, even 0 (U4)
+        if (c.installs == null && c.skill) c.installs = freshInstalls(c.skill);
+        // before copies are merged, so a suspected count is not added to the copy shown (F18)
+        return withSuspicion(c);
+      }),
+    );
     // F20: a resolved candidate from a hidden repo (a plugin read under its marketplace name) leaves here too.
     const visible = owners.anyHidden ? merged.filter((c) => !dropForPrefs(c)) : merged;
     // The risk filter comes before merging copies: a hidden high-risk representative used to take its

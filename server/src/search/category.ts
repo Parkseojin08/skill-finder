@@ -92,7 +92,27 @@ const MARKETPLACE_GENERIC: Record<string, Category> = { development: 'dev', 'dev
 
 const MAX_CATEGORIES = 2;
 
-export function categorize(skill: { name: string; description?: string | null; whenToUse?: string | null; marketplaceCategory?: string | null }): Category[] {
+type CategorizeInput = { name: string; description?: string | null; whenToUse?: string | null; marketplaceCategory?: string | null };
+
+/**
+ * categorize for a skill row, remembered while the row lives: one search builds the same skill's card on every
+ * early-cards pass and in each results pass. Worked out again when any input differs from the remembered one.
+ */
+const byRow = new WeakMap<object, { input: CategorizeInput; out: Category[] }>();
+export function categorizeRow(row: object, skill: CategorizeInput): Category[] {
+  const hit = byRow.get(row);
+  if (hit) {
+    const was = hit.input;
+    if (was.name === skill.name && was.description === skill.description && was.whenToUse === skill.whenToUse && was.marketplaceCategory === skill.marketplaceCategory) {
+      return [...hit.out];
+    }
+  }
+  const out = categorize(skill);
+  byRow.set(row, { input: { ...skill }, out });
+  return [...out];
+}
+
+export function categorize(skill: CategorizeInput): Category[] {
   const scores = new Map<Category, number>();
   const name = new Set(matchTokens(skill.name.replace(/[-_.]+/g, ' ')));
   const text = new Set(matchTokens([skill.description ?? '', skill.whenToUse ?? ''].join(' ')));

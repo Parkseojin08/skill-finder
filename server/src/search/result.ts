@@ -2,7 +2,7 @@ import { RISK_ORDER, type RiskLevel } from '../analyze/risk.ts';
 import type { MarketplaceRow, PluginRow, SkillRow, Store } from '../db/store.ts';
 import { planInstall, type InstallMethod } from '../install/plan.ts';
 import { truncate } from '../util/sanitize.ts';
-import { categorize, type Category } from './category.ts';
+import { categorizeRow, type Category } from './category.ts';
 import { licenseValue, manualOnly } from './facets.ts';
 import type { InstallsSuspect } from './installsSuspect.ts';
 import { freshInstalls, freshness, TRUST_SCORE, trustTier, type Breakdown, type TrustTier } from './rank.ts';
@@ -217,7 +217,7 @@ export function buildResultItem(a: {
         }
       : {}),
     trust: trustTier(skill, plugin),
-    categories: categorize({ name: skill.name, description: desc, whenToUse: skill.when_to_use, marketplaceCategory: plugin?.category }),
+    categories: categorizeRow(skill, { name: skill.name, description: desc, whenToUse: skill.when_to_use, marketplaceCategory: plugin?.category }),
     ...(license && license !== 'unknown' ? { license } : {}),
     ...(manualOnly(skill) ? { manualOnly: true as const } : {}),
     ...(skill.cluster_id ? { clusterId: skill.cluster_id } : {}),

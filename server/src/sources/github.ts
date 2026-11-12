@@ -401,8 +401,10 @@ export class GitHub {
         // NOT_FOUND, instead of being asked again in every search (perf debate 1-2).
         if (res.status === 404 && cached?.stars == null) {
           const row: RepoRow = { full_name: cached?.full_name ?? repo, stars: null, pushed_at: null, archived: null, fork: null, license: null, default_branch: null, etag: null, fetched_at: new Date().toISOString() };
-          this.store.upsertRepo(row);
-          markRepoGone(this.store, row.full_name);
+          this.store.transaction(() => {
+            this.store.upsertRepo(row);
+            markRepoGone(this.store, row.full_name);
+          });
           return row;
         }
         if (res.status === 404 && cached) markRepoGone(this.store, cached.full_name);
@@ -431,12 +433,15 @@ export class GitHub {
         etag: res.headers.get('etag'),
         fetched_at: new Date().toISOString(),
       };
-      this.store.upsertRepo(row);
-      row.moved_to = movedName(repo, j.full_name);
-      this.store.setRepoMovedTo(row.full_name, row.moved_to);
+      // the repo's four writes in one commit (a search's star check reads up to dozens of repos)
       const src = repoSource(j.created_at, j.owner?.type, j.fork ? j.parent?.full_name : null);
-      saveRepoSource(this.store, row.full_name, src);
-      if (typeof j.stargazers_count === 'number') recordStars(this.store, row.full_name, j.stargazers_count);
+      this.store.transaction(() => {
+        this.store.upsertRepo(row);
+        row.moved_to = movedName(repo, j.full_name);
+        this.store.setRepoMovedTo(row.full_name, row.moved_to);
+        saveRepoSource(this.store, row.full_name, src);
+        if (typeof j.stargazers_count === 'number') recordStars(this.store, row.full_name, j.stargazers_count);
+      });
       return { ...row, ...src, gone_at: null };
     } catch {
       return cached ?? null;
@@ -627,27 +632,30 @@ export class GitHub {
       }>;
     };
     const out: RepoSearchHit[] = [];
-    for (const i of body.items) {
-      if (!REPO_RE.test(i.full_name) || i.archived) continue;
-      const cached = this.store.getRepo(i.full_name);
-      this.store.upsertRepo({
-        full_name: cached?.full_name ?? i.full_name,
-        stars: i.stargazers_count,
-        pushed_at: i.pushed_at,
-        archived: i.archived ? 1 : 0,
-        fork: i.fork ? 1 : 0,
-        license: i.license?.spdx_id ?? null,
-        default_branch: i.default_branch,
-        etag: cached?.etag ?? null,
-        fetched_at: new Date().toISOString(),
-      });
-      out.push({
-        repo: i.full_name,
-        stars: i.stargazers_count,
-        description: i.description ? sanitizeLine(i.description).slice(0, 300) : null,
-        topics: (i.topics ?? []).filter((t) => /^[a-z0-9-]{1,50}$/.test(t)).slice(0, 20),
-      });
-    }
+    // up to 100 rows in one commit (an autocommit each was most of a search's repo writes)
+    this.store.transaction(() => {
+      for (const i of body.items) {
+        if (!REPO_RE.test(i.full_name) || i.archived) continue;
+        const cached = this.store.getRepo(i.full_name);
+        this.store.upsertRepo({
+          full_name: cached?.full_name ?? i.full_name,
+          stars: i.stargazers_count,
+          pushed_at: i.pushed_at,
+          archived: i.archived ? 1 : 0,
+          fork: i.fork ? 1 : 0,
+          license: i.license?.spdx_id ?? null,
+          default_branch: i.default_branch,
+          etag: cached?.etag ?? null,
+          fetched_at: new Date().toISOString(),
+        });
+        out.push({
+          repo: i.full_name,
+          stars: i.stargazers_count,
+          description: i.description ? sanitizeLine(i.description).slice(0, 300) : null,
+          topics: (i.topics ?? []).filter((t) => /^[a-z0-9-]{1,50}$/.test(t)).slice(0, 20),
+        });
+      }
+    });
     return { value: out, complete: body.incomplete_results !== true };
   }
 }

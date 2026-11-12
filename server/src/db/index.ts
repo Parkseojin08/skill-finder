@@ -118,14 +118,36 @@ export function setAsideCorrupt(path: string): string {
   return target;
 }
 
+/**
+ * Runs `fn` in a transaction: committed when it returns, rolled back when it throws. When the connection is already
+ * in one (another tx(), or a caller's own BEGIN such as the bench's per-search rollback) it runs in a savepoint
+ * instead, where BEGIN failed with "cannot start a transaction within a transaction": a per-row writer can open its
+ * own and still join a caller's batch, a throw undoes only its part, and nothing is written until the outermost
+ * commits. Savepoints share one name; SQLite resolves it to the newest, and they always close in LIFO order.
+ * After a throw no transaction or savepoint of this call is left open (one SQLite already undid is not undone twice).
+ */
 export function tx<T>(db: Db, fn: () => T): T {
+  if (db.isTransaction) {
+    db.exec('SAVEPOINT sf_tx');
+    try {
+      const out = fn();
+      db.exec('RELEASE sf_tx');
+      return out;
+    } catch (err) {
+      if (db.isTransaction) {
+        db.exec('ROLLBACK TO sf_tx');
+        db.exec('RELEASE sf_tx');
+      }
+      throw err;
+    }
+  }
   db.exec('BEGIN');
   try {
     const out = fn();
     db.exec('COMMIT');
     return out;
   } catch (err) {
-    db.exec('ROLLBACK');
+    if (db.isTransaction) db.exec('ROLLBACK');
     throw err;
   }
 }

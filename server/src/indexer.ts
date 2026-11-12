@@ -646,7 +646,8 @@ export class Indexer {
   private async rowFromDiscovery(repo: string, snap: RepoSnapshot, discovery: RepoDiscovery, dirPath: string, raw: string): Promise<SkillRow> {
     const b = await this.buildFromDiscovery(repo, snap, discovery, dirPath, raw);
     if ('existing' in b) return b.existing;
-    writeSkillRow(this.store, b.row, b.text);
+    // a search's lookup: the row, its full-text entry and extras in one commit instead of four autocommits
+    this.store.transaction(() => writeSkillRow(this.store, b.row, b.text));
     return this.store.getSkill(b.row.id)!;
   }
 
@@ -828,7 +829,7 @@ export class Indexer {
       files_json: null,
       install_json: JSON.stringify({ domain }),
     };
-    this.store.upsertSkill(row, '');
+    this.store.transaction(() => this.store.upsertSkill(row, ''));
     return this.store.getSkill(row.id)!;
   }
 
