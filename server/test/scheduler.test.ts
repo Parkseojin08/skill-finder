@@ -178,8 +178,14 @@ describe('작업 스케줄러 (B2)', () => {
           timeoutMs: 30,
           run: (_c, info) =>
             new Promise((resolve) => {
+              // Work of its own that is still pending, as an unanswered request would be. The time limit's timer
+              // does not keep the process alive (in the app the HTTP server does), and with nothing else pending
+              // Node 22's test runner cancels this test and every one after it (from Node 24 on it waits). Should
+              // the limit never come, the work ends by itself and the run is 'ok', which fails below.
+              const work = setTimeout(resolve, 5000);
               info.signal.addEventListener('abort', () => {
                 aborted = true;
+                clearTimeout(work);
                 setTimeout(resolve, 10);
               });
             }),

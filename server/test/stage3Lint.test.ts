@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { describe, it } from 'node:test';
 import express from 'express';
 import { createContext } from '../src/bootstrap.ts';
@@ -16,6 +16,17 @@ import { findLintTarget, lintRouter } from '../src/routes/lint.ts';
 const md = (name: string, description: string, body = 'Body.', fm = '') => `---\nname: ${name}\ndescription: ${description}\n${fm}---\n${body}\n`;
 const ctxOf = () => createContext({ port: 0, dev: false, dataDir: mkdtempSync(join(tmpdir(), 'sf-lint-')), githubToken: null }, ':memory:');
 const W = { R: 0.5, P: 0.3, F: 0.1, T: 0.1 };
+/** Whether the temporary folder's file system tells `Twin` from `twin` (Linux does; Windows and macOS as installed do not). */
+const caseSensitiveFs = (() => {
+  const dir = mkdtempSync(join(tmpdir(), 'sf-lint-case-'));
+  mkdirSync(join(dir, 'twin'));
+  try {
+    mkdirSync(join(dir, 'Twin'));
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 function skillDir(root: string, rel: string, files: Record<string, string>): string {
   const dir = join(root, ...rel.split('/'));
@@ -104,33 +115,96 @@ describe('F15 POST /api/lint-skill: 설치됨의 색인에 없는 폴더만', ()
     ctx.store.upsertSkill(buildSkillRow({ repo: 'o/r', sha: 'a'.repeat(40), dirPath: 'skills/known', raw: indexedMd, tree: new TreeIndex([]), origin: 'generic', pluginId: null, extraFlags: [], install: null, lastCommitAt: null }), '');
     const elsewhere = skillDir(home, 'Desktop/loose', { 'SKILL.md': md('loose', 'Loose.') });
     const outside = skillDir(home, 'outside/evil', { 'SKILL.md': md('evil', 'Evil.') });
-    let linked: string | null = join(home, '.claude', 'skills', 'linked');
-    try {
-      symlinkSync(outside, linked, 'junction');
-    } catch {
-      linked = null; // no link support here
-    }
-    return { ctx, home, project, mine, shared, known, elsewhere, linked };
+    // Links as each OS makes them without special rights: a junction on Windows (what `mklink /J` makes), a symbolic
+    // link elsewhere (`ln -s`; the type is ignored there). A link that cannot be made fails the test: the refusals
+    // below are not to be passed over quietly.
+    const link = (to: string, rel: string) => {
+      const at = join(home, ...rel.split('/'));
+      symlinkSync(to, at, 'junction');
+      return at;
+    };
+    const linked = link(outside, '.claude/skills/linked');
+    // what the skills CLI does: the skill is in ~/.agents/skills, and Claude Code's folder links to it
+    const viaAgents = link(skillDir(home, '.agents/skills/both', { 'SKILL.md': md('both', 'Read by two agents.') }), '.claude/skills/both');
+    const dangling = link(join(home, 'outside', 'gone'), '.claude/skills/dangling');
+    // The same home spelled another way: what a Windows short name (C:\Users\RUNNER~1) or a temporary folder that is
+    // a link (macOS: /var → /private/var) does to every path under it, on any PC.
+    const homeAlias = join(mkdtempSync(join(tmpdir(), 'sf-lint-alias-')), 'home');
+    symlinkSync(home, homeAlias, 'junction');
+    return { ctx, home, project, mine, shared, known, elsewhere, outside, linked, viaAgents, dangling, homeAlias };
   }
+
+  /** The answer's HTTP status (200: a folder to check), with `home` as the user's home folder. */
+  const statusIn = (s: Awaited<ReturnType<typeof setup>>, home: string) => async (p: unknown, projectPath?: unknown) => {
+    const r = await findLintTarget(s.ctx.store, p, projectPath, home);
+    return 'error' in r ? r.status : 200;
+  };
 
   it('허용 위치 판정 (findLintTarget)', async () => {
     const s = await setup();
     const ok = await findLintTarget(s.ctx.store, s.mine, undefined, s.home);
     assert.ok(!('error' in ok) && ok.scope === 'user' && ok.row.skillId === null);
+    assert.equal(ok.row.path, s.mine);
     const proj = await findLintTarget(s.ctx.store, s.shared, undefined, s.home);
     assert.ok(!('error' in proj) && proj.scope === 'project', '프로젝트는 경로에서 찾는다');
-    const status = async (p: unknown, projectPath?: unknown) => {
-      const r = await findLintTarget(s.ctx.store, p, projectPath, s.home);
-      return 'error' in r ? r.status : 200;
-    };
+    assert.equal(proj.projectPath, s.project, '프로젝트 경로는 폴더의 철자 그대로');
+    const given = await findLintTarget(s.ctx.store, s.shared, s.project, s.home);
+    assert.ok(!('error' in given) && given.scope === 'project' && given.row.path === s.shared, '프로젝트를 주어도 같다');
+    const status = statusIn(s, s.home);
     assert.equal(await status(s.known), 409, '색인에 있는 스킬');
     assert.equal(await status(s.elsewhere), 403, '에이전트 폴더 밖');
+    assert.equal(await status(s.outside), 403, '에이전트 폴더 밖(링크가 가리키는 곳을 직접)');
     assert.equal(await status(`${s.mine}/../mine`), 400, '..');
     assert.equal(await status(s.mine + String.raw`\..\mine`), 400, '..(역슬래시)');
+    assert.equal(await status(`${join(s.home, '.claude', 'skills')}/../../outside/evil`), 400, '..으로 에이전트 폴더 밖으로');
     assert.equal(await status('relative/path'), 400);
     assert.equal(await status(join(s.home, '.claude', 'skills', 'ghost')), 404, '없는 폴더');
     assert.equal(await status(s.mine, join(s.home, 'no-such-project')), 400);
-    if (s.linked) assert.equal(await status(s.linked), 403, '밖을 가리키는 링크');
+    // the file system's own rule for names: Windows takes any case and either slash, elsewhere another spelling is
+    // another path
+    assert.equal(await status(s.mine.toUpperCase().replace(/\\/g, '/')), process.platform === 'win32' ? 200 : 403, '철자가 다른 경로');
+    s.ctx.store.db.close();
+  });
+
+  it('링크: 다른 에이전트 폴더로 가면 받고, 밖을 가리키면 거부한다', async () => {
+    const s = await setup();
+    const both = await findLintTarget(s.ctx.store, s.viaAgents, undefined, s.home);
+    assert.ok(!('error' in both) && both.scope === 'user', 'skills CLI가 만든 링크(~/.agents/skills의 사본)는 받는다');
+    assert.deepEqual(both.row.agents.map((a) => a.id), ['claude-code', 'codex']);
+    const status = statusIn(s, s.home);
+    assert.equal(await status(s.linked), 403, '밖을 가리키는 링크');
+    assert.equal(await status(s.dangling), 404, '가리키는 곳이 없는 링크');
+    s.ctx.store.db.close();
+  });
+
+  it('같은 폴더를 다른 철자로 주어도 판정이 같다 (Windows의 짧은 이름, 링크인 임시 폴더)', async () => {
+    const s = await setup();
+    // every path goes through the alias, and the file system answers with the real home's
+    const via = (p: string) => join(s.homeAlias, relative(s.home, p));
+    const status = statusIn(s, s.homeAlias);
+    assert.equal(await status(via(s.mine)), 200);
+    assert.equal(await status(via(s.viaAgents)), 200, '다른 에이전트 폴더로 가는 링크');
+    assert.equal(await status(via(s.known)), 409);
+    assert.equal(await status(join(s.homeAlias, '.claude', 'skills', 'ghost')), 404, '없는 폴더는 밖을 가리키는 링크가 아니다');
+    assert.equal(await status(via(s.dangling)), 404);
+    assert.equal(await status(via(s.linked)), 403, '밖을 가리키는 링크');
+    assert.equal(await status(via(s.elsewhere)), 403, '에이전트 폴더 밖');
+    assert.equal(await status(via(s.outside)), 403);
+    s.ctx.store.db.close();
+  });
+
+  it('대소문자만 다른 두 폴더에서 다른 폴더의 내용을 검사하지 않는다', { skip: !caseSensitiveFs && '임시 폴더의 파일 시스템이 대소문자를 구분하지 않음' }, async () => {
+    const s = await setup();
+    const upper = skillDir(s.home, '.claude/skills/Twin', { 'SKILL.md': md('Twin', 'The upper-case twin.') });
+    const lower = skillDir(s.home, '.claude/skills/twin', { 'SKILL.md': md('twin', 'The lower-case twin.') });
+    for (const asked of [upper, lower]) {
+      const r = await findLintTarget(s.ctx.store, asked, undefined, s.home);
+      // The 설치됨 scan compares folder names without case (pathKey) and so lists only one of the two (Twin): the
+      // other is answered 404 for now, never with the first one's row. Telling both apart is for when that scan does.
+      assert.ok('error' in r ? r.status === 404 : r.row.path === asked, `${asked} → ${'error' in r ? r.status : r.row.path}`);
+    }
+    const one = await findLintTarget(s.ctx.store, upper, undefined, s.home);
+    assert.ok(!('error' in one) && one.row.name === 'Twin');
     s.ctx.store.db.close();
   });
 
@@ -154,6 +228,8 @@ describe('F15 POST /api/lint-skill: 설치됨의 색인에 없는 폴더만', ()
       assert.equal(body.name, 'mine');
       assert.ok(Array.isArray(body.similar));
       assert.equal((await post({ path: s.elsewhere })).status, 403);
+      assert.equal((await post({ path: s.linked })).status, 403, '밖을 가리키는 링크');
+      assert.equal((await post({ path: join(s.home, '.claude', 'skills', 'ghost') })).status, 404);
       assert.equal((await post({})).status, 400);
     } finally {
       await new Promise((resolve) => server.close(resolve));

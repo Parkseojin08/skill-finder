@@ -1,22 +1,84 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
+import { pathToFileURL } from 'node:url';
 import { run } from '../src/util/proc.ts';
+
+/** A child that starts a grandchild (its code given), prints the grandchild's pid, and waits. */
+const parentOf = (grandchild: string) =>
+  `const c = require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'ignore' });` +
+  'console.log(c.pid); setTimeout(() => {}, 60000);';
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+/** Waits until the process is gone, up to `ms`; whether it went. */
+async function gone(pid: number, ms: number): Promise<boolean> {
+  for (const end = Date.now() + ms; Date.now() < end; ) {
+    if (!alive(pid)) return true;
+    await new Promise((done) => setTimeout(done, 100));
+  }
+  return !alive(pid);
+}
 
 describe('로그·진단·오류 처리 (전체 점검 F2)', () => {
   it('시간을 넘기면 그 프로세스가 띄운 하위 프로세스까지 끝낸다', async () => {
-    // the child starts a grandchild that would outlive it, prints its pid, and waits
-    const code =
-      "const c = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });" +
-      'console.log(c.pid); setTimeout(() => {}, 60000);';
-    const r = await run(process.execPath, ['-e', code], { timeoutMs: 1500 });
+    const r = await run(process.execPath, ['-e', parentOf('setTimeout(() => {}, 60000)')], { timeoutMs: 1500 });
     assert.equal(r.timedOut, true);
     const pid = Number(r.stdout.trim());
     assert.ok(pid > 0, r.stdout);
-    await new Promise((done) => setTimeout(done, 800));
-    assert.throws(() => process.kill(pid, 0), '손자 프로세스도 끝남');
+    assert.ok(await gone(pid, 1500), '손자 프로세스도 끝남');
+  });
+
+  it('끝내라는 신호를 무시하는 하위 프로세스도 잠시 뒤 끝낸다', async () => {
+    // SIGTERM is ignored (Windows has no SIGTERM to catch: taskkill /F ends it at once)
+    const r = await run(process.execPath, ['-e', parentOf("process.on('SIGTERM', () => {}); setTimeout(() => {}, 60000)")], { timeoutMs: 1000 });
+    assert.equal(r.timedOut, true);
+    const pid = Number(r.stdout.trim());
+    assert.ok(pid > 0, r.stdout);
+    assert.ok(await gone(pid, 4000), '신호를 무시한 손자 프로세스도 끝남');
+  });
+
+  // A stand-in for the app (src/index.ts): runs a long command through run() and, once it has the grandchild's pid,
+  // ends the way the app does: process.exit, or a signal that its handlers turn into endChildren() and process.exit.
+  // The grandchild writes a file when it is asked to end (SIGTERM): a chance to clean up, as git does with a clone.
+  const appEnding = async (how: 'exit' | 'SIGINT' | 'SIGTERM' | 'SIGHUP') => {
+    const marker = join(mkdtempSync(join(tmpdir(), 'sf-proc-')), 'asked-to-end');
+    // "ready" once its handler is in place (a signal before that would end it without one), on the output it shares
+    const grandchild = `process.on('SIGTERM', () => { require('fs').writeFileSync(${JSON.stringify(marker)}, 'x'); process.exit(0); }); console.log('ready'); setTimeout(() => {}, 60000)`;
+    const parent =
+      `const c = require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: ['ignore', 'inherit', 'ignore'] });` +
+      'console.log(c.pid); setTimeout(() => {}, 60000);';
+    const proc = JSON.stringify(pathToFileURL(join(import.meta.dirname, '..', 'src', 'util', 'proc.ts')).href);
+    const app =
+      `import { run, endChildren } from ${proc};` +
+      `for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => void endChildren().finally(() => process.exit(0)));` +
+      `run(process.execPath, ['-e', ${JSON.stringify(parent)}], { onLine: (line) => { if (line !== 'ready') { console.log(line); return; }` +
+      (how === 'exit' ? 'process.exit(0);' : `process.kill(process.pid, '${how}');`) +
+      ' } });';
+    const out = await new Promise<string>((done, fail) =>
+      execFile(process.execPath, ['--disable-warning=ExperimentalWarning', '--input-type=module', '-e', app], { timeout: 15000 }, (err, stdout) => (err ? fail(err) : done(stdout))),
+    );
+    const pid = Number(out.trim());
+    assert.ok(pid > 0, out);
+    assert.ok(await gone(pid, 3000), `${how}: 앱이 꺼진 뒤 남은 프로세스가 없음`);
+    return existsSync(marker);
+  };
+
+  const posixOnly = { skip: process.platform === 'win32' && 'Windows는 프로세스 그룹을 따로 두지 않음' };
+  it('앱이 실행 도중 꺼지면 띄운 프로세스와 그 하위 프로세스도 함께 끝난다', posixOnly, async () => {
+    await appEnding('exit');
+  });
+
+  it('Ctrl+C·종료 요청·터미널 창 닫기로 꺼질 때는 하위 프로세스가 스스로 끝날 기회를 먼저 얻는다', posixOnly, async () => {
+    for (const how of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) assert.equal(await appEnding(how), true, `${how}: 손자 프로세스가 SIGTERM을 받고 정리함`);
   });
 
   it('로그 파일에는 토큰과 홈 폴더 이름을 가려서 쓴다', async () => {

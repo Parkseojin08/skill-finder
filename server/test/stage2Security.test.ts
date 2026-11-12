@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { describe, it } from 'node:test';
 import express from 'express';
 import { extractSkillMeta } from '../src/analyze/frontmatter.ts';
@@ -370,8 +370,11 @@ describe('F9 2단계 다른 에이전트에 설치', () => {
     assert.deepEqual(step.args.slice(1, 13), ['add', plan.source, '--skill', 'demo', '-a', 'claude-code', '-a', 'codex', '-a', 'cursor', '--copy', '-y']);
     assert.match(step.display, /-a claude-code -a codex -a cursor --copy/);
     assert.ok(!step.display.includes('-y'), '보이는 명령에는 -y 없음');
-    const where = installLocation(plan, 'project', 'C:\\p', ['claude-code', 'codex', 'cursor']);
-    assert.equal(where, 'C:\\p\\.claude\\skills\\demo\\, C:\\p\\.agents\\skills\\demo\\ (+ skills-lock.json)', '같은 폴더는 한 번');
+    // Shown in this system's path style (join and sep), so the project is a path of this system: on POSIX "C:\p" is
+    // a relative folder name that comes back with "/" after it, and the route passes on absolute paths only.
+    const win = sep === '\\';
+    const where = installLocation(plan, 'project', win ? 'C:\\p' : '/p', ['claude-code', 'codex', 'cursor']);
+    assert.equal(where, win ? 'C:\\p\\.claude\\skills\\demo\\, C:\\p\\.agents\\skills\\demo\\ (+ skills-lock.json)' : '/p/.claude/skills/demo/, /p/.agents/skills/demo/ (+ skills-lock.json)', '같은 폴더는 한 번');
     assert.equal(installLocation(plan, 'user', null, ['claude-code', 'gemini-cli']), '~/.claude/skills/demo/, ~/.gemini/skills/demo/');
   });
 

@@ -2,7 +2,7 @@
 // F17 (browsing the index on the first screen, first_seen_at), F21 (tech stack from manifests) and F23 (a) (the
 // CLI's appUrl and `open`).
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -416,6 +416,13 @@ describe('F23 (a) CLI appUrl·open', () => {
         done({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, out, err }),
       );
     });
+  /**
+   * A folder as a process started in it sees it: the CLI's "this folder" is its process.cwd(). The OS answers with
+   * links resolved on macOS and Linux (macOS keeps the temp folder under /var, a link to /private/var) and with the
+   * path as it was given on Windows (an 8.3 short name or a junction stays), so neither the path mkdtemp returns nor
+   * its realpath is the expected one on every OS.
+   */
+  const cwdIn = (dir: string) => execFileSync(process.execPath, ['-e', 'process.stdout.write(process.cwd())'], { cwd: dir, encoding: 'utf8' });
   const item = { id: 'gh:o/r:skills/pdf', name: 'pdf', description: 'PDF', riskLevel: 'low', riskFlags: [], install: { method: 'skills-cli', command: 'npx skills add' }, sources: [] };
   async function fakeApp() {
     const seen: string[] = [];
@@ -441,14 +448,16 @@ describe('F23 (a) CLI appUrl·open', () => {
     const app = await fakeApp();
     const proj = mkdtempSync(join(tmp, 'here-'));
     try {
+      // run in proj, the CLI names it as its own process sees it; a folder given as an argument stays as written
+      const here = cwdIn(proj);
       const url = (project: string) => `http://127.0.0.1:${app.port}/skill?${new URLSearchParams({ id: item.id, tab: 'install', project })}`;
       const s = await cli(['search', 'pdf', '--port', String(app.port), '--json'], proj);
       assert.equal(s.code, 0, s.err);
-      assert.equal(JSON.parse(s.out)[0].appUrl, url(proj), '기본은 지금 폴더');
+      assert.equal(JSON.parse(s.out)[0].appUrl, url(here), '기본은 지금 폴더');
       const other = join(tmp, 'other');
       assert.equal(JSON.parse((await cli(['show', item.id, '--port', String(app.port), '--json', '--project', other])).out).appUrl, url(other));
       const text = await cli(['search', 'pdf', '--port', String(app.port)], proj);
-      assert.ok(text.out.includes(`Install in the app: ${url(proj)}`), text.out);
+      assert.ok(text.out.includes(`Install in the app: ${url(here)}`), text.out);
 
       const rec = JSON.parse((await cli(['recommend', proj, '--port', String(app.port), '--json'])).out);
       assert.deepEqual(rec.stack, [{ tag: 'Next.js', evidence: ['package.json: next'] }]);
@@ -457,7 +466,7 @@ describe('F23 (a) CLI appUrl·open', () => {
 
       const open = await cli(['open', item.id, '--port', String(app.port), '--no-open', '--json', '--project'], proj);
       assert.equal(open.code, 0, open.err);
-      assert.deepEqual(JSON.parse(open.out), { id: item.id, appUrl: url(proj), opened: false });
+      assert.deepEqual(JSON.parse(open.out), { id: item.id, appUrl: url(here), opened: false });
       const bare = JSON.parse((await cli(['open', item.id, '--port', String(app.port), '--no-open', '--json'], proj)).out);
       assert.equal(bare.appUrl, `http://127.0.0.1:${app.port}/skill?${new URLSearchParams({ id: item.id, tab: 'install' })}`, '--project 없으면 프로젝트 없이');
       const missing = await cli(['open', 'gh:o/r:nope', '--port', String(app.port), '--no-open']);

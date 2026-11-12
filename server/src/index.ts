@@ -5,6 +5,7 @@ import { DataTooNewError } from './db/index.ts';
 import { importSeed, SEED_PATH } from './db/seed.ts';
 import { registerTask, schedulerFor } from './scheduler.ts';
 import { startLogFile } from './util/log.ts';
+import { endChildren } from './util/proc.ts';
 import { registerBuiltInTasks, relevelRisk } from './tasks.ts';
 import { runNoticeCheck, runRepoHeadWatch } from './watch/heads.ts';
 import { runFirstSeenFill } from './search/browse.ts';
@@ -67,11 +68,19 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
-for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+// SIGHUP: the terminal window was closed. Without a handler Node would end without its 'exit' event, and outside
+// Windows the commands the app started (each in a process group of its own, util/proc.ts) would keep running.
+let stopping = false;
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
   process.on(sig, () => {
+    if (stopping) return;
+    stopping = true;
     scheduler.stop();
     server.close();
-    ctx.store.db.close();
-    process.exit(0);
+    // running commands (an install, a git clone) get a moment to stop and clean up; what is left is ended on exit
+    void endChildren().finally(() => {
+      ctx.store.db.close();
+      process.exit(0);
+    });
   });
 }
