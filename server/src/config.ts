@@ -73,10 +73,11 @@ export function ensureDataDirs(): void {
  * file first and renamed over .env, so a crash or a full disk mid-write cannot leave a cut-off .env.
  */
 export function saveGithubToken(token: string | null): void {
-  // Inside a test run (node --test sets NODE_TEST_CONTEXT, bun test SKILL_FINDER_TESTING) only a .env the test named
-  // may be written. Run as one bun process, a test got this module as an earlier file had imported it, pointing at
-  // the checkout's .env, and replaced the user's real token with its fake one (2026-11-12, D#b7e3).
-  if (OWN_ENV && (process.env.NODE_TEST_CONTEXT || process.env.SKILL_FINDER_TESTING)) {
+  // Inside a test run (node --test sets NODE_TEST_CONTEXT; bun test sets NODE_ENV=test, and our preload
+  // SKILL_FINDER_TESTING) only a .env the test named may be written. Run as one bun process, a test got this module
+  // as an earlier file had imported it, pointing at the checkout's .env, and replaced the user's real token with its
+  // fake one (2026-11-12, D#b7e3).
+  if (OWN_ENV && (process.env.NODE_TEST_CONTEXT || process.env.SKILL_FINDER_TESTING || process.env.NODE_ENV === 'test')) {
     throw new Error(`테스트 안에서는 앱 폴더의 .env에 토큰을 쓰지 않습니다: ${ENV_PATH} (SKILL_FINDER_ENV_PATH로 임시 파일을 주세요)`);
   }
   const value = token?.trim() || '';

@@ -81,6 +81,7 @@ npm run typecheck
 ```
 
 - 개발·테스트는 Bun으로, 배포본(zip·npm 꾸러미)은 사용자의 Node 22.20 이상으로 돕니다. Bun은 개발 의존성이라 `npm install`이 고정된 버전(1.4.4)을 함께 설치하고, 따로 깔 필요는 없습니다. 코드는 Bun 전용 API를 쓰지 않아 양쪽에서 같게 돕니다.
+- Bun을 따로 깔았다면 `npm` 대신 `bun start`, `bun run dev`, `bun run test`처럼 불러도 됩니다. 테스트는 `bun run test`입니다. 맨 위 폴더에서 `bun test`만 치면 서버·웹·e2e 파일을 한 프로세스에 섞어 돌리게 되므로 안내를 보이고 멈춥니다.
 - `server/`: Bun·Node가 TypeScript를 그대로 실행합니다(타입만 지우는 문법, import에 `.ts`). Express 5, `node:sqlite`.
 - `web/`: React 19 + Vite, Tailwind v4 + shadcn/ui.
 - `docs/DECISIONS.md`: 처음 명세와 다르게 정한 것들의 기록입니다. 고칠 때 먼저 확인하세요.

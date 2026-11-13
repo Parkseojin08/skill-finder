@@ -1,0 +1,8 @@
+# bun run at the repo root (bun start, bun run dev): Bun must not read the root .env, which holds the GitHub token,
+# into process.env, where every child process would inherit it. The app reads its own .env (server/src/config.ts).
+env = false
+
+[test]
+# `bun test` here would mix the server, web and e2e files in one process; the preload stops it and names
+# `bun run test`, which runs each workspace's tests with --isolate
+preload = ["./server/test/bun-setup.ts"]
