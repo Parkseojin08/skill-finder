@@ -19,7 +19,7 @@
 2. `node scripts/release.mjs bump X.Y.Z`: `package.json`, `package-lock.json`(두 곳), CHANGELOG 제목의 날짜(오늘, `--date`로 지정)를 고친다.
    절이 없거나 비었거나 한도를 넘으면, 버전이 지금보다 높지 않으면 아무것도 고치지 않고 멈춘다.
 3. 세 파일을 커밋한다. zip은 커밋된 내용으로 만든다.
-4. `node scripts/release.mjs build`: `npm run package`(타입 검사, 테스트, zip, 서명된 `meta.json`을 `site/public/download/`에) 다음에
+4. `node scripts/release.mjs build`: `npm run package`(타입 검사, 배포본과 같은 Node로 테스트(`test:node`), zip, 서명된 `meta.json`을 `site/public/download/`에) 다음에
    `scripts/pack-npm.mjs`(`release/seojin08-skill-finder-X.Y.Z.tgz`). 순서가 중요하다: zip 스크립트가 `release/`를 먼저 비운다.
 5. `git push origin main`
 6. `node scripts/release.mjs deploy`: 배포 전 확인 뒤 `site/`에서 두 곳에 차례로 올리고, 두 주소를 확인한다.

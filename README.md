@@ -50,14 +50,14 @@ npx @seojin08/skill-finder stop               # 백그라운드로 켠 앱 끄�
 
 ### 소스에서
 
-필요한 것: Node.js 22.20 이상(24 권장), git, Claude Code(`claude` 명령).
+필요한 것: Node.js 22.20 이상(24 권장), git, Claude Code(`claude` 명령). Bun은 `npm install`이 개발 의존성으로 함께 설치하므로 따로 깔지 않아도 됩니다.
 
 ```bash
 npm install
 npm start
 ```
 
-이 저장소를 내려받은 폴더에서 실행한 뒤 브라우저로 http://127.0.0.1:4317 을 엽니다. 첫 실행 때는 스킬 색인을 모으느라 몇 분 걸립니다.
+이 저장소를 내려받은 폴더에서 실행한 뒤 브라우저로 http://127.0.0.1:4317 을 엽니다. `npm start`는 웹을 빌드한 뒤 서버를 Bun으로 띄웁니다(Bun을 따로 깔았다면 `bun start`도 같습니다). 첫 실행 때는 스킬 색인을 모으느라 몇 분 걸립니다.
 
 GitHub 토큰은 선택입니다. 설정 화면에서 넣거나 `.env`의 `GITHUB_TOKEN`에 적습니다(`.env.example` 참고). 공개 저장소 읽기만 되는 fine-grained 토큰이면 되고, GitHub 코드 검색과 빠른 색인에 쓰입니다.
 
